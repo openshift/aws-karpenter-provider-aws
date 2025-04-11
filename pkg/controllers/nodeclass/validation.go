@@ -118,11 +118,27 @@ func (n Validation) Reconcile(ctx context.Context, nodeClass *v1.EC2NodeClass) (
 		instanceType = ec2types.InstanceTypeM6gLarge
 	}
 
+	// jkyros: looking at upstream it seems like subnets/securitygroups can't be nil by the time we get here, but I
+	// haven't been through the entirety of the upstream code, so I'm going to check here anyway so we don't panic
+	var includeSubnetID *string
+	var includeSecurityGroupID []string
+	if len(nodeClass.Status.Subnets) > 0 {
+		includeSubnetID = lo.ToPtr(nodeClass.Status.Subnets[0].ID)
+	}
+	if len(nodeClass.Status.SecurityGroups) > 0 {
+		includeSecurityGroupID = append(includeSecurityGroupID, nodeClass.Status.SecurityGroups[0].ID)
+	}
+
 	runInstancesInput := &ec2.RunInstancesInput{
 		DryRun:       lo.ToPtr(true),
 		MaxCount:     aws.Int32(1),
 		MinCount:     aws.Int32(1),
 		InstanceType: instanceType,
+		// jkyros: without the subnet ID and securityGroup ID from the nodeclass, we hit https://github.com/aws/karpenter-provider-aws/issues/7834 because it
+		// tries to use the default VPC that does not exist, and the fix is not a clean cherry-pick and will drag us to golang 1.24, which we don't have a builder for
+		// TODO(jkyros): Figure out if this hack has bad consequences for folks with a default VPC?
+		SubnetId:         includeSubnetID,
+		SecurityGroupIds: includeSecurityGroupID,
 		MetadataOptions: &ec2types.InstanceMetadataOptionsRequest{
 			HttpEndpoint:     ec2types.InstanceMetadataEndpointState(lo.FromPtr(nodeClass.Spec.MetadataOptions.HTTPEndpoint)),
 			HttpTokens:       ec2types.HttpTokensState(lo.FromPtr(nodeClass.Spec.MetadataOptions.HTTPTokens)),
