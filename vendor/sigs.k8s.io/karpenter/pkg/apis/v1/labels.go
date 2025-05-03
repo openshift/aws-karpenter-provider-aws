@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/awslabs/operatorpkg/serrors"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -33,14 +34,16 @@ const (
 	ArchitectureArm64    = "arm64"
 	CapacityTypeSpot     = "spot"
 	CapacityTypeOnDemand = "on-demand"
+	CapacityTypeReserved = "reserved"
 )
 
 // Karpenter specific domains and labels
 const (
-	NodePoolLabelKey        = apis.Group + "/nodepool"
-	NodeInitializedLabelKey = apis.Group + "/initialized"
-	NodeRegisteredLabelKey  = apis.Group + "/registered"
-	CapacityTypeLabelKey    = apis.Group + "/capacity-type"
+	NodePoolLabelKey            = apis.Group + "/nodepool"
+	NodeInitializedLabelKey     = apis.Group + "/initialized"
+	NodeRegisteredLabelKey      = apis.Group + "/registered"
+	NodeDoNotSyncTaintsLabelKey = apis.Group + "/do-not-sync-taints"
+	CapacityTypeLabelKey        = apis.Group + "/capacity-type"
 )
 
 // Karpenter specific annotations
@@ -110,7 +113,7 @@ func IsRestrictedLabel(key string) error {
 		return nil
 	}
 	if IsRestrictedNodeLabel(key) {
-		return fmt.Errorf("label %s is restricted; specify a well known label: %v, or a custom label that does not use a restricted domain: %v", key, sets.List(WellKnownLabels), sets.List(RestrictedLabelDomains))
+		return serrors.Wrap(fmt.Errorf("label is restricted; specify a well known label or a custom label that does not use a restricted domain"), "label", key, "well-known-labels", sets.List(WellKnownLabels), "restricted-labels", sets.List(RestrictedLabelDomains))
 	}
 	return nil
 }

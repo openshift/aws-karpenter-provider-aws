@@ -19,20 +19,24 @@ package state
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/awslabs/operatorpkg/serrors"
 	"github.com/samber/lo"
 	"go.uber.org/multierr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -42,6 +46,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 	nodeclaimutils "sigs.k8s.io/karpenter/pkg/utils/nodeclaim"
 	podutils "sigs.k8s.io/karpenter/pkg/utils/pod"
+	"sigs.k8s.io/karpenter/pkg/utils/resources"
 )
 
 // Cluster maintains cluster state that is often needed but expensive to compute.
@@ -56,11 +61,14 @@ type Cluster struct {
 	bindings                  map[types.NamespacedName]string // pod namespaced named -> node name
 	nodeNameToProviderID      map[string]string               // node name -> provider id
 	nodeClaimNameToProviderID map[string]string               // node claim name -> provider id
+	nodePoolResources         map[string]corev1.ResourceList  // node pool name -> resource list
 	daemonSetPods             sync.Map                        // daemonSet -> existing pod
 
-	podAcks                 sync.Map // pod namespaced name -> time when Karpenter first saw the pod as pending
-	podsSchedulingAttempted sync.Map // pod namespaced name -> time when Karpenter tried to schedule a pod
-	podsSchedulableTimes    sync.Map // pod namespaced name -> time when it was first marked as able to fit to a node
+	podAcks                         sync.Map // pod namespaced name -> time when Karpenter first saw the pod as pending
+	podsSchedulingAttempted         sync.Map // pod namespaced name -> time when Karpenter tried to schedule a pod
+	podsSchedulableTimes            sync.Map // pod namespaced name -> time when it was first marked as able to fit to a node
+	podHealthyNodePoolScheduledTime sync.Map // pod namespaced name -> time when pod scheduled to a nodePool that has NodeRegistrationHealthy=true, is marked as able to fit to a node
+	podToNodeClaim                  sync.Map // pod namespaced name -> nodeClaim name
 
 	clusterStateMu sync.RWMutex // Separate mutex as this is called in some places that mu is held
 	// A monotonically increasing timestamp representing the time state of the
@@ -83,9 +91,13 @@ func NewCluster(clk clock.Clock, client client.Client, cloudProvider cloudprovid
 		daemonSetPods:             sync.Map{},
 		nodeNameToProviderID:      map[string]string{},
 		nodeClaimNameToProviderID: map[string]string{},
-		podAcks:                   sync.Map{},
-		podsSchedulableTimes:      sync.Map{},
-		podsSchedulingAttempted:   sync.Map{},
+		nodePoolResources:         map[string]corev1.ResourceList{},
+
+		podAcks:                         sync.Map{},
+		podsSchedulableTimes:            sync.Map{},
+		podsSchedulingAttempted:         sync.Map{},
+		podHealthyNodePoolScheduledTime: sync.Map{},
+		podToNodeClaim:                  sync.Map{},
 	}
 }
 
@@ -243,8 +255,6 @@ func (c *Cluster) NominateNodeForPod(ctx context.Context, providerID string) {
 	}
 }
 
-// TODO remove this when v1alpha5 APIs are deprecated. With v1 APIs Karpenter relies on the existence
-// of the karpenter.sh/disruption taint to know when a node is marked for deletion.
 // UnmarkForDeletion removes the marking on the node as a node the controller intends to delete
 func (c *Cluster) UnmarkForDeletion(providerIDs ...string) {
 	c.mu.Lock()
@@ -252,13 +262,13 @@ func (c *Cluster) UnmarkForDeletion(providerIDs ...string) {
 
 	for _, id := range providerIDs {
 		if n, ok := c.nodes[id]; ok {
+			oldNode := n.ShallowCopy()
 			n.markedForDeletion = false
+			c.updateNodePoolResources(oldNode, n)
 		}
 	}
 }
 
-// TODO remove this when v1alpha5 APIs are deprecated. With v1 APIs Karpenter relies on the existence
-// of the karpenter.sh/disruption taint to know when a node is marked for deletion.
 // MarkForDeletion marks the node as pending deletion in the internal cluster state
 func (c *Cluster) MarkForDeletion(providerIDs ...string) {
 	c.mu.Lock()
@@ -266,7 +276,9 @@ func (c *Cluster) MarkForDeletion(providerIDs ...string) {
 
 	for _, id := range providerIDs {
 		if n, ok := c.nodes[id]; ok {
+			oldNode := n.ShallowCopy()
 			n.markedForDeletion = true
+			c.updateNodePoolResources(oldNode, n)
 		}
 	}
 }
@@ -363,16 +375,15 @@ func (c *Cluster) PodAckTime(podKey types.NamespacedName) time.Time {
 }
 
 // MarkPodSchedulingDecisions keeps track of when we first tried to schedule a pod to a node.
-// This also marks when the pod is first seen as schedulable for pod metrics.
+// It updates podHealthyNodePoolScheduledTime for pods scheduled against nodePool that have
+// NodeRegistrationHealthy=true. This also marks when the pod is first seen as schedulable for pod metrics.
 // We'll only emit a metric for a pod if we haven't done it before.
-func (c *Cluster) MarkPodSchedulingDecisions(podErrors map[*corev1.Pod]error, pods ...*corev1.Pod) {
+func (c *Cluster) MarkPodSchedulingDecisions(ctx context.Context, podErrors map[*corev1.Pod]error, npPods map[string][]*corev1.Pod, ncPods map[string][]*corev1.Pod) {
 	now := c.clock.Now()
-	for _, p := range pods {
-		nn := client.ObjectKeyFromObject(p)
-		// If there's no error for the pod, then we mark it as schedulable
-		if err, ok := podErrors[p]; !ok || err == nil {
-			c.podsSchedulableTimes.LoadOrStore(nn, now)
-		}
+	for pod := range podErrors {
+		nn := client.ObjectKeyFromObject(pod)
+		// delete podsSchedulableTimes and podHealthyNodePoolScheduledTime for pods that have pod errors
+		c.podsSchedulableTimes.Delete(nn)
 		_, alreadyExists := c.podsSchedulingAttempted.LoadOrStore(nn, now)
 		// If we already attempted this, we don't need to emit another metric.
 		if !alreadyExists {
@@ -380,6 +391,44 @@ func (c *Cluster) MarkPodSchedulingDecisions(podErrors map[*corev1.Pod]error, po
 			if ackTime := c.PodAckTime(nn); !ackTime.IsZero() {
 				PodSchedulingDecisionSeconds.Observe(c.clock.Since(ackTime).Seconds(), nil)
 			}
+		}
+		c.podHealthyNodePoolScheduledTime.Delete(nn)
+		c.podToNodeClaim.Delete(nn)
+	}
+	for nodePoolName, pods := range npPods {
+		nodePool := &v1.NodePool{}
+		err := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodePoolName}, nodePool)
+		for _, p := range pods {
+			nn := client.ObjectKeyFromObject(p)
+			c.podsSchedulableTimes.LoadOrStore(nn, now)
+			_, alreadyExists := c.podsSchedulingAttempted.LoadOrStore(nn, now)
+			// If we already attempted this, we don't need to emit another metric.
+			if !alreadyExists {
+				// We should have ACK'd the pod.
+				if ackTime := c.PodAckTime(nn); !ackTime.IsZero() {
+					PodSchedulingDecisionSeconds.Observe(c.clock.Since(ackTime).Seconds(), nil)
+				}
+			}
+			if err == nil {
+				// If the pod is scheduled to a nodePool and if the nodePool has NodeRegistrationHealthy=true
+				// then mark the time when we thought it can schedule to now.
+				if nodePool.StatusConditions().IsTrue(v1.ConditionTypeNodeRegistrationHealthy) {
+					c.podHealthyNodePoolScheduledTime.LoadOrStore(nn, c.clock.Now())
+				} else {
+					// If the pod was scheduled to a healthy nodePool earlier but is now getting scheduled to an
+					// unhealthy one then we need to delete its entry from the map because it will not schedule successfully
+					c.podHealthyNodePoolScheduledTime.Delete(nn)
+				}
+			}
+		}
+	}
+	c.UpdatePodToNodeClaimMapping(ncPods)
+}
+
+func (c *Cluster) UpdatePodToNodeClaimMapping(ncPods map[string][]*corev1.Pod) {
+	for ncName, pods := range ncPods {
+		for _, p := range pods {
+			c.podToNodeClaim.Store(client.ObjectKeyFromObject(p), ncName)
 		}
 	}
 }
@@ -402,6 +451,23 @@ func (c *Cluster) PodSchedulingSuccessTime(podKey types.NamespacedName) time.Tim
 	return time.Time{}
 }
 
+// PodNodeClaimMapping returns the nodeClaim against which the pod is simulated to get scheduled
+func (c *Cluster) PodNodeClaimMapping(podKey types.NamespacedName) string {
+	if val, found := c.podToNodeClaim.Load(podKey); found {
+		return val.(string)
+	}
+	return ""
+}
+
+// PodSchedulingSuccessTimeRegistrationHealthyCheck returns when Karpenter first thought it could schedule a pod in its scheduling simulation.
+// This returns 0, false if the pod was never considered in scheduling as a pending pod.
+func (c *Cluster) PodSchedulingSuccessTimeRegistrationHealthyCheck(podKey types.NamespacedName) time.Time {
+	if val, found := c.podHealthyNodePoolScheduledTime.Load(podKey); found {
+		return val.(time.Time)
+	}
+	return time.Time{}
+}
+
 func (c *Cluster) DeletePod(podKey types.NamespacedName) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -416,6 +482,8 @@ func (c *Cluster) ClearPodSchedulingMappings(podKey types.NamespacedName) {
 	c.podAcks.Delete(podKey)
 	c.podsSchedulableTimes.Delete(podKey)
 	c.podsSchedulingAttempted.Delete(podKey)
+	c.podHealthyNodePoolScheduledTime.Delete(podKey)
+	c.podToNodeClaim.Delete(podKey)
 }
 
 // MarkUnconsolidated marks the cluster state as being unconsolidated.  This should be called in any situation where
@@ -449,6 +517,13 @@ func (c *Cluster) ConsolidationState() time.Time {
 	return c.MarkUnconsolidated()
 }
 
+func (c *Cluster) NodePoolResourcesFor(nodePoolName string) corev1.ResourceList {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return maps.Clone(c.nodePoolResources[nodePoolName])
+}
+
 // Reset the cluster state for unit testing
 func (c *Cluster) Reset() {
 	c.mu.Lock()
@@ -459,6 +534,7 @@ func (c *Cluster) Reset() {
 	c.nodes = map[string]*StateNode{}
 	c.nodeNameToProviderID = map[string]string{}
 	c.nodeClaimNameToProviderID = map[string]string{}
+	c.nodePoolResources = map[string]corev1.ResourceList{}
 	c.bindings = map[types.NamespacedName]string{}
 	c.antiAffinityPods = sync.Map{}
 	c.daemonSetPods = sync.Map{}
@@ -529,6 +605,7 @@ func (c *Cluster) newStateFromNodeClaim(nodeClaim *v1.NodeClaim, oldNode *StateN
 	if id, ok := c.nodeClaimNameToProviderID[nodeClaim.Name]; ok && id != nodeClaim.Status.ProviderID {
 		c.cleanupNodeClaim(nodeClaim.Name)
 	}
+	c.updateNodePoolResources(oldNode, n)
 	c.triggerConsolidationOnChange(oldNode, n)
 	return n
 }
@@ -536,9 +613,12 @@ func (c *Cluster) newStateFromNodeClaim(nodeClaim *v1.NodeClaim, oldNode *StateN
 func (c *Cluster) cleanupNodeClaim(name string) {
 	if id := c.nodeClaimNameToProviderID[name]; id != "" {
 		if c.nodes[id].Node == nil {
+			c.updateNodePoolResources(c.nodes[id], nil)
 			delete(c.nodes, id)
 		} else {
+			oldNode := c.nodes[id].ShallowCopy()
 			c.nodes[id].NodeClaim = nil
+			c.updateNodePoolResources(oldNode, c.nodes[id])
 		}
 		c.MarkUnconsolidated()
 	}
@@ -576,6 +656,7 @@ func (c *Cluster) newStateFromNode(ctx context.Context, node *corev1.Node, oldNo
 	if id, ok := c.nodeNameToProviderID[node.Name]; ok && id != node.Spec.ProviderID {
 		c.cleanupNode(node.Name)
 	}
+	c.updateNodePoolResources(oldNode, n)
 	c.triggerConsolidationOnChange(oldNode, n)
 	return n, nil
 }
@@ -583,19 +664,74 @@ func (c *Cluster) newStateFromNode(ctx context.Context, node *corev1.Node, oldNo
 func (c *Cluster) cleanupNode(name string) {
 	if id := c.nodeNameToProviderID[name]; id != "" {
 		if c.nodes[id].NodeClaim == nil {
+			c.updateNodePoolResources(c.nodes[id], nil)
 			delete(c.nodes, id)
 		} else {
+			oldNode := c.nodes[id].ShallowCopy()
 			c.nodes[id].Node = nil
+			c.updateNodePoolResources(oldNode, c.nodes[id])
 		}
 		delete(c.nodeNameToProviderID, name)
 		c.MarkUnconsolidated()
 	}
 }
 
+// nolint:gocyclo
+func (c *Cluster) updateNodePoolResources(oldNode, newNode *StateNode) {
+	var oldNodePoolName, newNodePoolName string
+	var oldResources, newResources corev1.ResourceList
+	if oldNode != nil && (oldNode.Node != nil || oldNode.NodeClaim != nil) {
+		oldNodePoolName = oldNode.Labels()[v1.NodePoolLabelKey]
+		oldResources = lo.Ternary(oldNode.MarkedForDeletion(), corev1.ResourceList{}, oldNode.Capacity())
+	}
+	if newNode != nil && (newNode.Node != nil || newNode.NodeClaim != nil) {
+		newNodePoolName = newNode.Labels()[v1.NodePoolLabelKey]
+		newResources = lo.Ternary(newNode.MarkedForDeletion(), corev1.ResourceList{}, newNode.Capacity())
+	}
+	if len(oldResources) != 0 {
+		oldResources[resources.Node] = resource.MustParse("1")
+	}
+	if len(newResources) != 0 {
+		newResources[resources.Node] = resource.MustParse("1")
+	}
+	if _, ok := c.nodePoolResources[newNodePoolName]; !ok && newNodePoolName != "" {
+		c.nodePoolResources[newNodePoolName] = corev1.ResourceList{}
+	}
+	if oldNodePoolName != "" {
+		for resourceName, quantity := range oldResources {
+			current := c.nodePoolResources[oldNodePoolName][resourceName]
+			current.Sub(quantity)
+			c.nodePoolResources[oldNodePoolName][resourceName] = current
+		}
+	}
+	if newNodePoolName != "" {
+		for resourceName, quantity := range newResources {
+			current := c.nodePoolResources[newNodePoolName][resourceName]
+			current.Add(quantity)
+			c.nodePoolResources[newNodePoolName][resourceName] = current
+		}
+	}
+	// Garbage collect any NodePool keys that no longer have any resources assigned to them.
+	// We do this when there are no longer any NodeClaims that map to this NodePool
+	// so that we don't leak NodePool keys in our nodePoolResources map
+	for _, name := range []string{oldNodePoolName, newNodePoolName} {
+		allZero := true
+		for _, v := range c.nodePoolResources[name] {
+			if !v.IsZero() {
+				allZero = false
+				break
+			}
+		}
+		if allZero {
+			delete(c.nodePoolResources, name)
+		}
+	}
+}
+
 func (c *Cluster) populateVolumeLimits(ctx context.Context, n *StateNode) error {
 	var csiNode storagev1.CSINode
 	if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: n.Node.Name}, &csiNode); err != nil {
-		return client.IgnoreNotFound(fmt.Errorf("getting CSINode to determine volume limit for %s, %w", n.Node.Name, err))
+		return client.IgnoreNotFound(serrors.Wrap(fmt.Errorf("getting CSINode to determine volume limit, %w", err), "CSINode", klog.KRef("", n.Node.Name)))
 	}
 	for _, driver := range csiNode.Spec.Drivers {
 		if driver.Allocatable == nil {

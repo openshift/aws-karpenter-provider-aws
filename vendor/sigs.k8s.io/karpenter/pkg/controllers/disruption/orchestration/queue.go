@@ -24,12 +24,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/awslabs/operatorpkg/serrors"
 	"github.com/awslabs/operatorpkg/singleton"
 	"github.com/samber/lo"
 	"go.uber.org/multierr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -61,6 +63,29 @@ type Command struct {
 	reason            v1.DisruptionReason // used for metrics
 	consolidationType string              // used for metrics
 	lastError         error
+}
+
+func (c *Command) LogValues() []any {
+	candidateNodes := lo.Map(c.candidates, func(candidate *state.StateNode, _ int) interface{} {
+		return map[string]interface{}{
+			"Node":      klog.KObj(candidate.Node),
+			"NodeClaim": klog.KObj(candidate.NodeClaim),
+		}
+	})
+	replacementNodes := lo.Map(c.Replacements, func(replacement Replacement, _ int) interface{} {
+		return map[string]interface{}{
+			"NodeClaim": klog.KRef("", replacement.name),
+		}
+	})
+	return []any{
+		"command-id", c.id,
+		"reason", c.reason,
+		"decision", c.Decision(),
+		"disrupted-node-count", len(candidateNodes),
+		"replacement-node-count", len(replacementNodes),
+		"disrupted-nodes", candidateNodes,
+		"replacement-nodes", replacementNodes,
+	}
 }
 
 // Replacement wraps a NodeClaim name with an initialized field to save on readiness checks and identify
@@ -175,7 +200,7 @@ func (q *Queue) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	if shutdown {
 		panic("unexpected failure, disruption queue has shut down")
 	}
-	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("command-id", string(cmd.id)))
+	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues(cmd.LogValues()...))
 
 	if err := q.waitOrTerminate(ctx, cmd); err != nil {
 		// If recoverable, re-queue and try again.
@@ -219,7 +244,7 @@ func (q *Queue) Reconcile(ctx context.Context) (reconcile.Result, error) {
 // nolint:gocyclo
 func (q *Queue) waitOrTerminate(ctx context.Context, cmd *Command) error {
 	if q.clock.Since(cmd.timeAdded) > maxRetryDuration {
-		return NewUnrecoverableError(fmt.Errorf("command reached timeout after %s", q.clock.Since(cmd.timeAdded)))
+		return NewUnrecoverableError(serrors.Wrap(fmt.Errorf("command reached timeout"), "duration", q.clock.Since(cmd.timeAdded)))
 	}
 	waitErrs := make([]error, len(cmd.Replacements))
 	for i := range cmd.Replacements {
@@ -245,7 +270,7 @@ func (q *Queue) waitOrTerminate(ctx context.Context, cmd *Command) error {
 		initializedStatus := nodeClaim.StatusConditions().Get(v1.ConditionTypeInitialized)
 		if !initializedStatus.IsTrue() {
 			q.recorder.Publish(disruptionevents.WaitingOnReadiness(nodeClaim))
-			waitErrs[i] = fmt.Errorf("nodeclaim %s not initialized", nodeClaim.Name)
+			waitErrs[i] = serrors.Wrap(fmt.Errorf("nodeclaim not initialized"), "NodeClaim", klog.KRef("", nodeClaim.Name))
 			continue
 		}
 		cmd.Replacements[i].Initialized = true
