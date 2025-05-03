@@ -23,13 +23,15 @@ import (
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	clock "k8s.io/utils/clock/testing"
-
+	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 	awscache "github.com/aws/karpenter-provider-aws/pkg/cache"
 	"github.com/aws/karpenter-provider-aws/pkg/fake"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/amifamily"
+	"github.com/aws/karpenter-provider-aws/pkg/providers/capacityreservation"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instance"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instanceprofile"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instancetype"
@@ -39,6 +41,7 @@ import (
 	ssmp "github.com/aws/karpenter-provider-aws/pkg/providers/ssm"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/subnet"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/version"
+	"github.com/aws/karpenter-provider-aws/pkg/utils"
 
 	coretest "sigs.k8s.io/karpenter/pkg/test"
 
@@ -52,7 +55,8 @@ func init() {
 
 type Environment struct {
 	// Mock
-	Clock *clock.FakeClock
+	Clock         *clock.FakeClock
+	EventRecorder *coretest.EventRecorder
 
 	// API
 	EC2API     *fake.EC2API
@@ -62,30 +66,35 @@ type Environment struct {
 	PricingAPI *fake.PricingAPI
 
 	// Cache
-	EC2Cache                      *cache.Cache
-	InstanceTypeCache             *cache.Cache
-	UnavailableOfferingsCache     *awscache.UnavailableOfferings
-	LaunchTemplateCache           *cache.Cache
-	SubnetCache                   *cache.Cache
-	AvailableIPAdressCache        *cache.Cache
-	AssociatePublicIPAddressCache *cache.Cache
-	SecurityGroupCache            *cache.Cache
-	InstanceProfileCache          *cache.Cache
-	SSMCache                      *cache.Cache
-	DiscoveredCapacityCache       *cache.Cache
+	EC2Cache                             *cache.Cache
+	InstanceTypeCache                    *cache.Cache
+	OfferingCache                        *cache.Cache
+	UnavailableOfferingsCache            *awscache.UnavailableOfferings
+	LaunchTemplateCache                  *cache.Cache
+	SubnetCache                          *cache.Cache
+	AvailableIPAdressCache               *cache.Cache
+	AssociatePublicIPAddressCache        *cache.Cache
+	SecurityGroupCache                   *cache.Cache
+	InstanceProfileCache                 *cache.Cache
+	SSMCache                             *cache.Cache
+	DiscoveredCapacityCache              *cache.Cache
+	CapacityReservationCache             *cache.Cache
+	CapacityReservationAvailabilityCache *cache.Cache
+	ValidationCache                      *cache.Cache
 
 	// Providers
-	InstanceTypesResolver   *instancetype.DefaultResolver
-	InstanceTypesProvider   *instancetype.DefaultProvider
-	InstanceProvider        *instance.DefaultProvider
-	SubnetProvider          *subnet.DefaultProvider
-	SecurityGroupProvider   *securitygroup.DefaultProvider
-	InstanceProfileProvider *instanceprofile.DefaultProvider
-	PricingProvider         *pricing.DefaultProvider
-	AMIProvider             *amifamily.DefaultProvider
-	AMIResolver             *amifamily.DefaultResolver
-	VersionProvider         *version.DefaultProvider
-	LaunchTemplateProvider  *launchtemplate.DefaultProvider
+	CapacityReservationProvider *capacityreservation.DefaultProvider
+	InstanceTypesResolver       *instancetype.DefaultResolver
+	InstanceTypesProvider       *instancetype.DefaultProvider
+	InstanceProvider            *instance.DefaultProvider
+	SubnetProvider              *subnet.DefaultProvider
+	SecurityGroupProvider       *securitygroup.DefaultProvider
+	InstanceProfileProvider     *instanceprofile.DefaultProvider
+	PricingProvider             *pricing.DefaultProvider
+	AMIProvider                 *amifamily.DefaultProvider
+	AMIResolver                 *amifamily.DefaultResolver
+	VersionProvider             *version.DefaultProvider
+	LaunchTemplateProvider      *launchtemplate.DefaultProvider
 }
 
 func NewEnvironment(ctx context.Context, env *coretest.Environment) *Environment {
@@ -101,6 +110,7 @@ func NewEnvironment(ctx context.Context, env *coretest.Environment) *Environment
 	// cache
 	ec2Cache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
 	instanceTypeCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	offeringCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
 	discoveredCapacityCache := cache.New(awscache.DiscoveredCapacityCacheTTL, awscache.DefaultCleanupInterval)
 	unavailableOfferingsCache := awscache.NewUnavailableOfferings()
 	launchTemplateCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
@@ -110,7 +120,11 @@ func NewEnvironment(ctx context.Context, env *coretest.Environment) *Environment
 	securityGroupCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
 	instanceProfileCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
 	ssmCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	capacityReservationCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	capacityReservationAvailabilityCache := cache.New(24*time.Hour, awscache.DefaultCleanupInterval)
+	validationCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
 	fakePricingAPI := &fake.PricingAPI{}
+	eventRecorder := coretest.NewEventRecorder()
 
 	// Providers
 	pricingProvider := pricing.NewDefaultProvider(ctx, fakePricingAPI, ec2api, fake.DefaultRegion)
@@ -121,37 +135,40 @@ func NewEnvironment(ctx context.Context, env *coretest.Environment) *Environment
 	// Version updates are hydrated asynchronously after this, in the event of a failure
 	// the previously resolved value will be used.
 	lo.Must0(versionProvider.UpdateVersion(ctx))
-	instanceProfileProvider := instanceprofile.NewDefaultProvider(fake.DefaultRegion, iamapi, instanceProfileCache)
+	instanceProfileProvider := instanceprofile.NewDefaultProvider(iamapi, instanceProfileCache)
 	ssmProvider := ssmp.NewDefaultProvider(ssmapi, ssmCache)
 	amiProvider := amifamily.NewDefaultProvider(clock, versionProvider, ssmProvider, ec2api, ec2Cache)
 	amiResolver := amifamily.NewDefaultResolver()
-	instanceTypesResolver := instancetype.NewDefaultResolver(fake.DefaultRegion, pricingProvider, unavailableOfferingsCache)
-	instanceTypesProvider := instancetype.NewDefaultProvider(instanceTypeCache, discoveredCapacityCache, ec2api, subnetProvider, instanceTypesResolver)
-	launchTemplateProvider :=
-		launchtemplate.NewDefaultProvider(
-			ctx,
-			launchTemplateCache,
-			ec2api,
-			eksapi,
-			amiResolver,
-			securityGroupProvider,
-			subnetProvider,
-			lo.ToPtr("ca-bundle"),
-			make(chan struct{}),
-			net.ParseIP("10.0.100.10"),
-			"https://test-cluster",
-		)
-	instanceProvider :=
-		instance.NewDefaultProvider(ctx,
-			"",
-			ec2api,
-			unavailableOfferingsCache,
-			subnetProvider,
-			launchTemplateProvider,
-		)
+	instanceTypesResolver := instancetype.NewDefaultResolver(fake.DefaultRegion)
+	capacityReservationProvider := capacityreservation.NewProvider(ec2api, clock, capacityReservationCache, capacityReservationAvailabilityCache)
+	instanceTypesProvider := instancetype.NewDefaultProvider(instanceTypeCache, offeringCache, discoveredCapacityCache, ec2api, subnetProvider, pricingProvider, capacityReservationProvider, unavailableOfferingsCache, instanceTypesResolver)
+	launchTemplateProvider := launchtemplate.NewDefaultProvider(
+		ctx,
+		launchTemplateCache,
+		ec2api,
+		eksapi,
+		amiResolver,
+		securityGroupProvider,
+		subnetProvider,
+		lo.ToPtr("ca-bundle"),
+		make(chan struct{}),
+		net.ParseIP("10.0.100.10"),
+		"https://test-cluster",
+	)
+	instanceProvider := instance.NewDefaultProvider(
+		ctx,
+		"",
+		eventRecorder,
+		ec2api,
+		unavailableOfferingsCache,
+		subnetProvider,
+		launchTemplateProvider,
+		capacityReservationProvider,
+	)
 
 	return &Environment{
-		Clock: clock,
+		Clock:         clock,
+		EventRecorder: eventRecorder,
 
 		EC2API:     ec2api,
 		EKSAPI:     eksapi,
@@ -159,29 +176,35 @@ func NewEnvironment(ctx context.Context, env *coretest.Environment) *Environment
 		IAMAPI:     iamapi,
 		PricingAPI: fakePricingAPI,
 
-		EC2Cache:                      ec2Cache,
-		InstanceTypeCache:             instanceTypeCache,
-		LaunchTemplateCache:           launchTemplateCache,
-		SubnetCache:                   subnetCache,
-		AvailableIPAdressCache:        availableIPAdressCache,
-		AssociatePublicIPAddressCache: associatePublicIPAddressCache,
-		SecurityGroupCache:            securityGroupCache,
-		InstanceProfileCache:          instanceProfileCache,
-		UnavailableOfferingsCache:     unavailableOfferingsCache,
-		SSMCache:                      ssmCache,
-		DiscoveredCapacityCache:       discoveredCapacityCache,
+		EC2Cache:          ec2Cache,
+		InstanceTypeCache: instanceTypeCache,
+		OfferingCache:     offeringCache,
 
-		InstanceTypesResolver:   instanceTypesResolver,
-		InstanceTypesProvider:   instanceTypesProvider,
-		InstanceProvider:        instanceProvider,
-		SubnetProvider:          subnetProvider,
-		SecurityGroupProvider:   securityGroupProvider,
-		LaunchTemplateProvider:  launchTemplateProvider,
-		InstanceProfileProvider: instanceProfileProvider,
-		PricingProvider:         pricingProvider,
-		AMIProvider:             amiProvider,
-		AMIResolver:             amiResolver,
-		VersionProvider:         versionProvider,
+		LaunchTemplateCache:                  launchTemplateCache,
+		SubnetCache:                          subnetCache,
+		AvailableIPAdressCache:               availableIPAdressCache,
+		AssociatePublicIPAddressCache:        associatePublicIPAddressCache,
+		SecurityGroupCache:                   securityGroupCache,
+		InstanceProfileCache:                 instanceProfileCache,
+		UnavailableOfferingsCache:            unavailableOfferingsCache,
+		SSMCache:                             ssmCache,
+		DiscoveredCapacityCache:              discoveredCapacityCache,
+		CapacityReservationCache:             capacityReservationCache,
+		CapacityReservationAvailabilityCache: capacityReservationAvailabilityCache,
+		ValidationCache:                      validationCache,
+
+		CapacityReservationProvider: capacityReservationProvider,
+		InstanceTypesResolver:       instanceTypesResolver,
+		InstanceTypesProvider:       instanceTypesProvider,
+		InstanceProvider:            instanceProvider,
+		SubnetProvider:              subnetProvider,
+		SecurityGroupProvider:       securityGroupProvider,
+		LaunchTemplateProvider:      launchTemplateProvider,
+		InstanceProfileProvider:     instanceProfileProvider,
+		PricingProvider:             pricingProvider,
+		AMIProvider:                 amiProvider,
+		AMIResolver:                 amiResolver,
+		VersionProvider:             versionProvider,
 	}
 }
 
@@ -197,6 +220,7 @@ func (env *Environment) Reset() {
 
 	env.EC2Cache.Flush()
 	env.UnavailableOfferingsCache.Flush()
+	env.OfferingCache.Flush()
 	env.LaunchTemplateCache.Flush()
 	env.SubnetCache.Flush()
 	env.AssociatePublicIPAddressCache.Flush()
@@ -205,6 +229,8 @@ func (env *Environment) Reset() {
 	env.InstanceProfileCache.Flush()
 	env.SSMCache.Flush()
 	env.DiscoveredCapacityCache.Flush()
+	env.CapacityReservationCache.Flush()
+	env.ValidationCache.Flush()
 	mfs, err := crmetrics.Registry.Gather()
 	if err != nil {
 		for _, mf := range mfs {
@@ -214,5 +240,35 @@ func (env *Environment) Reset() {
 				}
 			}
 		}
+	}
+}
+
+func NodeInstanceIDFieldIndexer(ctx context.Context) func(ctrlcache.Cache) error {
+	return func(c ctrlcache.Cache) error {
+		return c.IndexField(ctx, &corev1.Node{}, "spec.instanceID", func(obj client.Object) []string {
+			if obj.(*corev1.Node).Spec.ProviderID == "" {
+				return nil
+			}
+			id, e := utils.ParseInstanceID(obj.(*corev1.Node).Spec.ProviderID)
+			if e != nil || id == "" {
+				return nil
+			}
+			return []string{id}
+		})
+	}
+}
+
+func NodeClaimInstanceIDFieldIndexer(ctx context.Context) func(ctrlcache.Cache) error {
+	return func(c ctrlcache.Cache) error {
+		return c.IndexField(ctx, &karpv1.NodeClaim{}, "status.instanceID", func(obj client.Object) []string {
+			if obj.(*karpv1.NodeClaim).Status.ProviderID == "" {
+				return nil
+			}
+			id, e := utils.ParseInstanceID(obj.(*karpv1.NodeClaim).Status.ProviderID)
+			if e != nil || id == "" {
+				return nil
+			}
+			return []string{id}
+		})
 	}
 }

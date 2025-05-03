@@ -27,7 +27,7 @@ Here are things you should know about NodePools:
 Objects for setting Kubelet features have been moved from the NodePool spec to the EC2NodeClasses spec, to not require other Karpenter providers to support those features.
 {{% /alert %}}
 
-For some example `NodePool` configurations, see the [examples in the Karpenter GitHub repository](https://github.com/aws/karpenter/blob/v1.0.8/examples/v1/).
+For some example `NodePool` configurations, see the [examples in the Karpenter GitHub repository](https://github.com/aws/karpenter/blob/v1.0.9/examples/v1/).
 
 ```yaml
 apiVersion: karpenter.sh/v1
@@ -215,7 +215,7 @@ For example, an instance type may be specified using a nodeSelector in a pod spe
 
 Generally, instance types should be a list and not a single value. Leaving these requirements undefined is recommended, as it maximizes choices for efficiently placing pods.
 
-Review [AWS instance types](../instance-types). Most instance types are supported with the exclusion of [non-HVM](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/virtualization_types.html).
+Review [AWS instance types](../../reference/instance-types). Most instance types are supported with the exclusion of [non-HVM](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/virtualization_types.html).
 
 #### Availability Zones
 

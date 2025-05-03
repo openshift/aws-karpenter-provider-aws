@@ -100,15 +100,22 @@ spec:
   amiSelectorTerms:
     # Select on any AMI that has both the `karpenter.sh/discovery: ${CLUSTER_NAME}`
     # AND `environment: test` tags OR any AMI with the name `my-ami` OR an AMI with
-    # ID `ami-123`
+    # ID `ami-123` OR an AMI with ID matching the value of my-custom-parameter
     - tags:
         karpenter.sh/discovery: "${CLUSTER_NAME}"
         environment: test
     - name: my-ami
     - id: ami-123
+    - ssmParameter: my-custom-parameter # ssm parameter name or ARN
     # Select EKS optimized AL2023 AMIs with version `v20240703`. This term is mutually
     # exclusive and can't be specified with other terms.
     # - alias: al2023@v20240703
+
+  # Optional, each term in the array of capacityReservationSelectorTerms is ORed together.
+  capacityReservationSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: ${CLUSTER_NAME}
+    - id: cr-123
 
   # Optional, propagates tags to underlying EC2 resources
   tags:
@@ -187,6 +194,19 @@ status:
           operator: In
           values:
             - arm64
+
+  # Capacity Reservations
+  capacityReservations:
+    - availabilityZone: us-west-2a
+      id: cr-01234567890123456
+      instanceMatchCriteria: targeted
+      instanceType: g6.48xlarge
+      ownerID: "012345678901"
+    - availabilityZone: us-west-2c
+      id: cr-12345678901234567
+      instanceMatchCriteria: open
+      instanceType: g6.48xlarge
+      ownerID: "98765432109"
 
   # Generated instance profile name from "role"
   instanceProfile: "${CLUSTER_NAME}-0123456778901234567789"
@@ -428,6 +448,10 @@ spec:
 
 
 ### AL2
+
+{{% alert title="AL2 support dropped at Kubernetes 1.33" color="warning" %}}
+Kubernetes version 1.32 is the last version for which Amazon EKS will release Amazon Linux 2 (AL2) AMIs.
+{{% /alert %}}
 
 {{% alert title="Note" color="primary" %}}
 Note that Karpenter will automatically generate a call to the `/etc/eks/bootstrap.sh` script as part of its generated UserData. When using `amiFamily: AL2` you should not call this script yourself in `.spec.userData`. If you need to, use the [Custom AMI family]({{< ref "./nodeclasses/#custom" >}}) instead.
@@ -705,12 +729,13 @@ The example below shows how this selection logic is fulfilled.
 amiSelectorTerms:
   # Select on any AMI that has both the `karpenter.sh/discovery: ${CLUSTER_NAME}`
   # AND `environment: test` tags OR any AMI with the name `my-ami` OR an AMI with
-  # ID `ami-123`
+  # ID `ami-123` OR an AMI with ID matching the value of my-custom-parameter
   - tags:
       karpenter.sh/discovery: "${CLUSTER_NAME}"
       environment: test
   - name: my-ami
   - id: ami-123
+  - ssmParameter: my-custom-parameter # ssm parameter name or ARN
   # Select EKS optimized AL2023 AMIs with version `v20240807`. This term is mutually
   # exclusive and can't be specified with other terms.
   # - alias: al2023@v20240807
@@ -817,7 +842,7 @@ Select by name and owner:
     - name: my-ami
       owner: self
     - name: my-ami
-      owner: 0123456789
+      owner: "0123456789"
 ```
 
 Select by name using a wildcard:
@@ -840,6 +865,70 @@ Specify using ids:
   amiSelectorTerms:
     - id: "ami-123"
     - id: "ami-456"
+```
+
+Specify using custom ssm parameter name or ARN:
+```yaml
+  amiSelectorTerms:
+    - ssmParameter: "my-custom-parameter"
+```
+
+{{% alert title="Note" color="primary" %}}
+When using a custom SSM parameter, you'll need to expand the `ssm:GetParameter` permissions on the Karpenter IAM role to include your custom parameter, as the default policy only allows access to the AWS public parameters.
+{{% /alert %}}
+
+## spec.capacityReservationSelectorTerms
+
+<i class="fa-solid fa-circle-info"></i> <b>Feature State: </b> [Alpha]({{<ref "../reference/settings#feature-gates" >}})
+
+Capacity Reservation Selector Terms allow you to select [on-demand capacity reservations](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-capacity-reservations.html), which will be made available to NodePools which select the given EC2NodeClass.
+Karpenter will prioritize utilizing the capacity in these reservations before falling back to on-demand and spot.
+Capacity reservations can be discovered using ids or tags.
+
+This selection logic is modeled as terms.
+A term can specify an ID or a set of tags to select against.
+When specifying tags, it will select all capacity reservations accessible from the account with matching tags.
+This can be further restricted by specifying an owner ID.
+
+{{% alert title="Note" color="primary" %}}
+Note that the IAM role Karpenter assumes should have a permissions policy associated with it that grants it permissions to use the [ec2:DescribeCapacityReservations](https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonec2.html#amazonec2-DescribeCapacityReservations) action to discover capacity reservations and the [ec2:RunInstances](https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonec2.html#amazonec2-RunInstances) action to run instances in those capacity reservations.
+{{% /alert %}}
+
+#### Examples
+
+Select the reservations with the given IDs:
+
+```yaml
+spec:
+  capacityReservationSelectorTerms:
+  - id: cr-123
+  - id: cr-456
+```
+
+Select the reservations by tags:
+
+```yaml
+spec:
+  capacityReservationSelectorTerms:
+  # Select all capacity reservations which have both matching tags
+  - tags:
+      key1: foo
+      key2: bar
+  # Additionally, select all capacity reservations with the following matching tag
+  - tags:
+      key3: foobar
+```
+
+Select by tags and owner ID:
+
+```yaml
+spec:
+  # Select all capacity reservations with the matching tags which are also owned by
+  # the specified account.
+  capacityReservationSelectorTerms:
+  - tags:
+      key: foo
+    ownerID: 012345678901
 ```
 
 ## spec.tags
