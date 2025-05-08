@@ -5886,6 +5886,7 @@ below are the resources available with some assumptions and after the instance o
  |karpenter.k8s.aws/instance-hypervisor|nitro|
  |karpenter.k8s.aws/instance-local-nvme|940|
  |karpenter.k8s.aws/instance-memory|262144|
+ |karpenter.k8s.aws/instance-network-bandwidth|12500|
  |karpenter.k8s.aws/instance-size|6xlarge|
  |kubernetes.io/arch|amd64|
  |kubernetes.io/os|linux|
