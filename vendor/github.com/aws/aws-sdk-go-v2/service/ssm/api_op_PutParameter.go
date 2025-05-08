@@ -11,7 +11,7 @@ import (
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
-// Add a parameter to the system.
+// Create or update a parameter in Parameter Store.
 func (c *Client) PutParameter(ctx context.Context, params *PutParameterInput, optFns ...func(*Options)) (*PutParameterOutput, error) {
 	if params == nil {
 		params = &PutParameterInput{}
@@ -29,7 +29,7 @@ func (c *Client) PutParameter(ctx context.Context, params *PutParameterInput, op
 
 type PutParameterInput struct {
 
-	// The fully qualified name of the parameter that you want to add to the system.
+	// The fully qualified name of the parameter that you want to create or update.
 	//
 	// You can't enter the Amazon Resource Name (ARN) for a parameter, only the
 	// parameter name itself.
@@ -76,7 +76,8 @@ type PutParameterInput struct {
 	// have a value limit of 4 KB. Advanced parameters have a value limit of 8 KB.
 	//
 	// Parameters can't be referenced or nested in the values of other parameters. You
-	// can't include {{}} or {{ssm:parameter-name}} in a parameter value.
+	// can't include values wrapped in double brackets {{}} or {{ssm:parameter-name}}
+	// in a parameter value.
 	//
 	// This member is required.
 	Value *string
@@ -129,7 +130,7 @@ type PutParameterInput struct {
 	// use the SecureString data type.
 	//
 	// If you don't specify a key ID, the system uses the default key associated with
-	// your Amazon Web Services account which is not as secure as using a custom key.
+	// your Amazon Web Services account, which is not as secure as using a custom key.
 	//
 	//   - To use a custom KMS key, choose the SecureString data type with the Key ID
 	//   parameter.
@@ -139,8 +140,8 @@ type PutParameterInput struct {
 	Overwrite *bool
 
 	// One or more policies to apply to a parameter. This operation takes a JSON
-	// array. Parameter Store, a capability of Amazon Web Services Systems Manager
-	// supports the following policy types:
+	// array. Parameter Store, a tool in Amazon Web Services Systems Manager supports
+	// the following policy types:
 	//
 	// Expiration: This policy deletes the parameter after it expires. When you create
 	// the policy, you specify the expiration date. You can update the expiration date
@@ -247,7 +248,7 @@ type PutParameterInput struct {
 	// [Managing parameter tiers]: https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-store-advanced-parameters.html
 	Tier types.ParameterTier
 
-	// The type of parameter that you want to add to the system.
+	// The type of parameter that you want to create.
 	//
 	// SecureString isn't currently supported for CloudFormation templates.
 	//
@@ -343,6 +344,9 @@ func (c *Client) addOperationPutParameterMiddlewares(stack *middleware.Stack, op
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {
+		return err
+	}
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpPutParameterValidationMiddleware(stack); err != nil {

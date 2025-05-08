@@ -1,3 +1,38 @@
+# v1.34.0 (2025-02-28)
+
+* **Feature**: Update GetProducts and DescribeServices API request input validations.
+
+# v1.33.0 (2025-02-27)
+
+* **Feature**: Track credential providers via User-Agent Feature ids
+* **Dependency Update**: Updated to the latest SDK module versions
+
+# v1.32.17 (2025-02-18)
+
+* **Bug Fix**: Bump go version to 1.22
+* **Dependency Update**: Updated to the latest SDK module versions
+
+# v1.32.16 (2025-02-05)
+
+* **Dependency Update**: Updated to the latest SDK module versions
+
+# v1.32.15 (2025-02-04)
+
+* No change notes available for this release.
+
+# v1.32.14 (2025-01-31)
+
+* **Dependency Update**: Updated to the latest SDK module versions
+
+# v1.32.13 (2025-01-30)
+
+* **Dependency Update**: Updated to the latest SDK module versions
+
+# v1.32.12 (2025-01-24)
+
+* **Dependency Update**: Updated to the latest SDK module versions
+* **Dependency Update**: Upgrade to smithy-go v1.22.2.
+
 # v1.32.11 (2025-01-17)
 
 * **Bug Fix**: Fix bug where credentials weren't refreshed during retry loop.
