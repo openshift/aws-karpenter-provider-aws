@@ -108,9 +108,9 @@ controller:
     # -- Repository path to the controller image.
     repository: public.ecr.aws/karpenter/controller
     # -- Tag of the controller image.
-    tag: 1.2.3
+    tag: 1.3.4
     # -- SHA256 digest of the controller image.
-    digest: sha256:3db4c69a249ce44c5a0df7a0057c8caa2391c0d98565d369785d149ccce70c8a
+    digest: sha256:b5a13b0afd8319b7a0b7d2ce2257a1a085beb6f4032c4ae656b480f75ef930f4
   # -- Additional environment variables for the controller pod.
   env: []
   # - name: AWS_REGION
@@ -184,9 +184,12 @@ settings:
   # -- Feature Gate configuration values. Feature Gates will follow the same graduation process and requirements as feature gates
   # in Kubernetes. More information here https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features
   featureGates:
-    # -- spotToSpotConsolidation is ALPHA and is disabled by default.
-    # Setting this to true will enable spot replacement consolidation for both single and multi-node consolidation.
-    spotToSpotConsolidation: false
     # -- nodeRepair is ALPHA and is disabled by default.
     # Setting this to true will enable node repair.
     nodeRepair: false
+    # -- reservedCapacity is ALPHA and is disabled by default.
+    # Setting this will enable native on-demand capacity reservation support.
+    reservedCapacity: false
+    # -- spotToSpotConsolidation is ALPHA and is disabled by default.
+    # Setting this to true will enable spot replacement consolidation for both single and multi-node consolidation.
+    spotToSpotConsolidation: false

@@ -691,13 +691,13 @@ func (env *Environment) EventuallyExpectNodesUntaintedWithTimeout(timeout time.D
 	}).WithTimeout(timeout).Should(Succeed())
 }
 
-func (env *Environment) EventuallyExpectNodeClaimCount(comparator string, count int) []*karpv1.NodeClaim {
+func (env *Environment) EventuallyExpectLaunchedNodeClaimCount(comparator string, count int) []*karpv1.NodeClaim {
 	GinkgoHelper()
 	By(fmt.Sprintf("waiting for nodes to be %s to %d", comparator, count))
 	nodeClaimList := &karpv1.NodeClaimList{}
 	Eventually(func(g Gomega) {
 		g.Expect(env.Client.List(env, nodeClaimList, client.HasLabels{test.DiscoveryLabel})).To(Succeed())
-		g.Expect(len(nodeClaimList.Items)).To(BeNumerically(comparator, count),
+		g.Expect(lo.CountBy(nodeClaimList.Items, func(nc karpv1.NodeClaim) bool { return nc.StatusConditions().IsTrue(karpv1.ConditionTypeLaunched) })).To(BeNumerically(comparator, count),
 			fmt.Sprintf("expected %d nodeclaims, had %d (%v)", count, len(nodeClaimList.Items), NodeClaimNames(lo.ToSlicePtr(nodeClaimList.Items))))
 	}).Should(Succeed())
 	return lo.ToSlicePtr(nodeClaimList.Items)
@@ -1011,7 +1011,7 @@ func (env *Environment) GetDaemonSetCount(np *karpv1.NodePool) int {
 	return lo.CountBy(daemonSetList.Items, func(d appsv1.DaemonSet) bool {
 		p := &corev1.Pod{Spec: d.Spec.Template.Spec}
 		nodeClaimTemplate := pscheduling.NewNodeClaimTemplate(np)
-		if err := scheduling.Taints(nodeClaimTemplate.Spec.Taints).Tolerates(p); err != nil {
+		if err := scheduling.Taints(nodeClaimTemplate.Spec.Taints).ToleratesPod(p); err != nil {
 			return false
 		}
 		if err := nodeClaimTemplate.Requirements.Compatible(scheduling.NewPodRequirements(p), scheduling.AllowUndefinedWellKnownLabels); err != nil {
@@ -1032,7 +1032,7 @@ func (env *Environment) GetDaemonSetOverhead(np *karpv1.NodePool) corev1.Resourc
 	return coreresources.RequestsForPods(lo.FilterMap(daemonSetList.Items, func(ds appsv1.DaemonSet, _ int) (*corev1.Pod, bool) {
 		p := &corev1.Pod{Spec: ds.Spec.Template.Spec}
 		nodeClaimTemplate := pscheduling.NewNodeClaimTemplate(np)
-		if err := scheduling.Taints(nodeClaimTemplate.Spec.Taints).Tolerates(p); err != nil {
+		if err := scheduling.Taints(nodeClaimTemplate.Spec.Taints).ToleratesPod(p); err != nil {
 			return nil, false
 		}
 		if err := nodeClaimTemplate.Requirements.Compatible(scheduling.NewPodRequirements(p), scheduling.AllowUndefinedWellKnownLabels); err != nil {
