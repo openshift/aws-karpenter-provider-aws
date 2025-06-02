@@ -85,8 +85,8 @@ type UpdateClusterConfigInput struct {
 	KubernetesNetworkConfig *types.KubernetesNetworkConfigRequest
 
 	// Enable or disable exporting the Kubernetes control plane logs for your cluster
-	// to CloudWatch Logs. By default, cluster control plane logs aren't exported to
-	// CloudWatch Logs. For more information, see [Amazon EKS cluster control plane logs]in the Amazon EKS User Guide .
+	// to CloudWatch Logs . By default, cluster control plane logs aren't exported to
+	// CloudWatch Logs . For more information, see [Amazon EKS cluster control plane logs]in the Amazon EKS User Guide .
 	//
 	// CloudWatch Logs ingestion, archive storage, and data scanning rates apply to
 	// exported control plane logs. For more information, see [CloudWatch Pricing].
@@ -202,6 +202,9 @@ func (c *Client) addOperationUpdateClusterConfigMiddlewares(stack *middleware.St
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {
+		return err
+	}
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addIdempotencyToken_opUpdateClusterConfigMiddleware(stack, options); err != nil {

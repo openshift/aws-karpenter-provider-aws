@@ -16,7 +16,7 @@ limitations under the License.
 
 package pricing
 
-// generated at 2025-01-20T13:09:45Z for us-east-1
+// generated at 2025-03-03T13:10:55Z for us-east-1
 
 import ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
@@ -59,6 +59,10 @@ var InitialOnDemandPricesUSGov = map[string]map[ec2types.InstanceType]float64{
 		"c7g.12xlarge": 2.080800, "c7g.16xlarge": 2.774400, "c7g.2xlarge": 0.346800, "c7g.4xlarge": 0.693600,
 		"c7g.8xlarge": 1.387200, "c7g.large": 0.086700, "c7g.medium": 0.043400, "c7g.metal": 2.774400,
 		"c7g.xlarge": 0.173400,
+		// c7gd family
+		"c7gd.12xlarge": 2.630900, "c7gd.16xlarge": 3.507800, "c7gd.2xlarge": 0.438500, "c7gd.4xlarge": 0.877000,
+		"c7gd.8xlarge": 1.753900, "c7gd.large": 0.109600, "c7gd.medium": 0.054800, "c7gd.metal": 3.507800,
+		"c7gd.xlarge": 0.219200,
 		// c7i family
 		"c7i.12xlarge": 2.570400, "c7i.16xlarge": 3.427200, "c7i.24xlarge": 5.140800, "c7i.2xlarge": 0.428400,
 		"c7i.48xlarge": 10.281600, "c7i.4xlarge": 0.856800, "c7i.8xlarge": 1.713600, "c7i.large": 0.107100,
@@ -113,6 +117,10 @@ var InitialOnDemandPricesUSGov = map[string]map[ec2types.InstanceType]float64{
 		"m6i.12xlarge": 2.904000, "m6i.16xlarge": 3.872000, "m6i.24xlarge": 5.808000, "m6i.2xlarge": 0.484000,
 		"m6i.32xlarge": 7.744000, "m6i.4xlarge": 0.968000, "m6i.8xlarge": 1.936000, "m6i.large": 0.121000,
 		"m6i.metal": 7.744000, "m6i.xlarge": 0.242000,
+		// m7g family
+		"m7g.12xlarge": 2.467200, "m7g.16xlarge": 3.289600, "m7g.2xlarge": 0.411200, "m7g.4xlarge": 0.822400,
+		"m7g.8xlarge": 1.644800, "m7g.large": 0.102800, "m7g.medium": 0.051400, "m7g.metal": 3.289600,
+		"m7g.xlarge": 0.205600,
 		// m7i-flex family
 		"m7i-flex.12xlarge": 2.896800, "m7i-flex.16xlarge": 3.862400, "m7i-flex.2xlarge": 0.482800,
 		"m7i-flex.4xlarge": 0.965600, "m7i-flex.8xlarge": 1.931200, "m7i-flex.large": 0.120700,

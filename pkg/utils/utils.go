@@ -23,6 +23,9 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+
+	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 
 	"github.com/samber/lo"
 )
@@ -82,4 +85,29 @@ func WithDefaultFloat64(key string, def float64) float64 {
 		return def
 	}
 	return f
+}
+
+func GetTags(nodeClass *v1.EC2NodeClass, nodeClaim *karpv1.NodeClaim, clusterName string) (map[string]string, error) {
+	var invalidTags []string
+	for key := range nodeClass.Spec.Tags {
+		for _, exp := range v1.RestrictedTagPatterns {
+			if exp.MatchString(key) {
+				invalidTags = append(invalidTags, key)
+				break
+			}
+		}
+	}
+	if len(invalidTags) != 0 {
+		quotedTags := lo.Map(invalidTags, func(tag string, _ int) string {
+			return fmt.Sprintf("%q", tag)
+		})
+		return nil, fmt.Errorf("the following tags failed validation requirements (%s)", strings.Join(quotedTags, ", "))
+	}
+	staticTags := map[string]string{
+		fmt.Sprintf("kubernetes.io/cluster/%s", clusterName): "owned",
+		karpv1.NodePoolLabelKey:                              nodeClaim.Labels[karpv1.NodePoolLabelKey],
+		v1.EKSClusterNameTagKey:                              clusterName,
+		v1.LabelNodeClass:                                    nodeClass.Name,
+	}
+	return lo.Assign(nodeClass.Spec.Tags, staticTags), nil
 }
