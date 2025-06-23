@@ -29,7 +29,7 @@ func InsufficientCapacityErrorEvent(nodeClaim *v1.NodeClaim, err error) events.E
 	return events.Event{
 		InvolvedObject: nodeClaim,
 		Type:           corev1.EventTypeWarning,
-		Reason:         "InsufficientCapacityError",
+		Reason:         events.InsufficientCapacityError,
 		Message:        fmt.Sprintf("NodeClaim %s event: %s", nodeClaim.Name, truncateMessage(err.Error())),
 		DedupeValues:   []string{string(nodeClaim.UID)},
 	}
@@ -39,7 +39,7 @@ func NodeClassNotReadyEvent(nodeClaim *v1.NodeClaim, err error) events.Event {
 	return events.Event{
 		InvolvedObject: nodeClaim,
 		Type:           corev1.EventTypeWarning,
-		Reason:         "NodeClassNotReady",
+		Reason:         events.NodeClassNotReady,
 		Message:        fmt.Sprintf("NodeClaim %s event: %s", nodeClaim.Name, truncateMessage(err.Error())),
 		DedupeValues:   []string{string(nodeClaim.UID)},
 	}
@@ -49,7 +49,7 @@ func UnregisteredTaintMissingEvent(nodeClaim *v1.NodeClaim) events.Event {
 	return events.Event{
 		InvolvedObject: nodeClaim,
 		Type:           corev1.EventTypeWarning,
-		Reason:         "UnregisteredTaintMissing",
+		Reason:         events.UnregisteredTaintMissing,
 		Message:        fmt.Sprintf("Missing %s taint which prevents registration related race conditions on Karpenter-managed nodes", v1.UnregisteredTaintKey),
 		DedupeValues:   []string{string(nodeClaim.UID)},
 	}
