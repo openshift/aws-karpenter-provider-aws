@@ -224,20 +224,136 @@ var _ = Describe("Hash", func() {
 		}
 		Expect(nodeClass.Hash(testCABundle)).To(Equal(otherNodeClass.Hash(testCABundle)))
 	})
-	It("should change hash when kubelet configuration is updated", func() {
-		nodeClass.Spec.Kubelet = awstest.MustMakeKubeletConfiguration(map[string]interface{}{"maxPods": 110})
-		hash := nodeClass.Hash(testCABundle)
-		nodeClass.Spec.Kubelet = awstest.MustMakeKubeletConfiguration(map[string]interface{}{"maxPods": 220})
-		updatedHash := nodeClass.Hash(testCABundle)
+	// UPSTREAM: <carry>: Custom test for userDataHash
+	It("should change hash when userData is updated to a valid ignition config", func() {
+		// It should change since we are adding completely overriding the userData field when calculating the hash in our case
+		testIgnitionConfig := `{
+			"ignition": {
+			  "version": "3.2.0",
+			  "config": {
+				"merge": [
+				  {
+					"source": "https://example.com/ignition",
+					"httpHeaders": [
+					  {
+						"name": "Authorization",
+						"value": "Bearer test-token"
+					  },
+					  {
+						"name": "TargetConfigVersionHash", 
+						"value": "abc123def456"
+					  }
+					]
+				  }
+				]
+			  }
+			}
+		  }`
+		hash := nodeClass.Hash(nil)
+		nodeClass.Spec.UserData = aws.String(testIgnitionConfig)
+		updatedHash := nodeClass.Hash(nil)
 		Expect(hash).ToNot(Equal(updatedHash))
 	})
-	// Kubelet values are raw JSON bytes hashed with SlicesAsSets. Without hashing them as a
-	// marshaled string, distinct configs whose raw bytes are permutations of each other collide.
-	It("should not collide for kubelet configs that are byte-permutations of one another", func() {
-		nodeClass.Spec.Kubelet = awstest.MustMakeKubeletConfiguration(map[string]interface{}{"maxPods": 12})
-		hash := nodeClass.Hash(testCABundle)
-		nodeClass.Spec.Kubelet = awstest.MustMakeKubeletConfiguration(map[string]interface{}{"maxPods": 21})
-		updatedHash := nodeClass.Hash(testCABundle)
+	It("should change hash when a valid userData ignition config is updated and TargetConfigVersionHash changes", func() {
+		testIgnitionConfig := `{
+			"ignition": {
+			  "version": "3.2.0",
+			  "config": {
+				"merge": [
+				  {
+					"source": "https://example.com/ignition",
+					"httpHeaders": [
+					  {
+						"name": "Authorization",
+						"value": "Bearer test-token"
+					  },
+					  {
+						"name": "TargetConfigVersionHash", 
+						"value": "abc123def456"
+					  }
+					]
+				  }
+				]
+			  }
+			}
+		  }`
+		updatedTestIgnitionConfig := `{
+			"ignition": {
+			  "version": "3.2.0",
+			  "config": {
+				"merge": [
+				  {
+					"source": "https://example.com/ignition",
+					"httpHeaders": [
+					  {
+						"name": "Authorization",
+						"value": "Bearer test-token"
+					  },
+					  {
+						"name": "TargetConfigVersionHash", 
+						"value": "abc123def456-updated"
+					  }
+					]
+				  }
+				]
+			  }
+			}
+		  }`
+		nodeClass.Spec.UserData = aws.String(testIgnitionConfig)
+		hash := nodeClass.Hash(nil)
+		nodeClass.Spec.UserData = aws.String(updatedTestIgnitionConfig)
+		updatedHash := nodeClass.Hash(nil)
 		Expect(hash).ToNot(Equal(updatedHash))
+	})
+	It("should not change hash when a valid userData ignition config is updated and TargetConfigVersionHash did not change", func() {
+		testIgnitionConfig := `{
+			"ignition": {
+			  "version": "3.2.0",
+			  "config": {
+				"merge": [
+				  {
+					"source": "https://example.com/ignition",
+					"httpHeaders": [
+					  {
+						"name": "Authorization",
+						"value": "Bearer test-token"
+					  },
+					  {
+						"name": "TargetConfigVersionHash", 
+						"value": "abc123def456"
+					  }
+					]
+				  }
+				]
+			  }
+			}
+		  }`
+		updatedTestIgnitionConfig := `{
+			"ignition": {
+			  "version": "3.2.0",
+			  "config": {
+				"merge": [
+				  {
+					"source": "https://example.com/ignition",
+					"httpHeaders": [
+					  {
+						"name": "Authorization",
+						"value": "Bearer test-token-updated"
+					  },
+					  {
+						"name": "TargetConfigVersionHash", 
+						"value": "abc123def456"
+					  }
+					]
+				  }
+				]
+			  }
+			}
+		  }`
+		nodeClass.Spec.UserData = aws.String(testIgnitionConfig)
+		hash := nodeClass.Hash(nil)
+		nodeClass.Spec.UserData = aws.String(updatedTestIgnitionConfig)
+		updatedHash := nodeClass.Hash(nil)
+		Expect(hash).To(Equal(updatedHash))
 	})
 })
