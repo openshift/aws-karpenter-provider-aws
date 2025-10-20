@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/operator/options"
 	"sigs.k8s.io/karpenter/pkg/test"
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
@@ -62,7 +63,7 @@ var _ = BeforeEach(func() {
 })
 var _ = AfterEach(func() { env.Cleanup() })
 var _ = AfterEach(func() { env.AfterEach() })
-var _ = Describe("Scheduling", Ordered, ContinueOnFailure, func() {
+var _ = DescribeTableSubtree("Scheduling", Ordered, ContinueOnFailure, func(minValuesPolicy options.MinValuesPolicy) {
 	var selectors sets.Set[string]
 
 	BeforeEach(func() {
@@ -81,6 +82,7 @@ var _ = Describe("Scheduling", Ordered, ContinueOnFailure, func() {
 				},
 			},
 		)
+		env.ExpectSettingsOverridden(corev1.EnvVar{Name: "MIN_VALUES_POLICY", Value: string(minValuesPolicy)})
 	})
 	BeforeAll(func() {
 		selectors = sets.New[string]()
@@ -365,6 +367,54 @@ var _ = Describe("Scheduling", Ordered, ContinueOnFailure, func() {
 			env.ExpectCreated(nodeClass, nodePool, pod)
 			env.EventuallyExpectHealthy(pod)
 			env.ExpectCreatedNodeCount("==", 1)
+		})
+		It("should honor minValuesPolicy when provisioning a node", func() {
+			eventClient := debug.NewEventClient(env.Client)
+			pod := test.Pod()
+			nodePoolWithMinValues := test.ReplaceRequirements(nodePool, karpv1.NodeSelectorRequirementWithMinValues{
+				NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+					Key:      corev1.LabelInstanceTypeStable,
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{"c5.large", "invalid-instance-type-1", "invalid-instance-type-2"},
+				},
+				MinValues: lo.ToPtr(3),
+			})
+			env.ExpectCreated(nodeClass, nodePoolWithMinValues, pod)
+
+			// minValues should only be relaxed when policy is set to BestEffort
+			if minValuesPolicy == options.MinValuesPolicyBestEffort {
+				env.EventuallyExpectHealthy(pod)
+				env.ExpectCreatedNodeCount("==", 1)
+				nodeClaim := env.ExpectNodeClaimCount("==", 1)
+				Expect(nodeClaim[0].Annotations).To(HaveKeyWithValue(karpv1.NodeClaimMinValuesRelaxedAnnotationKey, "true"))
+				Expect(nodeClaim[0].Spec.Requirements).To(ContainElement(karpv1.NodeSelectorRequirementWithMinValues{
+					NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+						Key:      corev1.LabelInstanceTypeStable,
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"c5.large"},
+					},
+					MinValues: lo.ToPtr(1),
+				}))
+			} else {
+				env.ExpectExists(pod)
+				// Give a min for the scheduling decision to be done.
+				env.ConsistentlyExpectPendingPods(time.Minute, pod)
+				env.EventuallyExpectNodeCount("==", 0)
+				env.ExpectNodeClaimCount("==", 0)
+				events, err := eventClient.GetEvents(env.Context, "NodePool")
+				Expect(err).ToNot(HaveOccurred())
+				key, found := lo.FindKeyBy(events, func(k corev1.ObjectReference, v *corev1.EventList) bool {
+					return k.Name == nodePoolWithMinValues.Name &&
+						k.Namespace == nodePoolWithMinValues.Namespace
+				})
+				Expect(found).To(BeTrue())
+				_, found = lo.Find(events[key].Items, func(e corev1.Event) bool {
+					return e.InvolvedObject.Name == nodePoolWithMinValues.Name &&
+						e.InvolvedObject.Namespace == nodePoolWithMinValues.Namespace &&
+						e.Message == "NodePool requirements filtered out all compatible available instance types due to minValues incompatibility"
+				})
+				Expect(found).To(BeTrue())
+			}
 		})
 		It("should provision a node for a deployment", Label(debug.NoWatch), Label(debug.NoEvents), func() {
 			deployment := test.Deployment(test.DeploymentOptions{Replicas: 50})
@@ -706,7 +756,162 @@ var _ = Describe("Scheduling", Ordered, ContinueOnFailure, func() {
 			}
 		})
 	})
-})
+
+	Context("Capacity Reservations", func() {
+		var largeCapacityReservationID, xlargeCapacityReservationID string
+		BeforeAll(func() {
+			largeCapacityReservationID = environmentaws.ExpectCapacityReservationCreated(
+				env.Context,
+				env.EC2API,
+				ec2types.InstanceTypeM5Large,
+				env.ZoneInfo[0].Zone,
+				1,
+				nil,
+				nil,
+			)
+			xlargeCapacityReservationID = environmentaws.ExpectCapacityReservationCreated(
+				env.Context,
+				env.EC2API,
+				ec2types.InstanceTypeM5Xlarge,
+				env.ZoneInfo[0].Zone,
+				2,
+				nil,
+				nil,
+			)
+		})
+		AfterAll(func() {
+			environmentaws.ExpectCapacityReservationsCanceled(env.Context, env.EC2API, largeCapacityReservationID, xlargeCapacityReservationID)
+		})
+		BeforeEach(func() {
+			nodeClass.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{
+				{
+					ID: largeCapacityReservationID,
+				},
+				{
+					ID: xlargeCapacityReservationID,
+				},
+			}
+			nodePool.Spec.Template.Spec.Requirements = []karpv1.NodeSelectorRequirementWithMinValues{
+				{
+					NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+						Key:      karpv1.CapacityTypeLabelKey,
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{karpv1.CapacityTypeOnDemand, karpv1.CapacityTypeReserved},
+					},
+				},
+				// We need to specify the OS label to prevent a daemonset with a Windows specific resource from scheduling against
+				// the node. Omitting this requirement will result in scheduling failures.
+				{
+					NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+						Key:      corev1.LabelOSStable,
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{string(corev1.Linux)},
+					},
+				},
+			}
+		})
+		It("should schedule against a specific reservation ID", func() {
+			selectors.Insert(v1.LabelCapacityReservationID)
+			pod := test.Pod(test.PodOptions{
+				NodeRequirements: []corev1.NodeSelectorRequirement{{
+					Key:      v1.LabelCapacityReservationID,
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{xlargeCapacityReservationID},
+				}},
+			})
+			env.ExpectCreated(nodePool, nodeClass, pod)
+
+			nc := env.EventuallyExpectLaunchedNodeClaimCount("==", 1)[0]
+			req, ok := lo.Find(nc.Spec.Requirements, func(req karpv1.NodeSelectorRequirementWithMinValues) bool {
+				return req.Key == v1.LabelCapacityReservationID
+			})
+			Expect(ok).To(BeTrue())
+			Expect(req.Values).To(ConsistOf(xlargeCapacityReservationID))
+
+			env.EventuallyExpectNodeClaimsReady(nc)
+			n := env.EventuallyExpectNodeCount("==", 1)[0]
+			Expect(n.Labels).To(HaveKeyWithValue(karpv1.CapacityTypeLabelKey, karpv1.CapacityTypeReserved))
+			Expect(n.Labels).To(HaveKeyWithValue(v1.LabelCapacityReservationType, string(v1.CapacityReservationTypeDefault)))
+			Expect(n.Labels).To(HaveKeyWithValue(v1.LabelCapacityReservationID, xlargeCapacityReservationID))
+		})
+		// NOTE: We're not exercising capacity blocks because it isn't possible to provision them ad-hoc for the use in an
+		// integration test.
+		It("should schedule against a specific reservation type", func() {
+			selectors.Insert(v1.LabelCapacityReservationType)
+			pod := test.Pod(test.PodOptions{
+				NodeRequirements: []corev1.NodeSelectorRequirement{
+					{
+						Key:      v1.LabelCapacityReservationType,
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{string(v1.CapacityReservationTypeDefault)},
+					},
+					// NOTE: Continue to select the xlarge instance to ensure we can use the large instance for the fallback test. ODCR
+					// capacity eventual consistency is inconsistent between different services (e.g. DescribeCapacityReservations and
+					// RunInstances) so we've allocated enough to ensure that each test can make use of them without overlapping.
+					{
+						Key:      corev1.LabelInstanceTypeStable,
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{string(ec2types.InstanceTypeM5Xlarge)},
+					},
+				},
+			})
+			env.ExpectCreated(nodePool, nodeClass, pod)
+
+			nc := env.EventuallyExpectLaunchedNodeClaimCount("==", 1)[0]
+			req, ok := lo.Find(nc.Spec.Requirements, func(req karpv1.NodeSelectorRequirementWithMinValues) bool {
+				return req.Key == v1.LabelCapacityReservationType
+			})
+			Expect(ok).To(BeTrue())
+			Expect(req.Values).To(ConsistOf(string(v1.CapacityReservationTypeDefault)))
+
+			env.EventuallyExpectNodeClaimsReady(nc)
+			n := env.EventuallyExpectNodeCount("==", 1)[0]
+			Expect(n.Labels).To(HaveKeyWithValue(karpv1.CapacityTypeLabelKey, karpv1.CapacityTypeReserved))
+			Expect(n.Labels).To(HaveKeyWithValue(v1.LabelCapacityReservationType, string(v1.CapacityReservationTypeDefault)))
+			Expect(n.Labels).To(HaveKeyWithValue(v1.LabelCapacityReservationID, xlargeCapacityReservationID))
+		})
+		It("should fall back when compatible capacity reservations are exhausted", func() {
+			// We create two pods with self anti-affinity and a node selector on a specific instance type. The anti-affinity term
+			// ensures that we must provision 2 nodes, and the node selector selects upon an instance type with a single reserved
+			// instance available. As such, we should create a reserved NodeClaim for one pod, and an on-demand NodeClaim for the
+			// other.
+			podLabels := map[string]string{"foo": "bar"}
+			pods := test.Pods(2, test.PodOptions{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: podLabels,
+				},
+				NodeRequirements: []corev1.NodeSelectorRequirement{{
+					Key:      corev1.LabelInstanceTypeStable,
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{string(ec2types.InstanceTypeM5Large)},
+				}},
+				PodAntiRequirements: []corev1.PodAffinityTerm{{
+					TopologyKey: corev1.LabelHostname,
+					LabelSelector: &metav1.LabelSelector{
+						MatchLabels: podLabels,
+					},
+				}},
+			})
+			env.ExpectCreated(nodePool, nodeClass, pods[0], pods[1])
+
+			reservedCount := 0
+			for _, nc := range env.EventuallyExpectLaunchedNodeClaimCount("==", 2) {
+				req, ok := lo.Find(nc.Spec.Requirements, func(req karpv1.NodeSelectorRequirementWithMinValues) bool {
+					return req.Key == v1.LabelCapacityReservationID
+				})
+				if ok {
+					reservedCount += 1
+					Expect(req.Values).To(ConsistOf(largeCapacityReservationID))
+				}
+			}
+			Expect(reservedCount).To(Equal(1))
+			env.EventuallyExpectNodeCount("==", 2)
+		})
+	})
+},
+	Entry("MinValuesPolicyBestEffort", options.MinValuesPolicyBestEffort),
+	Entry("MinValuesPolicyStrict", options.MinValuesPolicyStrict),
+)
 
 func ephemeralInitContainer(requirements corev1.ResourceRequirements) corev1.Container {
 	return corev1.Container{

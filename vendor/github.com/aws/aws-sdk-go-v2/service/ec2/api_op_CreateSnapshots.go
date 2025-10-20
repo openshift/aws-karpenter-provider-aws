@@ -69,7 +69,7 @@ type CreateSnapshotsInput struct {
 	//   - To create local snapshots in the same Local Zone as the source instance,
 	//   specify local .
 	//
-	//   - To create a regional snapshots in the parent Region of the Local Zone,
+	//   - To create regional snapshots in the parent Region of the Local Zone,
 	//   specify regional or omit this parameter.
 	//
 	// Default value: regional
@@ -169,6 +169,9 @@ func (c *Client) addOperationCreateSnapshotsMiddlewares(stack *middleware.Stack,
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {
+		return err
+	}
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpCreateSnapshotsValidationMiddleware(stack); err != nil {

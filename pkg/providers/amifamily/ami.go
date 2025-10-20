@@ -17,6 +17,8 @@ package amifamily
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -26,15 +28,16 @@ import (
 	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
 	"k8s.io/utils/clock"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/aws/karpenter-provider-aws/pkg/errors"
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 	sdk "github.com/aws/karpenter-provider-aws/pkg/aws"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/version"
 
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
-	"sigs.k8s.io/karpenter/pkg/utils/pretty"
 
 	"github.com/aws/karpenter-provider-aws/pkg/providers/ssm"
 )
@@ -49,7 +52,6 @@ type DefaultProvider struct {
 	clk             clock.Clock
 	cache           *cache.Cache
 	ec2api          sdk.EC2API
-	cm              *pretty.ChangeMonitor
 	versionProvider version.Provider
 	ssmProvider     ssm.Provider
 }
@@ -59,7 +61,6 @@ func NewDefaultProvider(clk clock.Clock, versionProvider version.Provider, ssmPr
 		clk:             clk,
 		cache:           cache,
 		ec2api:          ec2api,
-		cm:              pretty.NewChangeMonitor(),
 		versionProvider: versionProvider,
 		ssmProvider:     ssmProvider,
 	}
@@ -78,19 +79,23 @@ func (p *DefaultProvider) List(ctx context.Context, nodeClass *v1.EC2NodeClass) 
 		return nil, err
 	}
 	amis.Sort()
-	uniqueAMIs := lo.Uniq(lo.Map(amis, func(a AMI, _ int) string { return a.AmiID }))
-	if p.cm.HasChanged(fmt.Sprintf("amis/%s", nodeClass.Name), uniqueAMIs) {
-		log.FromContext(ctx).WithValues(
-			"ids", uniqueAMIs).V(1).Info("discovered amis")
-	}
 	return amis, nil
 }
 
+//nolint:gocyclo
 func (p *DefaultProvider) DescribeImageQueries(ctx context.Context, nodeClass *v1.EC2NodeClass) ([]DescribeImageQuery, error) {
 	// Aliases are mutually exclusive, both on the term level and field level within a term.
 	// This is enforced by a CEL validation, we will treat this as an invariant.
 	if alias := nodeClass.Alias(); alias != nil {
 		kubernetesVersion := p.versionProvider.Get(ctx)
+		if alias.Family == v1.AMIFamilyAL2 {
+			minorVersion, err := strconv.Atoi(strings.Split(kubernetesVersion, ".")[1])
+			if err == nil && minorVersion >= 33 {
+				return nil, &AL2DeprecationError{
+					error: fmt.Errorf("AL2 aliases are no longer supported on EKS 1.33+ (see https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions-standard.html#kubernetes-1-33)"),
+				}
+			}
+		}
 		query, err := GetAMIFamily(alias.Family, nil).DescribeImageQuery(ctx, p.ssmProvider, kubernetesVersion, alias.Version)
 		if err != nil {
 			return []DescribeImageQuery{}, err
@@ -104,6 +109,23 @@ func (p *DefaultProvider) DescribeImageQueries(ctx context.Context, nodeClass *v
 		switch {
 		case term.ID != "":
 			idFilter.Values = append(idFilter.Values, term.ID)
+		case term.SSMParameter != "":
+			imageID, err := p.ssmProvider.Get(ctx, ssm.Parameter{
+				Name: term.SSMParameter,
+				Type: ssm.CustomParameterType,
+			})
+			if err != nil {
+				if !errors.IsNotFound(err) {
+					return []DescribeImageQuery{}, fmt.Errorf("resolving ssm parameter, %w", err)
+				}
+				log.FromContext(ctx).WithValues("ssmParameter", term.SSMParameter).V(1).Error(err, "parameter not found")
+				continue
+			}
+			if !strings.HasPrefix(imageID, "ami-") {
+				log.FromContext(ctx).WithValues("ssmParameter", term.SSMParameter, "id", imageID).V(1).Error(nil, "parameter value is an invalid AMI ID")
+				continue
+			}
+			idFilter.Values = append(idFilter.Values, imageID)
 		default:
 			query := DescribeImageQuery{
 				Owners: lo.Ternary(term.Owner != "", []string{term.Owner}, []string{}),
@@ -203,7 +225,6 @@ func MapToInstanceTypes(instanceTypes []*cloudprovider.InstanceType, amis []v1.A
 		for _, ami := range amis {
 			if err := instanceType.Requirements.Compatible(
 				scheduling.NewNodeSelectorRequirements(ami.Requirements...),
-				scheduling.AllowUndefinedWellKnownLabels,
 			); err == nil {
 				amiIDs[ami.ID] = append(amiIDs[ami.ID], instanceType)
 				break
