@@ -138,15 +138,19 @@ type Addon struct {
 	// The Unix epoch timestamp for the last modification to the object.
 	ModifiedAt *time.Time
 
+	// The namespace configuration for the addon. This specifies the Kubernetes
+	// namespace where the addon is installed.
+	NamespaceConfig *AddonNamespaceConfigResponse
+
 	// The owner of the add-on.
 	Owner *string
 
-	// An array of Pod Identity Assocations owned by the Addon. Each EKS Pod Identity
-	// association maps a role to a service account in a namespace in the cluster.
+	// An array of EKS Pod Identity associations owned by the add-on. Each association
+	// maps a role to a service account in a namespace in the cluster.
 	//
-	// For more information, see [Attach an IAM Role to an Amazon EKS add-on using Pod Identity] in the Amazon EKS User Guide.
+	// For more information, see [Attach an IAM Role to an Amazon EKS add-on using EKS Pod Identity] in the Amazon EKS User Guide.
 	//
-	// [Attach an IAM Role to an Amazon EKS add-on using Pod Identity]: https://docs.aws.amazon.com/eks/latest/userguide/add-ons-iam.html
+	// [Attach an IAM Role to an Amazon EKS add-on using EKS Pod Identity]: https://docs.aws.amazon.com/eks/latest/userguide/add-ons-iam.html
 	PodIdentityAssociations []string
 
 	// The publisher of the add-on.
@@ -200,6 +204,10 @@ type AddonInfo struct {
 	// compatible Kubernetes versions.
 	AddonVersions []AddonVersionInfo
 
+	// The default Kubernetes namespace where this addon is typically installed if no
+	// custom namespace is specified.
+	DefaultNamespace *string
+
 	// Information about the add-on from the Amazon Web Services Marketplace.
 	MarketplaceInformation *MarketplaceInformation
 
@@ -230,14 +238,34 @@ type AddonIssue struct {
 	noSmithyDocumentSerde
 }
 
-// A type of Pod Identity Association owned by an Amazon EKS Add-on.
+// The namespace configuration request object for specifying a custom namespace
+// when creating an addon.
+type AddonNamespaceConfigRequest struct {
+
+	// The name of the Kubernetes namespace to install the addon in. Must be a valid
+	// RFC 1123 DNS label.
+	Namespace *string
+
+	noSmithyDocumentSerde
+}
+
+// The namespace configuration response object containing information about the
+// namespace where an addon is installed.
+type AddonNamespaceConfigResponse struct {
+
+	// The name of the Kubernetes namespace where the addon is installed.
+	Namespace *string
+
+	noSmithyDocumentSerde
+}
+
+// A type of EKS Pod Identity association owned by an Amazon EKS add-on.
 //
-// Each EKS Pod Identity Association maps a role to a service account in a
-// namespace in the cluster.
+// Each association maps a role to a service account in a namespace in the cluster.
 //
-// For more information, see [Attach an IAM Role to an Amazon EKS add-on using Pod Identity] in the Amazon EKS User Guide.
+// For more information, see [Attach an IAM Role to an Amazon EKS add-on using EKS Pod Identity] in the Amazon EKS User Guide.
 //
-// [Attach an IAM Role to an Amazon EKS add-on using Pod Identity]: https://docs.aws.amazon.com/eks/latest/userguide/add-ons-iam.html
+// [Attach an IAM Role to an Amazon EKS add-on using EKS Pod Identity]: https://docs.aws.amazon.com/eks/latest/userguide/add-ons-iam.html
 type AddonPodIdentityAssociations struct {
 
 	// The ARN of an IAM Role.
@@ -253,13 +281,13 @@ type AddonPodIdentityAssociations struct {
 	noSmithyDocumentSerde
 }
 
-// Information about how to configure IAM for an Addon.
+// Information about how to configure IAM for an add-on.
 type AddonPodIdentityConfiguration struct {
 
-	// A suggested IAM Policy for the addon.
+	// A suggested IAM Policy for the add-on.
 	RecommendedManagedPolicies []string
 
-	// The Kubernetes Service Account name used by the addon.
+	// The Kubernetes Service Account name used by the add-on.
 	ServiceAccount *string
 
 	noSmithyDocumentSerde
@@ -277,13 +305,13 @@ type AddonVersionInfo struct {
 	// An object representing the compatibilities of a version.
 	Compatibilities []Compatibility
 
-	// Indicates the compute type of the addon version.
+	// Indicates the compute type of the add-on version.
 	ComputeTypes []string
 
 	// Whether the add-on requires configuration.
 	RequiresConfiguration bool
 
-	// Indicates if the Addon requires IAM Permissions to operate, such as networking
+	// Indicates if the add-on requires IAM Permissions to operate, such as networking
 	// permissions.
 	RequiresIamPermissions bool
 
@@ -388,6 +416,12 @@ type Cluster struct {
 	// The Unix epoch timestamp at object creation.
 	CreatedAt *time.Time
 
+	// The current deletion protection setting for the cluster. When true , deletion
+	// protection is enabled and the cluster cannot be deleted until protection is
+	// disabled. When false , the cluster can be deleted normally. This setting only
+	// applies to clusters in an active state.
+	DeletionProtection *bool
+
 	// The encryption configuration for the cluster.
 	EncryptionConfig []EncryptionConfig
 
@@ -428,8 +462,8 @@ type Cluster struct {
 	// [Amazon EKS local cluster platform versions]: https://docs.aws.amazon.com/eks/latest/userguide/eks-outposts-platform-versions.html
 	PlatformVersion *string
 
-	// The configuration in the cluster for EKS Hybrid Nodes. You can't change or
-	// update this configuration after the cluster is created.
+	// The configuration in the cluster for EKS Hybrid Nodes. You can add, change, or
+	// remove this configuration after the cluster is created.
 	RemoteNetworkConfig *RemoteNetworkConfigResponse
 
 	// The VPC configuration used by the cluster control plane. Amazon EKS VPC
@@ -742,6 +776,10 @@ type EksAnywhereSubscription struct {
 	// cluster.
 	LicenseType EksAnywhereSubscriptionLicenseType
 
+	// Includes all of the claims in the license token necessary to validate the
+	// license for extended support.
+	Licenses []License
+
 	// The status of a subscription.
 	Status *string
 
@@ -1028,7 +1066,16 @@ type InsightResourceDetail struct {
 // The criteria to use for the insights.
 type InsightsFilter struct {
 
-	// The categories to use to filter insights.
+	// The categories to use to filter insights. The following lists the available
+	// categories:
+	//
+	//   - UPGRADE_READINESS : Amazon EKS identifies issues that could impact your
+	//   ability to upgrade to new versions of Kubernetes. These are called upgrade
+	//   insights.
+	//
+	//   - MISCONFIGURATION : Amazon EKS identifies misconfiguration in your EKS Hybrid
+	//   Nodes setup that could impair functionality of your cluster or workloads. These
+	//   are called configuration insights.
 	Categories []Category
 
 	// The Kubernetes versions to use to filter the insights.
@@ -1266,18 +1313,33 @@ type LaunchTemplateSpecification struct {
 	// The ID of the launch template.
 	//
 	// You must specify either the launch template ID or the launch template name in
-	// the request, but not both.
+	// the request, but not both. After node group creation, you cannot use a different
+	// ID.
 	Id *string
 
 	// The name of the launch template.
 	//
 	// You must specify either the launch template name or the launch template ID in
-	// the request, but not both.
+	// the request, but not both. After node group creation, you cannot use a different
+	// name.
 	Name *string
 
 	// The version number of the launch template to use. If no version is specified,
-	// then the template's default version is used.
+	// then the template's default version is used. You can use a different version for
+	// node group updates.
 	Version *string
+
+	noSmithyDocumentSerde
+}
+
+// An EKS Anywhere license associated with a subscription.
+type License struct {
+
+	// An id associated with an EKS Anywhere subscription license.
+	Id *string
+
+	// An optional license token that can be used for extended support verification.
+	Token *string
 
 	noSmithyDocumentSerde
 }
@@ -1744,20 +1806,45 @@ type PodIdentityAssociation struct {
 	// The timestamp that the association was created at.
 	CreatedAt *time.Time
 
-	// The most recent timestamp that the association was modified at
+	// The state of the automatic sessions tags. The value of true disables these tags.
+	//
+	// EKS Pod Identity adds a pre-defined set of session tags when it assumes the
+	// role. You can use these tags to author a single role that can work across
+	// resources by allowing access to Amazon Web Services resources based on matching
+	// tags. By default, EKS Pod Identity attaches six tags, including tags for cluster
+	// name, namespace, and service account name. For the list of tags added by EKS Pod
+	// Identity, see [List of session tags added by EKS Pod Identity]in the Amazon EKS User Guide.
+	//
+	// [List of session tags added by EKS Pod Identity]: https://docs.aws.amazon.com/eks/latest/userguide/pod-id-abac.html#pod-id-abac-tags
+	DisableSessionTags *bool
+
+	// The unique identifier for this EKS Pod Identity association for a target IAM
+	// role. You put this value in the trust policy of the target role, in a Condition
+	// to match the sts.ExternalId . This ensures that the target role can only be
+	// assumed by this association. This prevents the confused deputy problem. For more
+	// information about the confused deputy problem, see [The confused deputy problem]in the IAM User Guide.
+	//
+	// If you want to use the same target role with multiple associations or other
+	// roles, use independent statements in the trust policy to allow sts:AssumeRole
+	// access from each role.
+	//
+	// [The confused deputy problem]: https://docs.aws.amazon.com/IAM/latest/UserGuide/confused-deputy.html
+	ExternalId *string
+
+	// The most recent timestamp that the association was modified at.
 	ModifiedAt *time.Time
 
 	// The name of the Kubernetes namespace inside the cluster to create the
-	// association in. The service account and the pods that use the service account
+	// association in. The service account and the Pods that use the service account
 	// must be in this namespace.
 	Namespace *string
 
-	// If defined, the Pod Identity Association is owned by an Amazon EKS Addon.
+	// If defined, the EKS Pod Identity association is owned by an Amazon EKS add-on.
 	OwnerArn *string
 
 	// The Amazon Resource Name (ARN) of the IAM role to associate with the service
 	// account. The EKS Pod Identity agent manages credentials to assume this role for
-	// applications in the containers in the pods that use this service account.
+	// applications in the containers in the Pods that use this service account.
 	RoleArn *string
 
 	// The name of the Kubernetes service account inside the cluster to associate the
@@ -1792,6 +1879,11 @@ type PodIdentityAssociation struct {
 	//   prefix do not count against your tags per resource limit.
 	Tags map[string]string
 
+	// The Amazon Resource Name (ARN) of the target IAM role to associate with the
+	// service account. This role is assumed by using the EKS Pod Identity association
+	// role, then the credentials for this role are injected into the Pod.
+	TargetRoleArn *string
+
 	noSmithyDocumentSerde
 }
 
@@ -1821,11 +1913,11 @@ type PodIdentityAssociationSummary struct {
 	ClusterName *string
 
 	// The name of the Kubernetes namespace inside the cluster to create the
-	// association in. The service account and the pods that use the service account
+	// association in. The service account and the Pods that use the service account
 	// must be in this namespace.
 	Namespace *string
 
-	// If defined, the Pod Identity Association is owned by an Amazon EKS Addon.
+	// If defined, the association is owned by an Amazon EKS add-on.
 	OwnerArn *string
 
 	// The name of the Kubernetes service account inside the cluster to associate the
@@ -1876,8 +1968,8 @@ type RemoteAccessConfig struct {
 	noSmithyDocumentSerde
 }
 
-// The configuration in the cluster for EKS Hybrid Nodes. You can't change or
-// update this configuration after the cluster is created.
+// The configuration in the cluster for EKS Hybrid Nodes. You can add, change, or
+// remove this configuration after the cluster is created.
 type RemoteNetworkConfigRequest struct {
 
 	// The list of network CIDRs that can contain hybrid nodes.
@@ -1892,7 +1984,7 @@ type RemoteNetworkConfigRequest struct {
 	// It must satisfy the following requirements:
 	//
 	//   - Each block must be within an IPv4 RFC-1918 network range. Minimum allowed
-	//   size is /24, maximum allowed size is /8. Publicly-routable addresses aren't
+	//   size is /32, maximum allowed size is /8. Publicly-routable addresses aren't
 	//   supported.
 	//
 	//   - Each block cannot overlap with the range of the VPC CIDR blocks for your
@@ -1926,7 +2018,7 @@ type RemoteNetworkConfigRequest struct {
 	// It must satisfy the following requirements:
 	//
 	//   - Each block must be within an IPv4 RFC-1918 network range. Minimum allowed
-	//   size is /24, maximum allowed size is /8. Publicly-routable addresses aren't
+	//   size is /32, maximum allowed size is /8. Publicly-routable addresses aren't
 	//   supported.
 	//
 	//   - Each block cannot overlap with the range of the VPC CIDR blocks for your
@@ -1936,8 +2028,8 @@ type RemoteNetworkConfigRequest struct {
 	noSmithyDocumentSerde
 }
 
-// The configuration in the cluster for EKS Hybrid Nodes. You can't change or
-// update this configuration after the cluster is created.
+// The configuration in the cluster for EKS Hybrid Nodes. You can add, change, or
+// remove this configuration after the cluster is created.
 type RemoteNetworkConfigResponse struct {
 
 	// The list of network CIDRs that can contain hybrid nodes.
@@ -1962,7 +2054,7 @@ type RemoteNetworkConfigResponse struct {
 // It must satisfy the following requirements:
 //
 //   - Each block must be within an IPv4 RFC-1918 network range. Minimum allowed
-//     size is /24, maximum allowed size is /8. Publicly-routable addresses aren't
+//     size is /32, maximum allowed size is /8. Publicly-routable addresses aren't
 //     supported.
 //
 //   - Each block cannot overlap with the range of the VPC CIDR blocks for your
@@ -1994,7 +2086,7 @@ type RemoteNodeNetwork struct {
 	// It must satisfy the following requirements:
 	//
 	//   - Each block must be within an IPv4 RFC-1918 network range. Minimum allowed
-	//   size is /24, maximum allowed size is /8. Publicly-routable addresses aren't
+	//   size is /32, maximum allowed size is /8. Publicly-routable addresses aren't
 	//   supported.
 	//
 	//   - Each block cannot overlap with the range of the VPC CIDR blocks for your
@@ -2031,7 +2123,7 @@ type RemoteNodeNetwork struct {
 // It must satisfy the following requirements:
 //
 //   - Each block must be within an IPv4 RFC-1918 network range. Minimum allowed
-//     size is /24, maximum allowed size is /8. Publicly-routable addresses aren't
+//     size is /32, maximum allowed size is /8. Publicly-routable addresses aren't
 //     supported.
 //
 //   - Each block cannot overlap with the range of the VPC CIDR blocks for your
@@ -2052,7 +2144,7 @@ type RemotePodNetwork struct {
 	// It must satisfy the following requirements:
 	//
 	//   - Each block must be within an IPv4 RFC-1918 network range. Minimum allowed
-	//   size is /24, maximum allowed size is /8. Publicly-routable addresses aren't
+	//   size is /32, maximum allowed size is /8. Publicly-routable addresses aren't
 	//   supported.
 	//
 	//   - Each block cannot overlap with the range of the VPC CIDR blocks for your
@@ -2224,29 +2316,36 @@ type VpcConfigRequest struct {
 	// this parameter is false , which disables private access for your Kubernetes API
 	// server. If you disable private access and you have nodes or Fargate pods in the
 	// cluster, then ensure that publicAccessCidrs includes the necessary CIDR blocks
-	// for communication with the nodes or Fargate pods. For more information, see [Amazon EKS cluster endpoint access control]in
+	// for communication with the nodes or Fargate pods. For more information, see [Cluster API server endpoint]in
 	// the Amazon EKS User Guide .
 	//
-	// [Amazon EKS cluster endpoint access control]: https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
+	// [Cluster API server endpoint]: https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
 	EndpointPrivateAccess *bool
 
 	// Set this value to false to disable public access to your cluster's Kubernetes
 	// API server endpoint. If you disable public access, your cluster's Kubernetes API
 	// server can only receive requests from within the cluster VPC. The default value
 	// for this parameter is true , which enables public access for your Kubernetes API
-	// server. For more information, see [Amazon EKS cluster endpoint access control]in the Amazon EKS User Guide .
+	// server. The endpoint domain name and IP address family depends on the value of
+	// the ipFamily for the cluster. For more information, see [Cluster API server endpoint] in the Amazon EKS User
+	// Guide .
 	//
-	// [Amazon EKS cluster endpoint access control]: https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
+	// [Cluster API server endpoint]: https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
 	EndpointPublicAccess *bool
 
 	// The CIDR blocks that are allowed access to your cluster's public Kubernetes API
 	// server endpoint. Communication to the endpoint from addresses outside of the
-	// CIDR blocks that you specify is denied. The default value is 0.0.0.0/0 . If
-	// you've disabled private endpoint access, make sure that you specify the
-	// necessary CIDR blocks for every node and Fargate Pod in the cluster. For more
-	// information, see [Amazon EKS cluster endpoint access control]in the Amazon EKS User Guide .
+	// CIDR blocks that you specify is denied. The default value is 0.0.0.0/0 and
+	// additionally ::/0 for dual-stack `IPv6` clusters. If you've disabled private
+	// endpoint access, make sure that you specify the necessary CIDR blocks for every
+	// node and Fargate Pod in the cluster. For more information, see [Cluster API server endpoint] in the Amazon
+	// EKS User Guide .
 	//
-	// [Amazon EKS cluster endpoint access control]: https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
+	// Note that the public endpoints are dual-stack for only IPv6 clusters that are
+	// made after October 2024. You can't add IPv6 CIDR blocks to IPv4 clusters or IPv6
+	// clusters that were made before October 2024.
+	//
+	// [Cluster API server endpoint]: https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
 	PublicAccessCidrs []string
 
 	// Specify one or more security groups for the cross-account elastic network
@@ -2281,16 +2380,27 @@ type VpcConfigResponse struct {
 	// endpoint instead of traversing the internet. If this value is disabled and you
 	// have nodes or Fargate pods in the cluster, then ensure that publicAccessCidrs
 	// includes the necessary CIDR blocks for communication with the nodes or Fargate
-	// pods. For more information, see [Amazon EKS cluster endpoint access control]in the Amazon EKS User Guide .
+	// pods. For more information, see [Cluster API server endpoint]in the Amazon EKS User Guide .
 	//
-	// [Amazon EKS cluster endpoint access control]: https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
+	// [Cluster API server endpoint]: https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
 	EndpointPrivateAccess bool
 
 	// Whether the public API server endpoint is enabled.
 	EndpointPublicAccess bool
 
 	// The CIDR blocks that are allowed access to your cluster's public Kubernetes API
-	// server endpoint.
+	// server endpoint. Communication to the endpoint from addresses outside of the
+	// CIDR blocks that you specify is denied. The default value is 0.0.0.0/0 and
+	// additionally ::/0 for dual-stack `IPv6` clusters. If you've disabled private
+	// endpoint access, make sure that you specify the necessary CIDR blocks for every
+	// node and Fargate Pod in the cluster. For more information, see [Cluster API server endpoint] in the Amazon
+	// EKS User Guide .
+	//
+	// Note that the public endpoints are dual-stack for only IPv6 clusters that are
+	// made after October 2024. You can't add IPv6 CIDR blocks to IPv4 clusters or IPv6
+	// clusters that were made before October 2024.
+	//
+	// [Cluster API server endpoint]: https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
 	PublicAccessCidrs []string
 
 	// The security groups associated with the cross-account elastic network

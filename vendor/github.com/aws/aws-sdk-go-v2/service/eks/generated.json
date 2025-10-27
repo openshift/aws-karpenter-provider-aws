@@ -36,6 +36,7 @@
         "api_op_DescribeFargateProfile.go",
         "api_op_DescribeIdentityProviderConfig.go",
         "api_op_DescribeInsight.go",
+        "api_op_DescribeInsightsRefresh.go",
         "api_op_DescribeNodegroup.go",
         "api_op_DescribePodIdentityAssociation.go",
         "api_op_DescribeUpdate.go",
@@ -55,6 +56,7 @@
         "api_op_ListTagsForResource.go",
         "api_op_ListUpdates.go",
         "api_op_RegisterCluster.go",
+        "api_op_StartInsightsRefresh.go",
         "api_op_TagResource.go",
         "api_op_UntagResource.go",
         "api_op_UpdateAccessEntry.go",
@@ -78,12 +80,13 @@
         "protocol_test.go",
         "serializers.go",
         "snapshot_test.go",
+        "sra_operation_order_test.go",
         "types/enums.go",
         "types/errors.go",
         "types/types.go",
         "validators.go"
     ],
-    "go": "1.15",
+    "go": "1.22",
     "module": "github.com/aws/aws-sdk-go-v2/service/eks",
     "unstable": false
 }
