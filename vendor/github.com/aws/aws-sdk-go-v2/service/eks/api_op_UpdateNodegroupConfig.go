@@ -13,9 +13,11 @@ import (
 
 // Updates an Amazon EKS managed node group configuration. Your node group
 // continues to function during the update. The response output includes an update
-// ID that you can use to track the status of your node group update with the DescribeUpdateAPI
-// operation. Currently you can update the Kubernetes labels for a node group or
-// the scaling configuration.
+// ID that you can use to track the status of your node group update with the [DescribeUpdate]
+// DescribeUpdate API operation. You can update the Kubernetes labels and taints
+// for a node group and the scaling and version update configuration.
+//
+// [DescribeUpdate]: https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeUpdate.html
 func (c *Client) UpdateNodegroupConfig(ctx context.Context, params *UpdateNodegroupConfigInput, optFns ...func(*Options)) (*UpdateNodegroupConfigOutput, error) {
 	if params == nil {
 		params = &UpdateNodegroupConfigInput{}
@@ -143,6 +145,9 @@ func (c *Client) addOperationUpdateNodegroupConfigMiddlewares(stack *middleware.
 	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
+	if err = addCredentialSource(stack, options); err != nil {
+		return err
+	}
 	if err = addIdempotencyToken_opUpdateNodegroupConfigMiddleware(stack, options); err != nil {
 		return err
 	}
@@ -165,6 +170,36 @@ func (c *Client) addOperationUpdateNodegroupConfigMiddlewares(stack *middleware.
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAttempt(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptExecution(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeSerialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterSerialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeSigning(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterSigning(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptTransmit(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeDeserialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterDeserialization(stack, options); err != nil {
 		return err
 	}
 	if err = addSpanInitializeStart(stack); err != nil {

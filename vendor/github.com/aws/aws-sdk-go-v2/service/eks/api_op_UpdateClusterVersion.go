@@ -13,8 +13,8 @@ import (
 
 // Updates an Amazon EKS cluster to the specified Kubernetes version. Your cluster
 // continues to function during the update. The response output includes an update
-// ID that you can use to track the status of your cluster update with the DescribeUpdateAPI
-// operation.
+// ID that you can use to track the status of your cluster update with the [DescribeUpdate]
+// DescribeUpdate API operation.
 //
 // Cluster updates are asynchronous, and they should finish within a few minutes.
 // During an update, the cluster status moves to UPDATING (this status transition
@@ -22,8 +22,10 @@ import (
 // Successful ), the cluster status moves to Active .
 //
 // If your cluster has managed node groups attached to it, all of your node
-// groups’ Kubernetes versions must match the cluster’s Kubernetes version in order
+// groups' Kubernetes versions must match the cluster's Kubernetes version in order
 // to update the cluster to a new Kubernetes version.
+//
+// [DescribeUpdate]: https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeUpdate.html
 func (c *Client) UpdateClusterVersion(ctx context.Context, params *UpdateClusterVersionInput, optFns ...func(*Options)) (*UpdateClusterVersionOutput, error) {
 	if params == nil {
 		params = &UpdateClusterVersionInput{}
@@ -54,6 +56,10 @@ type UpdateClusterVersionInput struct {
 	// A unique, case-sensitive identifier that you provide to ensure the idempotency
 	// of the request.
 	ClientRequestToken *string
+
+	// Set this value to true to override upgrade-blocking readiness checks when
+	// updating a cluster.
+	Force bool
 
 	noSmithyDocumentSerde
 }
@@ -133,6 +139,9 @@ func (c *Client) addOperationUpdateClusterVersionMiddlewares(stack *middleware.S
 	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
+	if err = addCredentialSource(stack, options); err != nil {
+		return err
+	}
 	if err = addIdempotencyToken_opUpdateClusterVersionMiddleware(stack, options); err != nil {
 		return err
 	}
@@ -155,6 +164,36 @@ func (c *Client) addOperationUpdateClusterVersionMiddlewares(stack *middleware.S
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAttempt(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptExecution(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeSerialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterSerialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeSigning(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterSigning(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptTransmit(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeDeserialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterDeserialization(stack, options); err != nil {
 		return err
 	}
 	if err = addSpanInitializeStart(stack); err != nil {

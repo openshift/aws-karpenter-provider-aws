@@ -70,7 +70,8 @@ type ListPodIdentityAssociationsOutput struct {
 	// The list of summarized descriptions of the associations that are in the cluster
 	// and match any filters that you provided.
 	//
-	// Each summary is simplified by removing these fields compared to the full PodIdentityAssociation:
+	// Each summary is simplified by removing these fields compared to the full [PodIdentityAssociation]
+	// PodIdentityAssociation :
 	//
 	//   - The IAM role: roleArn
 	//
@@ -79,6 +80,8 @@ type ListPodIdentityAssociationsOutput struct {
 	//   - The most recent timestamp that the association was modified at:. modifiedAt
 	//
 	//   - The tags on the association: tags
+	//
+	// [PodIdentityAssociation]: https://docs.aws.amazon.com/eks/latest/APIReference/API_PodIdentityAssociation.html
 	Associations []types.PodIdentityAssociationSummary
 
 	// The nextToken value to include in a future ListPodIdentityAssociations request.
@@ -160,6 +163,9 @@ func (c *Client) addOperationListPodIdentityAssociationsMiddlewares(stack *middl
 	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
+	if err = addCredentialSource(stack, options); err != nil {
+		return err
+	}
 	if err = addOpListPodIdentityAssociationsValidationMiddleware(stack); err != nil {
 		return err
 	}
@@ -179,6 +185,36 @@ func (c *Client) addOperationListPodIdentityAssociationsMiddlewares(stack *middl
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAttempt(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptExecution(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeSerialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterSerialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeSigning(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterSigning(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptTransmit(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeDeserialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterDeserialization(stack, options); err != nil {
 		return err
 	}
 	if err = addSpanInitializeStart(stack); err != nil {

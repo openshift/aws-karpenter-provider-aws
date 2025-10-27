@@ -15,30 +15,40 @@ limitations under the License.
 package errors
 
 import (
-	"errors"
 	"strings"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
+	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 const (
-	launchTemplateNameNotFoundCode = "InvalidLaunchTemplateName.NotFoundException"
+	launchTemplateNameNotFoundCode                 = "InvalidLaunchTemplateName.NotFoundException"
+	RunInstancesInvalidParameterValueCode          = "InvalidParameterValue"
+	DryRunOperationErrorCode                       = "DryRunOperation"
+	UnauthorizedOperationErrorCode                 = "UnauthorizedOperation"
+	RateLimitingErrorCode                          = "RequestLimitExceeded"
+	ServiceLinkedRoleCreationNotPermittedErrorCode = "AuthFailure.ServiceLinkedRoleCreationNotPermitted"
+	InsufficientFreeAddressesInSubnetErrorCode     = "InsufficientFreeAddressesInSubnet"
 )
 
 var (
 	// This is not an exhaustive list, add to it as needed
 	notFoundErrorCodes = sets.New[string](
+		"InvalidCapacityReservationId.NotFound",
 		"InvalidInstanceID.NotFound",
 		launchTemplateNameNotFoundCode,
 		"InvalidLaunchTemplateId.NotFound",
 		"QueueDoesNotExist",
 		"NoSuchEntity",
+		"ParameterNotFound",
 	)
 	alreadyExistsErrorCodes = sets.New[string](
 		"EntityAlreadyExists",
 	)
+
+	reservationCapacityExceededErrorCode = "ReservationCapacityExceeded"
 
 	// unfulfillableCapacityErrorCodes signify that capacity is temporarily unable to be launched
 	unfulfillableCapacityErrorCodes = sets.New[string](
@@ -48,6 +58,7 @@ var (
 		"UnfulfillableCapacity",
 		"Unsupported",
 		"InsufficientFreeAddressesInSubnet",
+		reservationCapacityExceededErrorCode,
 	)
 )
 
@@ -58,8 +69,7 @@ func IsNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := lo.ErrorsAs[smithy.APIError](err); ok {
 		return notFoundErrorCodes.Has(apiErr.ErrorCode())
 	}
 	return false
@@ -76,8 +86,7 @@ func IsAlreadyExists(err error) bool {
 	if err == nil {
 		return false
 	}
-	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := lo.ErrorsAs[smithy.APIError](err); ok {
 		return alreadyExistsErrorCodes.Has(apiErr.ErrorCode())
 	}
 	return false
@@ -90,20 +99,110 @@ func IgnoreAlreadyExists(err error) error {
 	return err
 }
 
-// IsUnfulfillableCapacity returns true if the Fleet err means
-// capacity is temporarily unavailable for launching.
-// This could be due to account limits, insufficient ec2 capacity, etc.
+func IsDryRunError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apiErr, ok := lo.ErrorsAs[smithy.APIError](err); ok {
+		return apiErr.ErrorCode() == DryRunOperationErrorCode
+	}
+	return false
+}
+
+func IgnoreDryRunError(err error) error {
+	if IsDryRunError(err) {
+		return nil
+	}
+	return err
+}
+
+func IsUnauthorizedOperationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apiErr, ok := lo.ErrorsAs[smithy.APIError](err); ok {
+		return apiErr.ErrorCode() == UnauthorizedOperationErrorCode
+	}
+	return false
+}
+
+func IgnoreUnauthorizedOperationError(err error) error {
+	if IsUnauthorizedOperationError(err) {
+		return nil
+	}
+	return err
+}
+
+func IsRateLimitedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apiErr, ok := lo.ErrorsAs[smithy.APIError](err); ok {
+		return apiErr.ErrorCode() == RateLimitingErrorCode
+	}
+	return false
+}
+
+func IgnoreRateLimitedError(err error) error {
+	if IsRateLimitedError(err) {
+		return nil
+	}
+	return err
+}
+
+func IsServerError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apiErr, ok := lo.ErrorsAs[smithy.APIError](err); ok {
+		return apiErr.ErrorFault() == smithy.FaultServer
+	}
+	return false
+}
+
+func IgnoreServerError(err error) error {
+	if IsServerError(err) {
+		return nil
+	}
+	return err
+}
+
+// IsUnfulfillableCapacity returns true if the Fleet err means capacity is temporarily unavailable for launching. This
+// could be due to account limits, insufficient ec2 capacity, etc.
 func IsUnfulfillableCapacity(err ec2types.CreateFleetError) bool {
 	return unfulfillableCapacityErrorCodes.Has(*err.ErrorCode)
+}
+
+func IsServiceLinkedRoleCreationNotPermitted(err ec2types.CreateFleetError) bool {
+	return *err.ErrorCode == ServiceLinkedRoleCreationNotPermittedErrorCode
+}
+
+func IsInsufficientFreeAddressesInSubnet(err ec2types.CreateFleetError) bool {
+	return *err.ErrorCode == InsufficientFreeAddressesInSubnetErrorCode
+}
+
+// IsReservationCapacityExceeded returns true if the fleet error means there is no remaining capacity for the provided
+// capacity reservation.
+func IsReservationCapacityExceeded(err ec2types.CreateFleetError) bool {
+	return *err.ErrorCode == reservationCapacityExceededErrorCode
 }
 
 func IsLaunchTemplateNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := lo.ErrorsAs[smithy.APIError](err); ok {
 		return apiErr.ErrorCode() == launchTemplateNameNotFoundCode
+	}
+	return false
+}
+
+func IsInstanceProfileNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apiErr, ok := lo.ErrorsAs[smithy.APIError](err); ok {
+		return apiErr.ErrorCode() == RunInstancesInvalidParameterValueCode && strings.Contains(apiErr.ErrorMessage(), "Invalid IAM Instance Profile name")
 	}
 	return false
 }
@@ -113,7 +212,7 @@ func IsLaunchTemplateNotFound(err error) bool {
 // nolint:gocyclo
 func ToReasonMessage(err error) (string, string) {
 	if strings.Contains(err.Error(), "AuthFailure.ServiceLinkedRoleCreationNotPermitted") {
-		return "SpotSLRCreationFailed", "User does not hae sufficient permission to create the Spot ServiceLinkedRole to launch spot instances"
+		return "SpotSLRCreationFailed", "User does not have sufficient permission to create the Spot ServiceLinkedRole to launch spot instances"
 	}
 	if strings.Contains(err.Error(), "UnauthorizedOperation") || strings.Contains(err.Error(), "AccessDenied") || strings.Contains(err.Error(), "AuthFailure") {
 		if strings.Contains(err.Error(), "with an explicit deny in a permissions boundary") {
@@ -132,6 +231,9 @@ func ToReasonMessage(err error) (string, string) {
 	}
 	if strings.Contains(err.Error(), "InvalidAMIID.Malformed") {
 		return "InvalidAMIID", "AMI used for instance launch is invalid"
+	}
+	if strings.Contains(err.Error(), "InvalidAMIID.NotFound") {
+		return "AMINotFound", "AMI used for instance launch either does not exist or you don't have permissions to use it"
 	}
 	if strings.Contains(err.Error(), "RequestLimitExceeded") {
 		return "RequestLimitExceeded", "Request limit exceeded"

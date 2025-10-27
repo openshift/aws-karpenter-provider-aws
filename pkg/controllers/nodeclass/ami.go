@@ -22,9 +22,11 @@ import (
 
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/utils/pretty"
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/amifamily"
@@ -32,11 +34,23 @@ import (
 
 type AMI struct {
 	amiProvider amifamily.Provider
+	cm          *pretty.ChangeMonitor
+}
+
+func NewAMIReconciler(provider amifamily.Provider) *AMI {
+	return &AMI{
+		amiProvider: provider,
+		cm:          pretty.NewChangeMonitor(),
+	}
 }
 
 func (a *AMI) Reconcile(ctx context.Context, nodeClass *v1.EC2NodeClass) (reconcile.Result, error) {
 	amis, err := a.amiProvider.List(ctx, nodeClass)
 	if err != nil {
+		if amifamily.IsAl2DeprecationError(err) {
+			nodeClass.StatusConditions().SetFalse(v1.ConditionTypeAMIsReady, "UnsupportedAlias", err.Error())
+			return reconcile.Result{}, reconcile.TerminalError(fmt.Errorf("getting amis, %w", err))
+		}
 		return reconcile.Result{}, fmt.Errorf("getting amis, %w", err)
 	}
 	if len(amis) == 0 {
@@ -46,6 +60,12 @@ func (a *AMI) Reconcile(ctx context.Context, nodeClass *v1.EC2NodeClass) (reconc
 		// Returning 'ok' in this case means that the nodeclass will remain in an unready state until the component is restarted.
 		return reconcile.Result{RequeueAfter: time.Minute}, nil
 	}
+	if uniqueAMIs := lo.Uniq(lo.Map(amis, func(a amifamily.AMI, _ int) string {
+		return a.AmiID
+	})); a.cm.HasChanged(fmt.Sprintf("amis/%s", nodeClass.Name), uniqueAMIs) {
+		log.FromContext(ctx).WithValues("ids", uniqueAMIs).V(1).Info("discovered amis")
+	}
+
 	nodeClass.Status.AMIs = lo.Map(amis, func(ami amifamily.AMI, _ int) v1.AMI {
 		reqs := lo.Map(ami.Requirements.NodeSelectorRequirements(), func(item karpv1.NodeSelectorRequirementWithMinValues, _ int) corev1.NodeSelectorRequirement {
 			return item.NodeSelectorRequirement
