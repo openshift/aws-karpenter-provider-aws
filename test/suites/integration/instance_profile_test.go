@@ -26,6 +26,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/samber/lo"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	coretest "sigs.k8s.io/karpenter/pkg/test"
 
 	awserrors "github.com/aws/karpenter-provider-aws/pkg/errors"
@@ -47,11 +48,17 @@ var _ = Describe("InstanceProfile Generation", func() {
 		env.EventuallyExpectHealthy(pod)
 		node := env.ExpectCreatedNodeCount("==", 1)[0]
 
+		Eventually(func(g Gomega) {
+			err := env.Client.Get(env.Context, client.ObjectKeyFromObject(nodeClass), nodeClass)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(nodeClass.Status.InstanceProfile).ToNot(BeEmpty())
+		}).Should(Succeed())
+
 		instance := env.GetInstance(node.Name)
 		Expect(instance.IamInstanceProfile).ToNot(BeNil())
 		Expect(lo.FromPtr(instance.IamInstanceProfile.Arn)).To(ContainSubstring(nodeClass.Status.InstanceProfile))
 
-		instanceProfile := env.EventuallyExpectInstanceProfileExists(env.GetInstanceProfileName(nodeClass))
+		instanceProfile := env.EventuallyExpectInstanceProfileExists(nodeClass.Status.InstanceProfile)
 		Expect(instanceProfile.Roles).To(HaveLen(1))
 		Expect(lo.FromPtr(instanceProfile.Roles[0].RoleName)).To(Equal(nodeClass.Spec.Role))
 	})
@@ -61,10 +68,18 @@ var _ = Describe("InstanceProfile Generation", func() {
 		env.EventuallyExpectHealthy(pod)
 		env.ExpectCreatedNodeCount("==", 1)
 
+		Eventually(func(g Gomega) {
+			err := env.Client.Get(env.Context, client.ObjectKeyFromObject(nodeClass), nodeClass)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(nodeClass.Status.InstanceProfile).ToNot(BeEmpty())
+		}).Should(Succeed())
+
+		instanceProfile := nodeClass.Status.InstanceProfile
+
 		env.ExpectDeleted(nodePool, nodeClass)
 		Eventually(func(g Gomega) {
 			_, err := env.IAMAPI.GetInstanceProfile(env.Context, &iam.GetInstanceProfileInput{
-				InstanceProfileName: lo.ToPtr(env.GetInstanceProfileName(nodeClass)),
+				InstanceProfileName: lo.ToPtr(instanceProfile),
 			})
 			g.Expect(awserrors.IsNotFound(err)).To(BeTrue())
 		}).Should(Succeed())
@@ -94,6 +109,7 @@ var _ = Describe("InstanceProfile Generation", func() {
 		nodeClass.Spec.Role = fmt.Sprintf("KarpenterNodeRole-%s", "invalidRole")
 		env.ExpectCreated(nodeClass)
 		ExpectStatusConditions(env, env.Client, 1*time.Minute, nodeClass, status.Condition{Type: v1.ConditionTypeInstanceProfileReady, Status: metav1.ConditionUnknown})
+		ExpectStatusConditions(env, env.Client, 1*time.Minute, nodeClass, status.Condition{Type: v1.ConditionTypeValidationSucceeded, Status: metav1.ConditionUnknown})
 		ExpectStatusConditions(env, env.Client, 1*time.Minute, nodeClass, status.Condition{Type: status.ConditionReady, Status: metav1.ConditionUnknown})
 	})
 })

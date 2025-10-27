@@ -35,7 +35,7 @@ Here are some things to know about Karpenter's NodePools:
 
 * **Unschedulable pods**: Karpenter only attempts to schedule pods that have a status condition `Unschedulable=True`, which the kube scheduler sets when it fails to schedule the pod to existing capacity.
 
-* [**Defining Constraints**]({{<ref "nodepools" >}}): Karpenter defines a Custom Resource called a NodePool to specify configuration. Each NodePool manages a distinct set of nodes, but pods can be scheduled to any NodePool that supports its scheduling constraints. A NodePool contains constraints that impact the nodes that can be provisioned and attributes of those nodes. See the [NodePools Documentation]({{<ref "nodepools" >}}) docs for a description of configuration and NodePool examples.
+* [**Defining Constraints**]({{<ref "nodepools" >}}): Karpenter defines a Custom Resource called a NodePool to specify configuration. Each NodePool manages a distinct set of nodes, but pods can be scheduled to any NodePool that supports its scheduling constraints. A NodePool defines constraints that determine which nodes can be provisioned and specifies the attributes these nodes will have. See the [NodePools Documentation]({{<ref "nodepools" >}}) docs for a description of configuration and NodePool examples.
 
 * [**Defining Disruption**]({{<ref "disruption" >}}): A NodePool can also include values to indicate when nodes should be disrupted. This includes configuration around concepts like [Consolidation]({{<ref "disruption#consolidation" >}}), [Drift]({{<ref "disruption#drift" >}}), and [Expiration]({{<ref "disruption#automated-methods" >}}).
 
@@ -52,7 +52,7 @@ Karpenter deletes nodes when they are no longer needed.
 * [**Finalizer**]({{<ref "disruption#manual-methods" >}}): Karpenter places a finalizer bit on each node it creates.
 When a request comes in to delete one of those nodes (such as a TTL or a manual `kubectl delete node`), Karpenter will cordon the node, drain all the pods, terminate the EC2 instance, and delete the node object.
 Karpenter handles all clean-up work needed to properly delete the node.
-* [**Expiration**]({{<ref "disruption" >}}): Karpenter will mark nodes as expired and disrupt them after they have lived a set number of seconds, based on the NodePool's `spec.disruption.expireAfter` value. You can use node expiry to periodically recycle nodes due to security concerns.
+* [**Expiration**]({{<ref "disruption" >}}): Karpenter will mark nodes as expired and disrupt them after they have lived a set number of seconds, based on the NodePool's `spec.template.spec.expireAfter` value. You can use node expiry to periodically recycle nodes due to security concerns.
 * [**Consolidation**]({{<ref "disruption#consolidation" >}}): Karpenter works to actively reduce cluster cost by identifying when:
   * Nodes can be removed because the node is empty
   * Nodes can be removed as their workloads will run on other nodes in the cluster.

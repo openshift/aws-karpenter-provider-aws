@@ -23,14 +23,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/awslabs/operatorpkg/serrors"
 
-	"github.com/mitchellh/hashstructure/v2"
 	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
+	"github.com/aws/karpenter-provider-aws/pkg/utils"
 
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
@@ -85,11 +86,8 @@ func (p *DefaultProvider) List(ctx context.Context, nodeClass *v1.EC2NodeClass) 
 	if len(filterSets) == 0 {
 		return []ec2types.Subnet{}, nil
 	}
-	hash, err := hashstructure.Hash(filterSets, hashstructure.FormatV2, &hashstructure.HashOptions{SlicesAsSets: true})
-	if err != nil {
-		return nil, err
-	}
-	if subnets, ok := p.cache.Get(fmt.Sprint(hash)); ok {
+	hash := utils.GetNodeClassHash(nodeClass)
+	if subnets, ok := p.cache.Get(hash); ok {
 		// Ensure what's returned from this function is a shallow-copy of the slice (not a deep-copy of the data itself)
 		// so that modifications to the ordering of the data don't affect the original
 		return append([]ec2types.Subnet{}, subnets.([]ec2types.Subnet)...), nil
@@ -97,20 +95,26 @@ func (p *DefaultProvider) List(ctx context.Context, nodeClass *v1.EC2NodeClass) 
 	// Ensure that all the subnets that are returned here are unique
 	subnets := map[string]ec2types.Subnet{}
 	for _, filters := range filterSets {
-		output, err := p.ec2api.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{Filters: filters})
-		if err != nil {
-			return nil, fmt.Errorf("describing subnets %s, %w", pretty.Concise(filters), err)
-		}
-		for i := range output.Subnets {
-			subnets[lo.FromPtr(output.Subnets[i].SubnetId)] = output.Subnets[i]
-			p.availableIPAddressCache.SetDefault(lo.FromPtr(output.Subnets[i].SubnetId), lo.FromPtr(output.Subnets[i].AvailableIpAddressCount))
-			p.associatePublicIPAddressCache.SetDefault(lo.FromPtr(output.Subnets[i].SubnetId), lo.FromPtr(output.Subnets[i].MapPublicIpOnLaunch))
-			// subnets can be leaked here, if a subnets is never called received from ec2
-			// we are accepting it for now, as this will be an insignificant amount of memory
-			delete(p.inflightIPs, lo.FromPtr(output.Subnets[i].SubnetId)) // remove any previously tracked IP addresses since we just refreshed from EC2
+		paginator := ec2.NewDescribeSubnetsPaginator(p.ec2api, &ec2.DescribeSubnetsInput{
+			Filters:    filters,
+			MaxResults: lo.ToPtr(int32(500)),
+		})
+		for paginator.HasMorePages() {
+			output, err := paginator.NextPage(ctx)
+			if err != nil {
+				return nil, serrors.Wrap(fmt.Errorf("describing subnets with filters, %w", err), "filters", pretty.Concise(filters))
+			}
+			for i := range output.Subnets {
+				subnets[lo.FromPtr(output.Subnets[i].SubnetId)] = output.Subnets[i]
+				p.availableIPAddressCache.SetDefault(lo.FromPtr(output.Subnets[i].SubnetId), lo.FromPtr(output.Subnets[i].AvailableIpAddressCount))
+				p.associatePublicIPAddressCache.SetDefault(lo.FromPtr(output.Subnets[i].SubnetId), lo.FromPtr(output.Subnets[i].MapPublicIpOnLaunch))
+				// subnets can be leaked here, if a subnets is never called received from ec2
+				// we are accepting it for now, as this will be an insignificant amount of memory
+				delete(p.inflightIPs, lo.FromPtr(output.Subnets[i].SubnetId)) // remove any previously tracked IP addresses since we just refreshed from EC2
+			}
 		}
 	}
-	p.cache.SetDefault(fmt.Sprint(hash), lo.Values(subnets))
+	p.cache.SetDefault(hash, lo.Values(subnets))
 	if p.cm.HasChanged(fmt.Sprintf("subnets/%s", nodeClass.Name), lo.Keys(subnets)) {
 		log.FromContext(ctx).
 			WithValues("subnets", lo.Map(lo.Values(subnets), func(s ec2types.Subnet, _ int) v1.Subnet {
