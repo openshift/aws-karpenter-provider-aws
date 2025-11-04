@@ -2,10 +2,13 @@
 set -euo pipefail
 
 ECR_GALLERY_NAME="karpenter"
-RELEASE_REPO_ECR="${RELEASE_REPO_ECR:-public.ecr.aws/${ECR_GALLERY_NAME}/}"
+RELEASE_REPO_ECR="public.ecr.aws/${ECR_GALLERY_NAME}/"
 
 SNAPSHOT_ECR="021119463062.dkr.ecr.us-east-1.amazonaws.com"
-SNAPSHOT_REPO_ECR="${SNAPSHOT_REPO_ECR:-${SNAPSHOT_ECR}/karpenter/snapshot/}"
+SNAPSHOT_REPO_ECR="${SNAPSHOT_ECR}/karpenter/snapshot/"
+
+CACHED_REPO_ECR="${RELEASE_ACCOUNT_ID:-}.dkr.ecr.us-east-1.amazonaws.com"
+CACHED_REPO_NAME="${CACHED_ECR_NAME:-}"
 
 CURRENT_MAJOR_VERSION="0"
 
@@ -21,7 +24,7 @@ Release Version: ${version}
 Commit: ${commit_sha}
 Helm Chart Version ${helm_chart_version}"
 
-  authenticatePrivateRepo
+  authenticateSnapshotRepo
   build "${SNAPSHOT_REPO_ECR}" "${version}" "${helm_chart_version}" "${commit_sha}"
 }
 
@@ -39,13 +42,20 @@ Helm Chart Version ${helm_chart_version}"
 
   authenticate
   build "${RELEASE_REPO_ECR}" "${version}" "${helm_chart_version}" "${commit_sha}"
+
+  authenticateCachedRepo
+  pullImages "${version}"
 }
 
 authenticate() {
   aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin "${RELEASE_REPO_ECR}"
 }
 
-authenticatePrivateRepo() {
+authenticateCachedRepo() {
+  aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "${CACHED_REPO_ECR}"
+}
+
+authenticateSnapshotRepo() {
   aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "${SNAPSHOT_ECR}"
 }
 
@@ -133,6 +143,12 @@ buildDate() {
   date -u --date="@${date_epoch}" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null
 }
 
+pullImages() {
+  local tag="${1}"
+
+  docker pull "${CACHED_REPO_ECR}"/"${CACHED_REPO_NAME}"/controller:"${tag}"
+}
+
 prepareWebsite() {
   local version version_parts short_version
 
@@ -178,10 +194,11 @@ removeOldWebsiteDirectories() {
   # preview, docs, and v0.32 are special directories that we always propagate into the set of directory options
   # Keep the v0.32 version around while we are supporting v1beta1 migration
   # Drop it once we no longer want to maintain the v0.32 version in the docs
-  last_n_versions=$(find website/content/en/* -maxdepth 0 -type d -name "*" | grep -v "preview\|docs\|v0.32" | sort | tail -n "${n}")
+  last_n_versions=$(find website/content/en/* -maxdepth 0 -type d -name "*" | grep -v "preview\|docs\|v0.32\|v1.0" | sort | tail -n "${n}")
   last_n_versions+=$(echo -e "\nwebsite/content/en/preview")
   last_n_versions+=$(echo -e "\nwebsite/content/en/docs")
   last_n_versions+=$(echo -e "\nwebsite/content/en/v0.32")
+  last_n_versions+=$(echo -e "\nwebsite/content/en/v1.0")
   all=$(find website/content/en/* -maxdepth 0 -type d -name "*")
 
   ## symmetric difference
@@ -202,7 +219,7 @@ editWebsiteVersionsMenu() {
   local versions version
 
   # shellcheck disable=SC2207
-  versions=($(find website/content/en/* -maxdepth 0 -type d -name "*" -print0 | xargs -0 -r -n 1 basename | grep -v "docs\|preview"))
+  versions=($(find website/content/en/* -maxdepth 0 -type d -name "*" -print0 | xargs -0 -r -n 1 basename | grep -v "docs\|preview" | sort -r))
   versions+=('preview')
 
   yq -i '.params.versions = []' website/hugo.yaml

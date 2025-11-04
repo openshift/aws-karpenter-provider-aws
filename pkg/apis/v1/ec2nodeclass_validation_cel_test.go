@@ -39,9 +39,6 @@ var _ = Describe("CEL/Validation", func() {
 	var nc *v1.EC2NodeClass
 
 	BeforeEach(func() {
-		if env.Version.Minor() < 25 {
-			Skip("CEL Validation is for 1.25>")
-		}
 		nc = &v1.EC2NodeClass{
 			ObjectMeta: test.ObjectMeta(metav1.ObjectMeta{}),
 			Spec: v1.EC2NodeClassSpec{
@@ -432,6 +429,167 @@ var _ = Describe("CEL/Validation", func() {
 					},
 				},
 			}
+			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
+		})
+	})
+	Context("CapacityReservationSelectorTerms", func() {
+		It("should succeed with a valid capacity reservation selector on tags", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				Tags: map[string]string{
+					"test": "testvalue",
+				},
+			}}
+			Expect(env.Client.Create(ctx, nc)).To(Succeed())
+		})
+		It("should succeed with a valid capacity reservation selector on id", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				ID: "cr-12345749",
+			}}
+			Expect(env.Client.Create(ctx, nc)).To(Succeed())
+		})
+		It("should succeed for a valid ownerID", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				OwnerID: "012345678901",
+				Tags: map[string]string{
+					"test": "testvalue",
+				},
+			}}
+			Expect(env.Client.Create(ctx, nc)).To(Succeed())
+		})
+		It("should fail with a capacity reservation selector on a malformed id", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				ID: "r-12345749",
+			}}
+			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
+		})
+		It("should succeed when capacity group selector terms is set to nil", func() {
+			nc.Spec.CapacityReservationSelectorTerms = nil
+			Expect(env.Client.Create(ctx, nc)).To(Succeed())
+		})
+		It("should fail when a capacity reservation selector term has no values", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{}}
+			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
+		})
+		It("should fail when a capacity reservation selector term has no tag map values", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				Tags: map[string]string{},
+			}}
+			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
+		})
+		It("should fail when a capacity reservation selector term has a tag map key that is empty", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				Tags: map[string]string{
+					"test": "",
+				},
+			}}
+			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
+		})
+		It("should fail when a capacity reservation selector term has a tag map value that is empty", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				Tags: map[string]string{
+					"": "testvalue",
+				},
+			}}
+			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
+		})
+		It("should fail when the last capacity reservation selector is invalid", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{
+				{
+					Tags: map[string]string{
+						"test": "testvalue",
+					},
+				},
+				{
+					Tags: map[string]string{
+						"test2": "testvalue2",
+					},
+				},
+				{
+					Tags: map[string]string{
+						"test3": "testvalue3",
+					},
+				},
+				{
+					Tags: map[string]string{
+						"": "testvalue4",
+					},
+				},
+			}
+			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
+		})
+		It("should fail when specifying id with tags in a single term", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				ID: "cr-12345749",
+				Tags: map[string]string{
+					"test": "testvalue",
+				},
+			}}
+			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
+		})
+		It("should fail when specifying id with ownerID in a single term", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				OwnerID: "012345678901",
+				ID:      "cr-12345749",
+			}}
+			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
+		})
+		It("should fail when the ownerID is malformed", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				OwnerID: "01234567890", // OwnerID must be 12 digits, this is 11
+				Tags: map[string]string{
+					"test": "testvalue",
+				},
+			}}
+			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
+		})
+		It("should fail when the ownerID is set by itself", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				OwnerID: "012345678901",
+			}}
+			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
+		})
+		It("should succeed with a valid instanceMatchCriteria 'open'", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				InstanceMatchCriteria: "open",
+			}}
+			Expect(env.Client.Create(ctx, nc)).To(Succeed())
+		})
+		It("should succeed with a valid instanceMatchCriteria 'targeted'", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				InstanceMatchCriteria: "targeted",
+			}}
+			Expect(env.Client.Create(ctx, nc)).To(Succeed())
+		})
+		It("should succeed with instanceMatchCriteria combined with tags", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				InstanceMatchCriteria: "open",
+				Tags: map[string]string{
+					"test": "testvalue",
+				},
+			}}
+			Expect(env.Client.Create(ctx, nc)).To(Succeed())
+		})
+		It("should succeed with instanceMatchCriteria combined with ownerID and tags", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				InstanceMatchCriteria: "targeted",
+				OwnerID:               "012345678901",
+				Tags: map[string]string{
+					"test": "testvalue",
+				},
+			}}
+			Expect(env.Client.Create(ctx, nc)).To(Succeed())
+		})
+		It("should fail with invalid instanceMatchCriteria value", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				InstanceMatchCriteria: "invalid",
+			}}
+			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
+		})
+		It("should fail when specifying id with instanceMatchCriteria", func() {
+			nc.Spec.CapacityReservationSelectorTerms = []v1.CapacityReservationSelectorTerm{{
+				ID:                    "cr-12345749",
+				InstanceMatchCriteria: "open",
+			}}
 			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
 		})
 	})
@@ -1028,36 +1186,104 @@ var _ = Describe("CEL/Validation", func() {
 			}
 			Expect(env.Client.Create(ctx, nodeClass)).To(Not(Succeed()))
 		})
+		It("should fail if VolumeInitializationRate set but SnapshotID not specified", func() {
+			nodeClass := &v1.EC2NodeClass{
+				ObjectMeta: test.ObjectMeta(metav1.ObjectMeta{}),
+				Spec: v1.EC2NodeClassSpec{
+					AMISelectorTerms:           nc.Spec.AMISelectorTerms,
+					SubnetSelectorTerms:        nc.Spec.SubnetSelectorTerms,
+					SecurityGroupSelectorTerms: nc.Spec.SecurityGroupSelectorTerms,
+					Role:                       nc.Spec.Role,
+					BlockDeviceMappings: []*v1.BlockDeviceMapping{
+						{
+							DeviceName: aws.String("map-device-1"),
+							EBS: &v1.BlockDevice{
+								VolumeSize:               &resource.Quantity{},
+								VolumeInitializationRate: aws.Int32(100),
+							},
+							RootVolume: false,
+						},
+					},
+				},
+			}
+			Expect(env.Client.Create(ctx, nodeClass)).To(Not(Succeed()))
+		})
+		It("should fail if VolumeInitializationRate too low", func() {
+			nodeClass := &v1.EC2NodeClass{
+				ObjectMeta: test.ObjectMeta(metav1.ObjectMeta{}),
+				Spec: v1.EC2NodeClassSpec{
+					AMISelectorTerms:           nc.Spec.AMISelectorTerms,
+					SubnetSelectorTerms:        nc.Spec.SubnetSelectorTerms,
+					SecurityGroupSelectorTerms: nc.Spec.SecurityGroupSelectorTerms,
+					Role:                       nc.Spec.Role,
+					BlockDeviceMappings: []*v1.BlockDeviceMapping{
+						{
+							DeviceName: aws.String("map-device-1"),
+							EBS: &v1.BlockDevice{
+								VolumeSize:               &resource.Quantity{},
+								SnapshotID:               aws.String("snap-1"),
+								VolumeInitializationRate: aws.Int32(99),
+							},
+							RootVolume: false,
+						},
+					},
+				},
+			}
+			Expect(env.Client.Create(ctx, nodeClass)).To(Not(Succeed()))
+		})
+		It("should fail if VolumeInitializationRate too high", func() {
+			nodeClass := &v1.EC2NodeClass{
+				ObjectMeta: test.ObjectMeta(metav1.ObjectMeta{}),
+				Spec: v1.EC2NodeClassSpec{
+					AMISelectorTerms:           nc.Spec.AMISelectorTerms,
+					SubnetSelectorTerms:        nc.Spec.SubnetSelectorTerms,
+					SecurityGroupSelectorTerms: nc.Spec.SecurityGroupSelectorTerms,
+					Role:                       nc.Spec.Role,
+					BlockDeviceMappings: []*v1.BlockDeviceMapping{
+						{
+							DeviceName: aws.String("map-device-1"),
+							EBS: &v1.BlockDevice{
+								VolumeSize:               &resource.Quantity{},
+								SnapshotID:               aws.String("snap-1"),
+								VolumeInitializationRate: aws.Int32(888),
+							},
+							RootVolume: false,
+						},
+					},
+				},
+			}
+			Expect(env.Client.Create(ctx, nodeClass)).To(Not(Succeed()))
+		})
 	})
 	Context("Role Immutability", func() {
 		It("should fail if role is not defined", func() {
 			nc.Spec.Role = ""
 			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
 		})
-		It("should fail when updating the role", func() {
+		It("should succeed when updating the role", func() {
 			nc.Spec.Role = "test-role"
 			Expect(env.Client.Create(ctx, nc)).To(Succeed())
 
 			nc.Spec.Role = "test-role2"
-			Expect(env.Client.Create(ctx, nc)).ToNot(Succeed())
+			Expect(env.Client.Update(ctx, nc)).To(Succeed())
 		})
-		It("should fail to switch between an unmanaged and managed instance profile", func() {
+		It("should succeed to switch between an unmanaged and managed instance profile", func() {
 			nc.Spec.Role = ""
 			nc.Spec.InstanceProfile = lo.ToPtr("test-instance-profile")
 			Expect(env.Client.Create(ctx, nc)).To(Succeed())
 
 			nc.Spec.Role = "test-role"
 			nc.Spec.InstanceProfile = nil
-			Expect(env.Client.Update(ctx, nc)).ToNot(Succeed())
+			Expect(env.Client.Update(ctx, nc)).To(Succeed())
 		})
-		It("should fail to switch between a managed and unmanaged instance profile", func() {
+		It("should succeed to switch between a managed and unmanaged instance profile", func() {
 			nc.Spec.Role = "test-role"
 			nc.Spec.InstanceProfile = nil
 			Expect(env.Client.Create(ctx, nc)).To(Succeed())
 
 			nc.Spec.Role = ""
 			nc.Spec.InstanceProfile = lo.ToPtr("test-instance-profile")
-			Expect(env.Client.Update(ctx, nc)).ToNot(Succeed())
+			Expect(env.Client.Update(ctx, nc)).To(Succeed())
 		})
 	})
 })

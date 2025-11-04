@@ -22,7 +22,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/mitchellh/hashstructure/v2"
 	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -31,6 +30,7 @@ import (
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 	sdk "github.com/aws/karpenter-provider-aws/pkg/aws"
+	"github.com/aws/karpenter-provider-aws/pkg/utils"
 )
 
 type Provider interface {
@@ -57,9 +57,7 @@ func (p *DefaultProvider) List(ctx context.Context, nodeClass *v1.EC2NodeClass) 
 	p.Lock()
 	defer p.Unlock()
 
-	// Get SecurityGroups
-	filterSets := getFilterSets(nodeClass.Spec.SecurityGroupSelectorTerms)
-	securityGroups, err := p.getSecurityGroups(ctx, filterSets)
+	securityGroups, err := p.getSecurityGroups(ctx, nodeClass)
 	if err != nil {
 		return nil, err
 	}
@@ -72,27 +70,31 @@ func (p *DefaultProvider) List(ctx context.Context, nodeClass *v1.EC2NodeClass) 
 	return securityGroups, nil
 }
 
-func (p *DefaultProvider) getSecurityGroups(ctx context.Context, filterSets [][]ec2types.Filter) ([]ec2types.SecurityGroup, error) {
-	hash, err := hashstructure.Hash(filterSets, hashstructure.FormatV2, &hashstructure.HashOptions{SlicesAsSets: true})
-	if err != nil {
-		return nil, err
-	}
-	if sg, ok := p.cache.Get(fmt.Sprint(hash)); ok {
+func (p *DefaultProvider) getSecurityGroups(ctx context.Context, nodeClass *v1.EC2NodeClass) ([]ec2types.SecurityGroup, error) {
+	filterSets := getFilterSets(nodeClass.Spec.SecurityGroupSelectorTerms)
+	hash := utils.GetNodeClassHash(nodeClass)
+	if sg, ok := p.cache.Get(hash); ok {
 		// Ensure what's returned from this function is a shallow-copy of the slice (not a deep-copy of the data itself)
 		// so that modifications to the ordering of the data don't affect the original
 		return append([]ec2types.SecurityGroup{}, sg.([]ec2types.SecurityGroup)...), nil
 	}
 	securityGroups := map[string]ec2types.SecurityGroup{}
 	for _, filters := range filterSets {
-		output, err := p.ec2api.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{Filters: filters})
-		if err != nil {
-			return nil, fmt.Errorf("describing security groups %+v, %w", filterSets, err)
-		}
-		for i := range output.SecurityGroups {
-			securityGroups[lo.FromPtr(output.SecurityGroups[i].GroupId)] = output.SecurityGroups[i]
+		paginator := ec2.NewDescribeSecurityGroupsPaginator(p.ec2api, &ec2.DescribeSecurityGroupsInput{
+			MaxResults: aws.Int32(500),
+			Filters:    filters,
+		})
+		for paginator.HasMorePages() {
+			output, err := paginator.NextPage(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("describing security groups %+v, %w", filterSets, err)
+			}
+			for i := range output.SecurityGroups {
+				securityGroups[lo.FromPtr(output.SecurityGroups[i].GroupId)] = output.SecurityGroups[i]
+			}
 		}
 	}
-	p.cache.SetDefault(fmt.Sprint(hash), lo.Values(securityGroups))
+	p.cache.SetDefault(hash, lo.Values(securityGroups))
 	return lo.Values(securityGroups), nil
 }
 

@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/awslabs/operatorpkg/serrors"
 	corev1 "k8s.io/api/core/v1"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -69,7 +70,7 @@ func (a AL2) DescribeImageQuery(ctx context.Context, ssmProvider ssm.Provider, k
 	}
 	// Failed to discover any AMIs, we should short circuit AMI discovery
 	if len(ids) == 0 {
-		return DescribeImageQuery{}, fmt.Errorf(`failed to discover any AMIs for alias "al2@%s"`, amiVersion)
+		return DescribeImageQuery{}, serrors.Wrap(fmt.Errorf("failed to discover any AMIs for alias"), "alias", fmt.Sprintf("al2@%s", amiVersion))
 	}
 
 	return DescribeImageQuery{
@@ -90,8 +91,8 @@ func (a AL2) DescribeImageQuery(ctx context.Context, ssmProvider ssm.Provider, k
 func (a AL2) UserData(kubeletConfig *v1.KubeletConfiguration, taints []corev1.Taint, labels map[string]string, caBundle *string, _ []*cloudprovider.InstanceType, customUserData *string, instanceStorePolicy *v1.InstanceStorePolicy) bootstrap.Bootstrapper {
 	return bootstrap.EKS{
 		Options: bootstrap.Options{
-			ClusterName:         a.Options.ClusterName,
-			ClusterEndpoint:     a.Options.ClusterEndpoint,
+			ClusterName:         a.ClusterName,
+			ClusterEndpoint:     a.ClusterEndpoint,
 			KubeletConfig:       kubeletConfig,
 			Taints:              taints,
 			Labels:              labels,

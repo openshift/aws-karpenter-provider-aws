@@ -37,6 +37,7 @@ import (
 
 	"github.com/aws/karpenter-provider-aws/pkg/apis"
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
+	"github.com/aws/karpenter-provider-aws/pkg/cloudprovider"
 	"github.com/aws/karpenter-provider-aws/pkg/controllers/nodeclass"
 	"github.com/aws/karpenter-provider-aws/pkg/fake"
 	"github.com/aws/karpenter-provider-aws/pkg/operator/options"
@@ -53,6 +54,7 @@ var env *coretest.Environment
 var awsEnv *test.Environment
 var nodeClass *v1.EC2NodeClass
 var controller *nodeclass.Controller
+var cloudProvider *cloudprovider.CloudProvider
 
 func TestAPIs(t *testing.T) {
 	ctx = TestContextWithLogger(t)
@@ -61,19 +63,17 @@ func TestAPIs(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	env = coretest.NewEnvironment(coretest.WithCRDs(test.RemoveNodeClassTagValidation(apis.CRDs)...), coretest.WithCRDs(v1alpha1.CRDs...), coretest.WithFieldIndexers(coretest.NodeClaimNodeClassRefFieldIndexer(ctx)))
-	ctx = coreoptions.ToContext(ctx, coretest.Options())
+	env = coretest.NewEnvironment(
+		coretest.WithCRDs(test.DisableCapacityReservationIDValidation(test.RemoveNodeClassTagValidation(apis.CRDs))...),
+		coretest.WithCRDs(v1alpha1.CRDs...),
+		coretest.WithFieldIndexers(coretest.NodeClaimNodeClassRefFieldIndexer(ctx)),
+		coretest.WithFieldIndexers(coretest.NodePoolNodeClassRefFieldIndexer(ctx)),
+	)
+	ctx = coreoptions.ToContext(ctx, coretest.Options(coretest.OptionsFields{FeatureGates: coretest.FeatureGates{ReservedCapacity: lo.ToPtr(true)}}))
 	ctx = options.ToContext(ctx, test.Options())
 	awsEnv = test.NewEnvironment(ctx, env)
-
-	controller = nodeclass.NewController(
-		env.Client, events.NewRecorder(&record.FakeRecorder{}),
-		awsEnv.SubnetProvider,
-		awsEnv.SecurityGroupProvider,
-		awsEnv.AMIProvider,
-		awsEnv.InstanceProfileProvider,
-		awsEnv.LaunchTemplateProvider,
-	)
+	cloudProvider = cloudprovider.New(awsEnv.InstanceTypesProvider, awsEnv.InstanceProvider, events.NewRecorder(&record.FakeRecorder{}),
+		env.Client, awsEnv.AMIProvider, awsEnv.SecurityGroupProvider, awsEnv.CapacityReservationProvider, awsEnv.InstanceTypeStore)
 })
 
 var _ = AfterSuite(func() {
@@ -81,9 +81,30 @@ var _ = AfterSuite(func() {
 })
 
 var _ = BeforeEach(func() {
-	ctx = coreoptions.ToContext(ctx, coretest.Options())
+	ctx = coreoptions.ToContext(ctx, coretest.Options(coretest.OptionsFields{FeatureGates: coretest.FeatureGates{ReservedCapacity: lo.ToPtr(true)}}))
 	nodeClass = test.EC2NodeClass()
 	awsEnv.Reset()
+	Expect(awsEnv.InstanceTypesProvider.UpdateInstanceTypes(ctx)).To(Succeed())
+	Expect(awsEnv.InstanceTypesProvider.UpdateInstanceTypeOfferings(ctx)).To(Succeed())
+	controller = nodeclass.NewController(
+		awsEnv.Clock,
+		env.Client,
+		cloudProvider,
+		events.NewRecorder(&record.FakeRecorder{}),
+		fake.DefaultRegion,
+		awsEnv.SubnetProvider,
+		awsEnv.SecurityGroupProvider,
+		awsEnv.AMIProvider,
+		awsEnv.InstanceProfileProvider,
+		awsEnv.InstanceTypesProvider,
+		awsEnv.LaunchTemplateProvider,
+		awsEnv.CapacityReservationProvider,
+		awsEnv.EC2API,
+		awsEnv.ValidationCache,
+		awsEnv.RecreationCache,
+		awsEnv.AMIResolver,
+		options.FromContext(ctx).DisableDryRun,
+	)
 })
 
 var _ = AfterEach(func() {
@@ -91,7 +112,6 @@ var _ = AfterEach(func() {
 })
 
 var _ = Describe("NodeClass Termination", func() {
-	var profileName string
 	BeforeEach(func() {
 		nodeClass = test.EC2NodeClass(v1.EC2NodeClass{
 			Spec: v1.EC2NodeClassSpec{
@@ -113,7 +133,6 @@ var _ = Describe("NodeClass Termination", func() {
 				},
 			},
 		})
-		profileName = nodeClass.InstanceProfileName(options.FromContext(ctx).ClusterName, fake.DefaultRegion)
 
 	})
 	It("should not delete the NodeClass if launch template deletion fails", func() {
@@ -166,37 +185,36 @@ var _ = Describe("NodeClass Termination", func() {
 		ExpectNotFound(ctx, env.Client, nodeClass)
 	})
 	It("should succeed to delete the instance profile with no NodeClaims", func() {
-		awsEnv.IAMAPI.InstanceProfiles = map[string]*iamtypes.InstanceProfile{
-			profileName: {
-				InstanceProfileName: aws.String(profileName),
-				Roles: []iamtypes.Role{
-					{
-						RoleId:   aws.String(fake.RoleID()),
-						RoleName: aws.String(nodeClass.Spec.Role),
-					},
-				},
-			},
-		}
 		controllerutil.AddFinalizer(nodeClass, v1.TerminationFinalizer)
 		ExpectApplied(ctx, env.Client, nodeClass)
 		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
+
+		nodeClass = ExpectExists(ctx, env.Client, nodeClass)
+
 		Expect(awsEnv.IAMAPI.InstanceProfiles).To(HaveLen(1))
+		Expect(awsEnv.IAMAPI.InstanceProfiles[nodeClass.Status.InstanceProfile].Roles).To(HaveLen(1))
+		Expect(*awsEnv.IAMAPI.InstanceProfiles[nodeClass.Status.InstanceProfile].Roles[0].RoleName).To(Equal("test-role"))
 
 		Expect(env.Client.Delete(ctx, nodeClass)).To(Succeed())
 		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
+
 		Expect(awsEnv.IAMAPI.InstanceProfiles).To(HaveLen(0))
 		ExpectNotFound(ctx, env.Client, nodeClass)
 	})
 	It("should succeed to delete the instance profile when no roles exist with no NodeClaims", func() {
-		awsEnv.IAMAPI.InstanceProfiles = map[string]*iamtypes.InstanceProfile{
-			profileName: {
-				InstanceProfileName: aws.String(profileName),
-			},
-		}
 		controllerutil.AddFinalizer(nodeClass, v1.TerminationFinalizer)
 		ExpectApplied(ctx, env.Client, nodeClass)
 		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
+
+		nodeClass = ExpectExists(ctx, env.Client, nodeClass)
+
+		// Remove the role from the instance profile to test this specific case
+		profile := awsEnv.IAMAPI.InstanceProfiles[nodeClass.Status.InstanceProfile]
+		profile.Roles = nil
+
 		Expect(awsEnv.IAMAPI.InstanceProfiles).To(HaveLen(1))
+		Expect(awsEnv.IAMAPI.InstanceProfiles[nodeClass.Status.InstanceProfile].Roles).To(BeEmpty())
+
 		Expect(env.Client.Delete(ctx, nodeClass)).To(Succeed())
 		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
 		Expect(awsEnv.IAMAPI.InstanceProfiles).To(HaveLen(0))
@@ -206,6 +224,30 @@ var _ = Describe("NodeClass Termination", func() {
 		Expect(awsEnv.IAMAPI.InstanceProfiles).To(HaveLen(0))
 		controllerutil.AddFinalizer(nodeClass, v1.TerminationFinalizer)
 		ExpectApplied(ctx, env.Client, nodeClass)
+
+		Expect(env.Client.Delete(ctx, nodeClass)).To(Succeed())
+		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
+		Expect(awsEnv.IAMAPI.InstanceProfiles).To(HaveLen(0))
+		ExpectNotFound(ctx, env.Client, nodeClass)
+	})
+
+	It("should succeed to delete both legacy and current instance profiles if the NodeClass is deleted", func() {
+		profileName := nodeClass.LegacyInstanceProfileName(options.FromContext(ctx).ClusterName, fake.DefaultRegion)
+		awsEnv.IAMAPI.InstanceProfiles = map[string]*iamtypes.InstanceProfile{
+			profileName: {
+				InstanceProfileName: lo.ToPtr(profileName),
+				Roles: []iamtypes.Role{
+					{
+						RoleId:   aws.String(fake.RoleID()),
+						RoleName: aws.String("fake-role"),
+					},
+				},
+			},
+		}
+		controllerutil.AddFinalizer(nodeClass, v1.TerminationFinalizer)
+		ExpectApplied(ctx, env.Client, nodeClass)
+		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
+		Expect(awsEnv.IAMAPI.InstanceProfiles).To(HaveLen(2))
 
 		Expect(env.Client.Delete(ctx, nodeClass)).To(Succeed())
 		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
@@ -227,21 +269,15 @@ var _ = Describe("NodeClass Termination", func() {
 			ExpectApplied(ctx, env.Client, nc)
 			nodeClaims = append(nodeClaims, nc)
 		}
-		awsEnv.IAMAPI.InstanceProfiles = map[string]*iamtypes.InstanceProfile{
-			profileName: {
-				InstanceProfileName: aws.String(profileName),
-				Roles: []iamtypes.Role{
-					{
-						RoleId:   aws.String(fake.RoleID()),
-						RoleName: aws.String(nodeClass.Spec.Role),
-					},
-				},
-			},
-		}
+
 		controllerutil.AddFinalizer(nodeClass, v1.TerminationFinalizer)
 		ExpectApplied(ctx, env.Client, nodeClass)
 		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
+
+		nodeClass = ExpectExists(ctx, env.Client, nodeClass)
+
 		Expect(awsEnv.IAMAPI.InstanceProfiles).To(HaveLen(1))
+		Expect(awsEnv.IAMAPI.InstanceProfiles[nodeClass.Status.InstanceProfile].Roles).To(HaveLen(1))
 
 		Expect(env.Client.Delete(ctx, nodeClass)).To(Succeed())
 		res := ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
@@ -265,6 +301,7 @@ var _ = Describe("NodeClass Termination", func() {
 		ExpectNotFound(ctx, env.Client, nodeClass)
 	})
 	It("should not call the IAM API when deleting a NodeClass with an instanceProfile specified", func() {
+		profileName := "test-instance-profile"
 		awsEnv.IAMAPI.InstanceProfiles = map[string]*iamtypes.InstanceProfile{
 			profileName: {
 				InstanceProfileName: aws.String("test-instance-profile"),
