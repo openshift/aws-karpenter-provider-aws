@@ -46,6 +46,8 @@ import (
 	. "github.com/onsi/gomega"
 	. "sigs.k8s.io/karpenter/pkg/test/expectations"
 	. "sigs.k8s.io/karpenter/pkg/utils/testing"
+
+	coreoptions "sigs.k8s.io/karpenter/pkg/operator/options"
 )
 
 var ctx context.Context
@@ -63,9 +65,10 @@ func TestAPIs(t *testing.T) {
 var _ = BeforeSuite(func() {
 	ctx = options.ToContext(ctx, test.Options())
 	env = coretest.NewEnvironment(coretest.WithCRDs(apis.CRDs...), coretest.WithCRDs(v1alpha1.CRDs...))
+	ctx = coreoptions.ToContext(ctx, coretest.Options(coretest.OptionsFields{FeatureGates: coretest.FeatureGates{ReservedCapacity: lo.ToPtr(true)}}))
 	awsEnv = test.NewEnvironment(ctx, env)
 	cloudProvider = cloudprovider.New(awsEnv.InstanceTypesProvider, awsEnv.InstanceProvider, events.NewRecorder(&record.FakeRecorder{}),
-		env.Client, awsEnv.AMIProvider, awsEnv.SecurityGroupProvider)
+		env.Client, awsEnv.AMIProvider, awsEnv.SecurityGroupProvider, awsEnv.CapacityReservationProvider, awsEnv.InstanceTypeStore)
 	garbageCollectionController = garbagecollection.NewController(env.Client, cloudProvider)
 })
 
@@ -139,6 +142,7 @@ var _ = Describe("GarbageCollection", func() {
 		awsEnv.EC2API.Instances.Store(aws.ToString(instance.InstanceId), *instance)
 
 		ExpectSingletonReconciled(ctx, garbageCollectionController)
+		awsEnv.InstanceCache.Flush()
 		_, err := cloudProvider.Get(ctx, providerID)
 		Expect(err).To(HaveOccurred())
 		Expect(karpcloudprovider.IsNodeClaimNotFoundError(err)).To(BeTrue())
@@ -154,6 +158,7 @@ var _ = Describe("GarbageCollection", func() {
 		ExpectApplied(ctx, env.Client, node)
 
 		ExpectSingletonReconciled(ctx, garbageCollectionController)
+		awsEnv.InstanceCache.Flush()
 		_, err := cloudProvider.Get(ctx, providerID)
 		Expect(err).To(HaveOccurred())
 		Expect(karpcloudprovider.IsNodeClaimNotFoundError(err)).To(BeTrue())
@@ -209,7 +214,7 @@ var _ = Describe("GarbageCollection", func() {
 			go func(id string) {
 				defer GinkgoRecover()
 				defer wg.Done()
-
+				awsEnv.InstanceCache.Flush()
 				_, err := cloudProvider.Get(ctx, fake.ProviderID(id))
 				Expect(err).To(HaveOccurred())
 				Expect(karpcloudprovider.IsNodeClaimNotFoundError(err)).To(BeTrue())

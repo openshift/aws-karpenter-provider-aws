@@ -20,16 +20,19 @@ If you are open to others contacting you about your use of Karpenter on Slack, a
 | Anthropic | Better utilizing mixes of instance types for more reliable capacity | N/A | [Homepage](https://anthropic.com) |
 | AppsFlyer | Managing statefull workloads like Kafka and more | `@alicvsroxas` `@danielvrog`| [Homepage](https://www.appsflyer.com/)|
 | Astradot | Using Karpenter on all K8s clusters in production and staging | N/A | [Homepage](https://astradot.com) |
-| Beeswax | Using Karpenter to scale our high load AdTech platform efficiently | `@James Wojewoda` | [Homepage](https://www.beeswax.com)
+| Beeswax | Using Karpenter to scale our high load AdTech platform efficiently | `@James Wojewoda` | [Homepage](https://www.beeswax.com) |
+| Cabify | Replace cluster-autoscaler in our EKS clusters | N/A | [Homepage](https://tech.cabify.com) |
 | Canva | Using Karpetner to scale CPU and GPU workloads on EKS | `@groodt` | [Canva](https://www.canva.com/) |
 | Cloud Posse, LLC | Karpenter ships out-of-the-box in our Terraform Blueprint for EKS and is offered as part of our comprehensive multi-account [AWS reference architecture](https://cloudposse.com/reference-architecture/). Everything is Open Source (APACHE2). | `@osterman` | [Karpenter : The Cloud Posse Developer Hub](https://docs.cloudposse.com/components/catalog/aws/eks/karpenter/) |
 | Codefresh | Juggling workloads for the SAAS CD/GitOps offering | `@Yonatan Koren`, `@Ilia Medvedev` | [Codefresh](https://codefresh.io/) |
 | Conveyor | Using karpenter to scale our customers data pipelines on EKS | `@stijndehaes` | [Conveyor](https://conveyordata.com/) |
+| Coralogix   | Using Karpenter on all of our EKS K8S Clusters in multi-tenant high scale production environments | `@doryer` | [Coralogix](https://coralogix.com/) |
 | Cordial   | Using Karpenter to scale multiple EKS clusters quickly | `@dschaaff` | [Cordial](https://cordial.com) |
 | Dig Security | Protecting our customers data - Using Karpenter to manage production and development workloads on EKS, We are using only Spot Instances in production. | `@Shahar Danus` | [Dig Security](https://dig.security/) |
 | Docker | Using Karpenter to scale Docker Hub on our EKS clusters | N/A | [Docker](https://www.docker.com) |
 | GlobalDots | Using Karpenter to scale Kubernetes clusters for a lot of our clients & for internal needs | `@vainkop` | [GlobalDots](https://globaldots.com) |
 | Grafana Labs | Using Karpenter as our Autoscaling tool on EKS | `@paulajulve`, `@logyball` | [Homepage](https://grafana.com/) & [Blog](https://grafana.com/blog/2023/11/09/how-grafana-labs-switched-to-karpenter-to-reduce-costs-and-complexities-in-amazon-eks/) |
+| Hazelcast | Running Hazelcast Cloud workloads on EKS with Karpenter—fast provisioning, intelligent consolidation, and resilience under spiky traffic. | `@atilsensalduz`, `@taylanerden` | [Hazelcast](https://hazelcast.com/) |
 | H2O.ai | Dynamically scaling CPU and GPU nodes for AI workloads  | `@Ophir Zahavi`, `@Asaf Oren` | [H2O.ai](https://h2o.ai/) |
 | HENNGE K.K. | Dynamically scaling production workloads in Tokyo region | `@furqan.habibi`, `@Hans Gunawan` | [HENNGE](https://hennge.com/global/) |
 | Homa | Using Karpenter to manage dynamically big instances and save cost effectively with disruptions | `@afreyermuth98`, `@alexbescond` | [Homa](https://www.homagames.com/) |
@@ -37,7 +40,6 @@ If you are open to others contacting you about your use of Karpenter on Slack, a
 | Kaltura | Using karpenter to deliver video to millions of end users | `@Ido Ziv` | [Homepage](https://corp.kaltura.com/) |
 | Livspace | Replacement for cluster autoscaler on production and staging EKS clusters | `@praveen-livspace` | [Homepage](https://www.livspace.com) |
 | Nexxiot | Easier, Safer, Cleaner Global Transportation - Using Karpenter to manage EKS nodes | `@Alex Berger` | [Homepage](https://nexxiot.com/) |
-| Nirvana Money | Building healthy, happy financial lives - Using Karpenter to manage all-Spot clusters | `@DWSR` | [Homepage](https://www.nirvana.money/) |
 | OccMundial | Using karpenter to manage our production workloads, using the dynamic scaling according to workload that needs to scale.  | `@parraletz` | [Homepage](https://www.occ.com.mx) |
 | Omaze | Intelligently using Karpenter's autoscaling to power our platforms | `@devopsidiot` | [Homepage](https://www.omaze.com/) |
 | PITS Global Data Recovery Services | Used to manage continuous integration and continuous delivery/deployment workflows. | N/A | [PITS Global Data Recovery Services](https://www.pitsdatarecovery.net/) |

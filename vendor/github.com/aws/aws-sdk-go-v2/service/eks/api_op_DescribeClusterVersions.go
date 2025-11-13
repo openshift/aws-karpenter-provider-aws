@@ -47,8 +47,16 @@ type DescribeClusterVersionsInput struct {
 	// Pagination token for the next set of results.
 	NextToken *string
 
+	// This field is deprecated. Use versionStatus instead, as that field matches for
+	// input and output of this action.
+	//
 	// Filter versions by their current status.
+	//
+	// Deprecated: status has been replaced by versionStatus
 	Status types.ClusterVersionStatus
+
+	// Filter versions by their current status.
+	VersionStatus types.VersionStatus
 
 	noSmithyDocumentSerde
 }
@@ -131,6 +139,9 @@ func (c *Client) addOperationDescribeClusterVersionsMiddlewares(stack *middlewar
 	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
+	if err = addCredentialSource(stack, options); err != nil {
+		return err
+	}
 	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opDescribeClusterVersions(options.Region), middleware.Before); err != nil {
 		return err
 	}
@@ -147,6 +158,36 @@ func (c *Client) addOperationDescribeClusterVersionsMiddlewares(stack *middlewar
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAttempt(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptExecution(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeSerialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterSerialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeSigning(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterSigning(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptTransmit(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeDeserialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterDeserialization(stack, options); err != nil {
 		return err
 	}
 	if err = addSpanInitializeStart(stack); err != nil {

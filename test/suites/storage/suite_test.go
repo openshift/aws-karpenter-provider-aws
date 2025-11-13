@@ -38,6 +38,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/samber/lo"
+	"github.com/samber/lo/mutable"
 
 	"github.com/aws/karpenter-provider-aws/pkg/errors"
 
@@ -107,7 +108,8 @@ var _ = Describe("Persistent Volumes", func() {
 		})
 		It("should run a pod with a pre-bound persistent volume while respecting topology constraints", func() {
 			subnets := env.GetSubnets(map[string]string{"karpenter.sh/discovery": env.ClusterName})
-			shuffledAZs := lo.Shuffle(lo.Keys(subnets))
+			shuffledAZs := lo.Keys(subnets)
+			mutable.Shuffle(shuffledAZs)
 
 			pvc := test.PersistentVolumeClaim(test.PersistentVolumeClaimOptions{
 				StorageClassName: lo.ToPtr("non-existent-storage-class"),
@@ -177,7 +179,8 @@ var _ = Describe("Persistent Volumes", func() {
 		})
 		It("should run a pod with a dynamic persistent volume while respecting allowed topologies", func() {
 			subnets := env.GetSubnets(map[string]string{"karpenter.sh/discovery": env.ClusterName})
-			shuffledAZs := lo.Shuffle(lo.Keys(subnets))
+			shuffledAZs := lo.Keys(subnets)
+			mutable.Shuffle(shuffledAZs)
 
 			storageClass.AllowedTopologies = []corev1.TopologySelectorTerm{{
 				MatchLabelExpressions: []corev1.TopologySelectorLabelRequirement{{
@@ -261,7 +264,8 @@ var _ = Describe("Stateful workloads", func() {
 
 		numPods = 1
 		subnets := env.GetSubnets(map[string]string{"karpenter.sh/discovery": env.ClusterName})
-		shuffledAZs := lo.Shuffle(lo.Keys(subnets))
+		shuffledAZs := lo.Keys(subnets)
+		mutable.Shuffle(shuffledAZs)
 
 		storageClass = test.StorageClass(test.StorageClassOptions{
 			ObjectMeta: metav1.ObjectMeta{
@@ -370,6 +374,9 @@ var _ = Describe("Stateful workloads", func() {
 
 var _ = Describe("Ephemeral Storage", func() {
 	DescribeTable("should run a pod with instance-store ephemeral storage that exceeds EBS root block device mappings", func(alias string) {
+		if strings.Contains(alias, "al2") && env.K8sMinorVersion() > 32 {
+			Skip("AL2 is not supported on versions > 1.32")
+		}
 		nodeClass.Spec.InstanceStorePolicy = lo.ToPtr(v1.InstanceStorePolicyRAID0)
 		nodeClass.Spec.AMISelectorTerms = []v1.AMISelectorTerm{
 			{
