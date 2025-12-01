@@ -25,7 +25,7 @@ tools() {
     go install -tags extended github.com/gohugoio/hugo@v0.110.0
     go install golang.org/x/vuln/cmd/govulncheck@latest
     go install github.com/onsi/ginkgo/v2/ginkgo@latest
-    go install github.com/rhysd/actionlint/cmd/actionlint@latest
+    go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.8
     go install github.com/mattn/goveralls@latest
     go install github.com/google/go-containerregistry/cmd/crane@latest
     go install oras.land/oras/cmd/oras@latest
