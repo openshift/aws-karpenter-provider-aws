@@ -30,6 +30,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -61,6 +62,29 @@ type Command struct {
 	reason            v1.DisruptionReason // used for metrics
 	consolidationType string              // used for metrics
 	lastError         error
+}
+
+func (c *Command) LogValues() []any {
+	candidateNodes := lo.Map(c.candidates, func(candidate *state.StateNode, _ int) interface{} {
+		return map[string]interface{}{
+			"Node":      klog.KObj(candidate.Node),
+			"NodeClaim": klog.KObj(candidate.NodeClaim),
+		}
+	})
+	replacementNodes := lo.Map(c.Replacements, func(replacement Replacement, _ int) interface{} {
+		return map[string]interface{}{
+			"NodeClaim": klog.KRef("", replacement.name),
+		}
+	})
+	return []any{
+		"command-id", c.id,
+		"reason", c.reason,
+		"decision", c.Decision(),
+		"disrupted-node-count", len(candidateNodes),
+		"replacement-node-count", len(replacementNodes),
+		"disrupted-nodes", candidateNodes,
+		"replacement-nodes", replacementNodes,
+	}
 }
 
 // Replacement wraps a NodeClaim name with an initialized field to save on readiness checks and identify
@@ -171,11 +195,11 @@ func (q *Queue) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	}
 
 	// Get command from queue. This waits until queue is non-empty.
-	cmd, shutdown := q.TypedRateLimitingInterface.Get()
+	cmd, shutdown := q.Get()
 	if shutdown {
 		panic("unexpected failure, disruption queue has shut down")
 	}
-	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("command-id", string(cmd.id)))
+	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues(cmd.LogValues()...))
 
 	if err := q.waitOrTerminate(ctx, cmd); err != nil {
 		// If recoverable, re-queue and try again.
@@ -183,8 +207,8 @@ func (q *Queue) Reconcile(ctx context.Context) (reconcile.Result, error) {
 			// store the error that is causing us to fail, so we can bubble it up later if this times out.
 			cmd.lastError = err
 			// mark this item as done processing. This is necessary so that the RLI is able to add the item back in.
-			q.TypedRateLimitingInterface.Done(cmd)
-			q.TypedRateLimitingInterface.AddRateLimited(cmd)
+			q.Done(cmd)
+			q.AddRateLimited(cmd)
 			return reconcile.Result{RequeueAfter: singleton.RequeueImmediately}, nil
 		}
 		// If the command failed, bail on the action.
@@ -317,8 +341,8 @@ func (q *Queue) HasAny(ids ...string) bool {
 // Remove fully clears the queue of all references of a hash/command
 func (q *Queue) Remove(cmd *Command) {
 	// mark this item as done processing. This is necessary so that the RLI is able to add the item back in.
-	q.TypedRateLimitingInterface.Done(cmd)
-	q.TypedRateLimitingInterface.Forget(cmd)
+	q.Done(cmd)
+	q.Forget(cmd)
 	q.cluster.UnmarkForDeletion(lo.Map(cmd.candidates, func(s *state.StateNode, _ int) string { return s.ProviderID() })...)
 	// Remove all candidates linked to the command
 	q.mu.Lock()

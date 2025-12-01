@@ -74,13 +74,13 @@ func (c *Controller) Register(_ context.Context, m manager.Manager) error {
 
 func (c *Controller) Reconcile(ctx context.Context, node *corev1.Node) (reconcile.Result, error) {
 	ctx = injection.WithControllerName(ctx, "node.health")
-	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("Node", klog.KRef(node.Namespace, node.Name)))
 
 	// Validate that the node is owned by us
 	nodeClaim, err := nodeutils.NodeClaimForNode(ctx, c.kubeClient, node)
 	if err != nil {
 		return reconcile.Result{}, nodeutils.IgnoreDuplicateNodeClaimError(nodeutils.IgnoreNodeClaimNotFoundError(err))
 	}
+	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("NodeClaim", klog.KObj(nodeClaim)))
 
 	// If a nodeclaim does has a nodepool label, validate the nodeclaims inside the nodepool are healthy (i.e bellow the allowed threshold)
 	// In the case of standalone nodeclaim, validate the nodes inside the cluster are healthy before proceeding
@@ -170,7 +170,7 @@ func (c *Controller) findUnhealthyConditions(node *corev1.Node) (nc *corev1.Node
 }
 
 func (c *Controller) annotateTerminationGracePeriod(ctx context.Context, nodeClaim *v1.NodeClaim) error {
-	if expirationTimeString, exists := nodeClaim.ObjectMeta.Annotations[v1.NodeClaimTerminationTimestampAnnotationKey]; exists {
+	if expirationTimeString, exists := nodeClaim.Annotations[v1.NodeClaimTerminationTimestampAnnotationKey]; exists {
 		expirationTime, err := time.Parse(time.RFC3339, expirationTimeString)
 		if err == nil && expirationTime.Before(c.clock.Now()) {
 			return nil
@@ -179,7 +179,7 @@ func (c *Controller) annotateTerminationGracePeriod(ctx context.Context, nodeCla
 
 	stored := nodeClaim.DeepCopy()
 	terminationTime := c.clock.Now().Format(time.RFC3339)
-	nodeClaim.ObjectMeta.Annotations = lo.Assign(nodeClaim.ObjectMeta.Annotations, map[string]string{v1.NodeClaimTerminationTimestampAnnotationKey: terminationTime})
+	nodeClaim.Annotations = lo.Assign(nodeClaim.Annotations, map[string]string{v1.NodeClaimTerminationTimestampAnnotationKey: terminationTime})
 
 	if !equality.Semantic.DeepEqual(stored, nodeClaim) {
 		if err := c.kubeClient.Patch(ctx, nodeClaim, client.MergeFrom(stored)); err != nil {

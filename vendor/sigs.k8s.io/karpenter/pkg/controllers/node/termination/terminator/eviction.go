@@ -147,20 +147,20 @@ func (q *Queue) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	// Check if the queue is empty. client-go recommends not using this function to gate the subsequent
 	// get call, but since we're popping items off the queue synchronously, there should be no synchonization
 	// issues.
-	if q.TypedRateLimitingInterface.Len() == 0 {
+	if q.Len() == 0 {
 		return reconcile.Result{RequeueAfter: 1 * time.Second}, nil
 	}
 	// Get pod from queue. This waits until queue is non-empty.
-	item, shutdown := q.TypedRateLimitingInterface.Get()
+	item, shutdown := q.Get()
 	if shutdown {
 		return reconcile.Result{}, fmt.Errorf("EvictionQueue is broken and has shutdown")
 	}
 
-	defer q.TypedRateLimitingInterface.Done(item)
+	defer q.Done(item)
 
 	// Evict the pod
 	if q.Evict(ctx, item) {
-		q.TypedRateLimitingInterface.Forget(item)
+		q.Forget(item)
 		q.mu.Lock()
 		q.set.Delete(item)
 		q.mu.Unlock()
@@ -168,18 +168,13 @@ func (q *Queue) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	}
 
 	// Requeue pod if eviction failed
-	q.TypedRateLimitingInterface.AddRateLimited(item)
+	q.AddRateLimited(item)
 	return reconcile.Result{RequeueAfter: singleton.RequeueImmediately}, nil
 }
 
 // Evict returns true if successful eviction call, and false if there was an eviction-related error
 func (q *Queue) Evict(ctx context.Context, key QueueKey) bool {
 	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("Pod", klog.KRef(key.Namespace, key.Name)))
-	evictionMessage, err := evictionReason(ctx, key, q.kubeClient)
-	if err != nil {
-		// XXX(cmcavoy): this should be unreachable, but we log it if it happens
-		log.FromContext(ctx).V(1).Error(err, "failed looking up pod eviction reason")
-	}
 	if err := q.kubeClient.SubResource("eviction").Create(ctx,
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: key.Namespace, Name: key.Name}},
 		&policyv1.Eviction{
@@ -214,18 +209,18 @@ func (q *Queue) Evict(ctx context.Context, key QueueKey) bool {
 		return false
 	}
 	NodesEvictionRequestsTotal.Inc(map[string]string{CodeLabel: "200"})
-	q.recorder.Publish(terminatorevents.EvictPod(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}, evictionMessage))
+	q.recorder.Publish(terminatorevents.EvictPod(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}, evictionReason(ctx, key, q.kubeClient)))
 	return true
 }
 
-func evictionReason(ctx context.Context, key QueueKey, kubeClient client.Client) (string, error) {
+func evictionReason(ctx context.Context, key QueueKey, kubeClient client.Client) string {
 	nodeClaim, err := node.NodeClaimForNode(ctx, kubeClient, &corev1.Node{Spec: corev1.NodeSpec{ProviderID: key.providerID}})
 	if err != nil {
-		return "", err
+		log.FromContext(ctx).V(1).Error(err, "node has no nodeclaim, failed looking up pod eviction reason")
+		return ""
 	}
-	terminationCondition := nodeClaim.StatusConditions().Get(v1.ConditionTypeDisruptionReason)
-	if terminationCondition.IsTrue() {
-		return terminationCondition.Message, nil
+	if cond := nodeClaim.StatusConditions().Get(v1.ConditionTypeDisruptionReason); cond.IsTrue() {
+		return cond.Reason
 	}
-	return "Forceful Termination", nil
+	return "Forceful Termination"
 }

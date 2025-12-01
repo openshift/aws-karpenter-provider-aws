@@ -95,10 +95,10 @@ func (n StateNodes) Pods(ctx context.Context, kubeClient client.Client) ([]*core
 	return pods, nil
 }
 
-func (n StateNodes) ReschedulablePods(ctx context.Context, kubeClient client.Client) ([]*corev1.Pod, error) {
+func (n StateNodes) CurrentlyReschedulablePods(ctx context.Context, kubeClient client.Client) ([]*corev1.Pod, error) {
 	var pods []*corev1.Pod
 	for _, node := range n {
-		p, err := node.ReschedulablePods(ctx, kubeClient)
+		p, err := node.CurrentlyReschedulablePods(ctx, kubeClient)
 		if err != nil {
 			return nil, err
 		}
@@ -141,6 +141,21 @@ func NewNode() *StateNode {
 		podLimits:         map[types.NamespacedName]corev1.ResourceList{},
 		hostPortUsage:     scheduling.NewHostPortUsage(),
 		volumeUsage:       scheduling.NewVolumeUsage(),
+	}
+}
+
+func (in *StateNode) ShallowCopy() *StateNode {
+	return &StateNode{
+		Node:              in.Node,
+		NodeClaim:         in.NodeClaim,
+		daemonSetRequests: in.daemonSetRequests,
+		daemonSetLimits:   in.daemonSetLimits,
+		podRequests:       in.podRequests,
+		podLimits:         in.podLimits,
+		hostPortUsage:     in.hostPortUsage,
+		volumeUsage:       in.volumeUsage,
+		markedForDeletion: in.markedForDeletion,
+		nominatedUntil:    in.nominatedUntil,
 	}
 }
 
@@ -231,12 +246,12 @@ func (in *StateNode) ValidatePodsDisruptable(ctx context.Context, kubeClient cli
 	return pods, nil
 }
 
-// ReschedulablePods gets the pods assigned to the Node that are reschedulable based on the kubernetes api-server bindings
-func (in *StateNode) ReschedulablePods(ctx context.Context, kubeClient client.Client) ([]*corev1.Pod, error) {
+// CurrentlyReschedulablePods gets the pods assigned to the Node that are currently reschedulable based on the kubernetes api-server bindings
+func (in *StateNode) CurrentlyReschedulablePods(ctx context.Context, kubeClient client.Client) ([]*corev1.Pod, error) {
 	if in.Node == nil {
 		return nil, nil
 	}
-	return nodeutils.GetReschedulablePods(ctx, kubeClient, in.Node)
+	return nodeutils.GetCurrentlyReschedulablePods(ctx, kubeClient, in.Node)
 }
 
 func (in *StateNode) HostName() string {
