@@ -19,18 +19,19 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	stdlog "log"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
+	"github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
-	"github.com/awslabs/operatorpkg/aws/middleware"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/aws/smithy-go"
@@ -42,6 +43,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/transport"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	clinetconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
@@ -49,6 +51,8 @@ import (
 	"sigs.k8s.io/karpenter/pkg/operator"
 
 	prometheusv2 "github.com/jonathan-innis/aws-sdk-go-prometheus/v2"
+
+	"sigs.k8s.io/karpenter/pkg/apis"
 
 	sdk "github.com/aws/karpenter-provider-aws/pkg/aws"
 	awscache "github.com/aws/karpenter-provider-aws/pkg/cache"
@@ -78,7 +82,6 @@ type Operator struct {
 	UnavailableOfferingsCache   *awscache.UnavailableOfferings
 	SSMCache                    *cache.Cache
 	ValidationCache             *cache.Cache
-	RecreationCache             *cache.Cache
 	SubnetProvider              subnet.Provider
 	SecurityGroupProvider       securitygroup.Provider
 	InstanceProfileProvider     instanceprofile.Provider
@@ -95,8 +98,22 @@ type Operator struct {
 }
 
 func NewOperator(ctx context.Context, operator *operator.Operator) (context.Context, *Operator) {
+	kubeletCompatibilityAnnotationKey := fmt.Sprintf("%s/%s", apis.CompatibilityGroup, "v1beta1-kubelet-conversion")
+	// we are going to panic if any of the customer nodepools contain
+	// compatibility.karpenter.sh/v1beta1-kubelet-conversion
+	restConfig := clinetconfig.GetConfigOrDie()
+	kubeClient := lo.Must(client.New(restConfig, client.Options{}))
+	nodePoolList := &karpv1.NodePoolList{}
+	lo.Must0(kubeClient.List(ctx, nodePoolList))
+	npNames := lo.FilterMap(nodePoolList.Items, func(np karpv1.NodePool, _ int) (string, bool) {
+		_, ok := np.Annotations[kubeletCompatibilityAnnotationKey]
+		return np.Name, ok
+	})
+	if len(npNames) != 0 {
+		stdlog.Fatalf("The kubelet compatibility annotation, %s, is not supported on Karpenter v1.1+. Please refer to the upgrade guide in the docs. The following NodePools still have the compatibility annotation: %s", kubeletCompatibilityAnnotationKey, strings.Join(npNames, ", "))
+	}
+
 	cfg := prometheusv2.WithPrometheusMetrics(WithUserAgent(lo.Must(config.LoadDefaultConfig(ctx))), crmetrics.Registry)
-	cfg.APIOptions = append(cfg.APIOptions, middleware.StructuredErrorHandler)
 	if cfg.Region == "" {
 		log.FromContext(ctx).V(1).Info("retrieving region from IMDS")
 		region := lo.Must(imds.NewFromConfig(cfg).GetRegion(ctx, nil))
@@ -104,6 +121,7 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 	}
 	ec2api := ec2.NewFromConfig(cfg)
 	eksapi := eks.NewFromConfig(cfg)
+	log.FromContext(ctx).WithValues("region", cfg.Region).V(1).Info("discovered region")
 	if err := CheckEC2Connectivity(ctx, ec2api); err != nil {
 		log.FromContext(ctx).Error(err, "ec2 api connectivity check failed")
 		os.Exit(1)
@@ -127,22 +145,15 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 	unavailableOfferingsCache := awscache.NewUnavailableOfferings()
 	ssmCache := cache.New(awscache.SSMCacheTTL, awscache.DefaultCleanupInterval)
 	validationCache := cache.New(awscache.ValidationTTL, awscache.DefaultCleanupInterval)
-	recreationCache := cache.New(awscache.RecreationTTL, awscache.DefaultCleanupInterval)
 
 	subnetProvider := subnet.NewDefaultProvider(ec2api, cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval), cache.New(awscache.AvailableIPAddressTTL, awscache.DefaultCleanupInterval), cache.New(awscache.AssociatePublicIPAddressTTL, awscache.DefaultCleanupInterval))
 	securityGroupProvider := securitygroup.NewDefaultProvider(ec2api, cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval))
-	instanceProfileProvider := instanceprofile.NewDefaultProvider(
-		iam.NewFromConfig(cfg),
-		cache.New(awscache.InstanceProfileTTL, awscache.DefaultCleanupInterval),
-		cache.New(awscache.DefaultCleanupInterval, awscache.DefaultCleanupInterval),
-		cache.New(awscache.ProtectedProfilesTTL, awscache.DefaultCleanupInterval),
-		cfg.Region,
-	)
+	instanceProfileProvider := instanceprofile.NewDefaultProvider(iam.NewFromConfig(cfg), cache.New(awscache.InstanceProfileTTL, awscache.DefaultCleanupInterval))
 	pricingProvider := pricing.NewDefaultProvider(
+		ctx,
 		pricing.NewAPI(cfg),
 		ec2api,
 		cfg.Region,
-		options.FromContext(ctx).IsolatedVPC,
 	)
 	versionProvider := version.NewDefaultProvider(operator.KubernetesInterface, eksapi)
 	// Ensure we're able to hydrate the version before starting any reliant controllers.
@@ -151,7 +162,7 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 	lo.Must0(versionProvider.UpdateVersion(ctx))
 	ssmProvider := ssmp.NewDefaultProvider(ssm.NewFromConfig(cfg), ssmCache)
 	amiProvider := amifamily.NewDefaultProvider(operator.Clock, versionProvider, ssmProvider, ec2api, cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval))
-	amiResolver := amifamily.NewDefaultResolver(cfg.Region)
+	amiResolver := amifamily.NewDefaultResolver()
 	launchTemplateProvider := launchtemplate.NewDefaultProvider(
 		ctx,
 		cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval),
@@ -182,20 +193,14 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 		unavailableOfferingsCache,
 		instancetype.NewDefaultResolver(cfg.Region),
 	)
-	// Ensure we're able to hydrate instance types before starting any reliant controllers.
-	// Instance type updates are hydrated asynchronously after this by controllers.
-	lo.Must0(instanceTypeProvider.UpdateInstanceTypes(ctx))
-	lo.Must0(instanceTypeProvider.UpdateInstanceTypeOfferings(ctx))
 	instanceProvider := instance.NewDefaultProvider(
 		ctx,
 		cfg.Region,
-		operator.EventRecorder,
 		ec2api,
 		unavailableOfferingsCache,
 		subnetProvider,
 		launchTemplateProvider,
 		capacityReservationProvider,
-		cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval),
 	)
 
 	// Setup field indexers on instanceID -- specifically for the interruption controller
@@ -208,7 +213,6 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 		UnavailableOfferingsCache:   unavailableOfferingsCache,
 		SSMCache:                    ssmCache,
 		ValidationCache:             validationCache,
-		RecreationCache:             recreationCache,
 		SubnetProvider:              subnetProvider,
 		SecurityGroupProvider:       securityGroupProvider,
 		InstanceProfileProvider:     instanceProfileProvider,
@@ -229,7 +233,7 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 func WithUserAgent(cfg aws.Config) aws.Config {
 	userAgent := fmt.Sprintf("karpenter.sh-%s", operator.Version)
 	cfg.APIOptions = append(cfg.APIOptions,
-		awsmiddleware.AddUserAgentKey(userAgent),
+		middleware.AddUserAgentKey(userAgent),
 	)
 	return cfg
 }

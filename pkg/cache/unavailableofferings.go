@@ -17,8 +17,6 @@ package cache
 import (
 	"context"
 	"fmt"
-	"strings"
-	"sync"
 	"sync/atomic"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -34,59 +32,25 @@ import (
 // GetInstanceTypes responses
 type UnavailableOfferings struct {
 	// key: <capacityType>:<instanceType>:<zone>, value: struct{}{}
-	offeringCache         *cache.Cache
-	offeringCacheSeqNumMu sync.RWMutex
-	offeringCacheSeqNum   map[ec2types.InstanceType]uint64
-
-	capacityTypeCache       *cache.Cache
-	capacityTypeCacheSeqNum atomic.Uint64
-
-	azCache       *cache.Cache
-	azCacheSeqNum atomic.Uint64
+	cache  *cache.Cache
+	SeqNum uint64
 }
 
 func NewUnavailableOfferings() *UnavailableOfferings {
 	uo := &UnavailableOfferings{
-		offeringCache:         cache.New(UnavailableOfferingsTTL, UnavailableOfferingsCleanupInterval),
-		offeringCacheSeqNumMu: sync.RWMutex{},
-		offeringCacheSeqNum:   map[ec2types.InstanceType]uint64{},
-
-		capacityTypeCache: cache.New(UnavailableOfferingsTTL, UnavailableOfferingsCleanupInterval),
-		azCache:           cache.New(UnavailableOfferingsTTL, UnavailableOfferingsCleanupInterval),
+		cache:  cache.New(UnavailableOfferingsTTL, UnavailableOfferingsCleanupInterval),
+		SeqNum: 0,
 	}
-	uo.offeringCache.OnEvicted(func(k string, _ interface{}) {
-		elems := strings.Split(k, ":")
-		if len(elems) != 3 {
-			panic("unavailable offerings cache key is not of expected format <capacity-type>:<instance-type>:<zone>")
-		}
-		uo.offeringCacheSeqNumMu.Lock()
-		uo.offeringCacheSeqNum[ec2types.InstanceType(elems[1])]++
-		uo.offeringCacheSeqNumMu.Unlock()
-	})
-	uo.capacityTypeCache.OnEvicted(func(k string, _ interface{}) {
-		uo.capacityTypeCacheSeqNum.Add(1)
-	})
-	uo.azCache.OnEvicted(func(k string, _ interface{}) {
-		uo.azCacheSeqNum.Add(1)
+	uo.cache.OnEvicted(func(_ string, _ interface{}) {
+		atomic.AddUint64(&uo.SeqNum, 1)
 	})
 	return uo
 }
 
-// SeqNum returns a sequence number for an instance type to capture whether the offering cache has changed for the intance type
-func (u *UnavailableOfferings) SeqNum(instanceType ec2types.InstanceType) uint64 {
-	u.offeringCacheSeqNumMu.RLock()
-	defer u.offeringCacheSeqNumMu.RUnlock()
-
-	v := u.offeringCacheSeqNum[instanceType]
-	return v + u.capacityTypeCacheSeqNum.Load() + u.azCacheSeqNum.Load()
-}
-
 // IsUnavailable returns true if the offering appears in the cache
 func (u *UnavailableOfferings) IsUnavailable(instanceType ec2types.InstanceType, zone, capacityType string) bool {
-	_, offeringFound := u.offeringCache.Get(u.key(instanceType, zone, capacityType))
-	_, capacityTypeFound := u.capacityTypeCache.Get(capacityType)
-	_, azFound := u.azCache.Get(zone)
-	return offeringFound || capacityTypeFound || azFound
+	_, found := u.cache.Get(u.key(instanceType, zone, capacityType))
+	return found
 }
 
 // MarkUnavailable communicates recently observed temporary capacity shortages in the provided offerings
@@ -98,10 +62,8 @@ func (u *UnavailableOfferings) MarkUnavailable(ctx context.Context, unavailableR
 		"zone", zone,
 		"capacity-type", capacityType,
 		"ttl", UnavailableOfferingsTTL).V(1).Info("removing offering from offerings")
-	u.offeringCache.SetDefault(u.key(instanceType, zone, capacityType), struct{}{})
-	u.offeringCacheSeqNumMu.Lock()
-	u.offeringCacheSeqNum[instanceType]++
-	u.offeringCacheSeqNumMu.Unlock()
+	u.cache.SetDefault(u.key(instanceType, zone, capacityType), struct{}{})
+	atomic.AddUint64(&u.SeqNum, 1)
 }
 
 func (u *UnavailableOfferings) MarkUnavailableForFleetErr(ctx context.Context, fleetErr ec2types.CreateFleetError, capacityType string) {
@@ -110,24 +72,12 @@ func (u *UnavailableOfferings) MarkUnavailableForFleetErr(ctx context.Context, f
 	u.MarkUnavailable(ctx, lo.FromPtr(fleetErr.ErrorCode), instanceType, zone, capacityType)
 }
 
-func (u *UnavailableOfferings) MarkCapacityTypeUnavailable(capacityType string) {
-	u.capacityTypeCache.SetDefault(capacityType, struct{}{})
-	u.capacityTypeCacheSeqNum.Add(1)
-}
-
-func (u *UnavailableOfferings) MarkAZUnavailable(zone string) {
-	u.azCache.SetDefault(zone, struct{}{})
-	u.azCacheSeqNum.Add(1)
-}
-
 func (u *UnavailableOfferings) Delete(instanceType ec2types.InstanceType, zone string, capacityType string) {
-	u.offeringCache.Delete(u.key(instanceType, zone, capacityType))
+	u.cache.Delete(u.key(instanceType, zone, capacityType))
 }
 
 func (u *UnavailableOfferings) Flush() {
-	u.offeringCache.Flush()
-	u.capacityTypeCache.Flush()
-	u.azCache.Flush()
+	u.cache.Flush()
 }
 
 // key returns the cache key for all offerings in the cache

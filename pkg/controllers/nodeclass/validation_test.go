@@ -15,14 +15,8 @@ limitations under the License.
 package nodeclass_test
 
 import (
-	"fmt"
-	"strings"
-	"time"
-
-	"github.com/awslabs/operatorpkg/object"
 	"github.com/awslabs/operatorpkg/status"
 	"github.com/samber/lo"
-	"k8s.io/apimachinery/pkg/util/version"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -30,21 +24,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/smithy-go"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/record"
-	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
-	"sigs.k8s.io/karpenter/pkg/events"
-	coretest "sigs.k8s.io/karpenter/pkg/test"
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 	"github.com/aws/karpenter-provider-aws/pkg/controllers/nodeclass"
 	"github.com/aws/karpenter-provider-aws/pkg/fake"
-	"github.com/aws/karpenter-provider-aws/pkg/operator/options"
 	"github.com/aws/karpenter-provider-aws/pkg/test"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	. "github.com/onsi/gomega/gstruct"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	. "sigs.k8s.io/karpenter/pkg/test/expectations"
 )
@@ -53,7 +40,7 @@ var _ = Describe("NodeClass Validation Status Controller", func() {
 	Context("Preconditions", func() {
 		var reconciler *nodeclass.Validation
 		BeforeEach(func() {
-			reconciler = nodeclass.NewValidationReconciler(env.Client, cloudProvider, awsEnv.EC2API, awsEnv.AMIResolver, awsEnv.InstanceTypesProvider, awsEnv.LaunchTemplateProvider, awsEnv.ValidationCache, options.FromContext(ctx).DisableDryRun)
+			reconciler = nodeclass.NewValidationReconciler(awsEnv.EC2API, awsEnv.AMIResolver, awsEnv.LaunchTemplateProvider, awsEnv.ValidationCache)
 			for _, cond := range []string{
 				v1.ConditionTypeAMIsReady,
 				v1.ConditionTypeInstanceProfileReady,
@@ -130,9 +117,6 @@ var _ = Describe("NodeClass Validation Status Controller", func() {
 		DescribeTable(
 			"shouldn't resolve cluster CIDR for non-AL2023 NodeClasses",
 			func(family string, terms []v1.AMISelectorTerm) {
-				if version.MustParseGeneric(awsEnv.VersionProvider.Get(ctx)).Minor() > 32 {
-					Skip("AL2 is not supported on versions > 1.32")
-				}
 				nodeClass.Spec.AMIFamily = lo.ToPtr(family)
 				nodeClass.Spec.AMISelectorTerms = terms
 				ExpectApplied(ctx, env.Client, nodeClass)
@@ -265,135 +249,6 @@ var _ = Describe("NodeClass Validation Status Controller", func() {
 				}, fake.MaxCalls(1))
 			}, nodeclass.ConditionReasonCreateLaunchTemplateAuthFailed),
 		)
-		Context("Instance Type Prioritization Validation", func() {
-			BeforeEach(func() {
-				awsEnv.EC2API.DescribeImagesOutput.Set(&ec2.DescribeImagesOutput{
-					Images: []ec2types.Image{
-						{
-							Name:         lo.ToPtr("amd64-ami"),
-							ImageId:      lo.ToPtr("amd64-ami-id"),
-							CreationDate: lo.ToPtr(time.Time{}.Format(time.RFC3339)),
-							Architecture: "x86_64",
-							State:        ec2types.ImageStateAvailable,
-						},
-						{
-							Name:         lo.ToPtr("arm64-ami"),
-							ImageId:      lo.ToPtr("arm64-ami-id"),
-							CreationDate: lo.ToPtr(time.Time{}.Add(time.Minute).Format(time.RFC3339)),
-							Architecture: "arm64",
-							State:        ec2types.ImageStateAvailable,
-						},
-						{
-							Name:         lo.ToPtr("amd64-nvidia-ami"),
-							ImageId:      lo.ToPtr("amd64-nvidia-ami-id"),
-							CreationDate: lo.ToPtr(time.Time{}.Add(2 * time.Minute).Format(time.RFC3339)),
-							Architecture: "x86_64",
-							State:        ec2types.ImageStateAvailable,
-						},
-					},
-				})
-				version := awsEnv.VersionProvider.Get(ctx)
-				awsEnv.SSMAPI.Parameters = map[string]string{
-					fmt.Sprintf("/aws/service/eks/optimized-ami/%s/amazon-linux-2023/x86_64/standard/recommended/image_id", version): "amd64-ami-id",
-					fmt.Sprintf("/aws/service/eks/optimized-ami/%s/amazon-linux-2023/x86_64/nvidia/recommended/image_id", version):   "amd64-nvidia-ami-id",
-					fmt.Sprintf("/aws/service/eks/optimized-ami/%s/amazon-linux-2023/arm64/standard/recommended/image_id", version):  "arm64-ami-id",
-				}
-				Expect(awsEnv.InstanceTypesProvider.UpdateInstanceTypes(ctx)).To(Succeed())
-				Expect(awsEnv.InstanceTypesProvider.UpdateInstanceTypeOfferings(ctx)).To(Succeed())
-			})
-			DescribeTable(
-				"should fallback to static instance types when no linked NodePools exist",
-				func(expectedInstanceType ec2types.InstanceType, expectedAMIID string) {
-					// Filter out the non-target standard AMI to ensure the right instance is selected, but leave the nvidia AMI to
-					// test AMI selection.
-					awsEnv.SSMAPI.Parameters = lo.PickBy(awsEnv.SSMAPI.Parameters, func(_, amiID string) bool {
-						return amiID == expectedAMIID || strings.Contains(amiID, "nvidia")
-					})
-					Expect(len(awsEnv.SSMAPI.Parameters)).To(BeNumerically(">", 1))
-
-					ExpectApplied(ctx, env.Client, nodeClass)
-					ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
-					launchTemplateInput := awsEnv.EC2API.CreateLaunchTemplateBehavior.CalledWithInput.Pop()
-					runInstancesInput := awsEnv.EC2API.RunInstancesBehavior.CalledWithInput.Pop()
-					Expect(runInstancesInput.InstanceType).To(Equal(expectedInstanceType))
-					Expect(launchTemplateInput.LaunchTemplateData.ImageId).To(PointTo(Equal(expectedAMIID)))
-				},
-				Entry("m5.large", ec2types.InstanceTypeM5Large, "amd64-ami-id"),
-				Entry("m6g.large", ec2types.InstanceTypeM6gLarge, "arm64-ami-id"),
-			)
-			It("should prioritize non-GPU instances", func() {
-				nodePool := coretest.NodePool(karpv1.NodePool{Spec: karpv1.NodePoolSpec{Template: karpv1.NodeClaimTemplate{
-					Spec: karpv1.NodeClaimTemplateSpec{
-						Requirements: []karpv1.NodeSelectorRequirementWithMinValues{
-							{
-								NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-									Key:      corev1.LabelInstanceTypeStable,
-									Operator: corev1.NodeSelectorOpIn,
-									Values: []string{
-										string(ec2types.InstanceTypeC6gLarge),
-										string(ec2types.InstanceTypeG4dn8xlarge),
-									},
-								},
-							},
-						},
-						NodeClassRef: &karpv1.NodeClassReference{
-							Group: object.GVK(nodeClass).Group,
-							Kind:  object.GVK(nodeClass).Kind,
-							Name:  nodeClass.Name,
-						},
-					},
-				}}})
-				ExpectApplied(ctx, env.Client, nodePool, nodeClass)
-				ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
-				launchTemplateInput := awsEnv.EC2API.CreateLaunchTemplateBehavior.CalledWithInput.Pop()
-				runInstancesInput := awsEnv.EC2API.RunInstancesBehavior.CalledWithInput.Pop()
-				Expect(runInstancesInput.InstanceType).To(Equal(ec2types.InstanceTypeC6gLarge))
-				Expect(launchTemplateInput.LaunchTemplateData.ImageId).To(PointTo(Equal("arm64-ami-id")))
-			})
-			It("should fallback to GPU instances when no non-GPU instances exist", func() {
-				nodePool := coretest.NodePool(karpv1.NodePool{Spec: karpv1.NodePoolSpec{Template: karpv1.NodeClaimTemplate{
-					Spec: karpv1.NodeClaimTemplateSpec{
-						Requirements: []karpv1.NodeSelectorRequirementWithMinValues{
-							{
-								NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-									Key:      corev1.LabelInstanceTypeStable,
-									Operator: corev1.NodeSelectorOpIn,
-									Values: []string{
-										string(ec2types.InstanceTypeG4dn8xlarge),
-									},
-								},
-							},
-						},
-						NodeClassRef: &karpv1.NodeClassReference{
-							Group: object.GVK(nodeClass).Group,
-							Kind:  object.GVK(nodeClass).Kind,
-							Name:  nodeClass.Name,
-						},
-					},
-				}}})
-				ExpectApplied(ctx, env.Client, nodePool, nodeClass)
-				ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
-				launchTemplateInput := awsEnv.EC2API.CreateLaunchTemplateBehavior.CalledWithInput.Pop()
-				runInstancesInput := awsEnv.EC2API.RunInstancesBehavior.CalledWithInput.Pop()
-				Expect(runInstancesInput.InstanceType).To(Equal(ec2types.InstanceTypeG4dn8xlarge))
-				Expect(launchTemplateInput.LaunchTemplateData.ImageId).To(PointTo(Equal("amd64-nvidia-ami-id")))
-			})
-		})
-	})
-	It("should not skip validation when new annotation is added", func() {
-		ExpectApplied(ctx, env.Client, nodeClass)
-		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
-		nodeClass = ExpectExists(ctx, env.Client, nodeClass)
-		Expect(awsEnv.ValidationCache.Items()).To(HaveLen(1))
-		nodeClass.SetAnnotations(map[string]string{"testing": "validation"})
-		ExpectApplied(ctx, env.Client, nodeClass)
-
-		awsEnv.EC2API.Reset()
-		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
-		nodeClass = ExpectExists(ctx, env.Client, nodeClass)
-
-		Expect(awsEnv.EC2API.CreateFleetBehavior.Calls()).To(Equal(1))
-		Expect(awsEnv.EC2API.RunInstancesBehavior.Calls()).To(Equal(1))
 	})
 	It("should clear the validation cache when the nodeclass is deleted", func() {
 		controllerutil.AddFinalizer(nodeClass, v1.TerminationFinalizer)
@@ -409,37 +264,5 @@ var _ = Describe("NodeClass Validation Status Controller", func() {
 		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
 		ExpectNotFound(ctx, env.Client, nodeClass)
 		Expect(awsEnv.ValidationCache.Items()).To(HaveLen(0))
-	})
-	It("should pass validation when the validation controller is disabled", func() {
-		controller = nodeclass.NewController(
-			awsEnv.Clock,
-			env.Client,
-			cloudProvider,
-			events.NewRecorder(&record.FakeRecorder{}),
-			fake.DefaultRegion,
-			awsEnv.SubnetProvider,
-			awsEnv.SecurityGroupProvider,
-			awsEnv.AMIProvider,
-			awsEnv.InstanceProfileProvider,
-			awsEnv.InstanceTypesProvider,
-			awsEnv.LaunchTemplateProvider,
-			awsEnv.CapacityReservationProvider,
-			awsEnv.EC2API,
-			awsEnv.ValidationCache,
-			awsEnv.RecreationCache,
-			awsEnv.AMIResolver,
-			true,
-		)
-		ExpectApplied(ctx, env.Client, nodeClass)
-		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
-		nodeClass = ExpectExists(ctx, env.Client, nodeClass)
-		Expect(nodeClass.StatusConditions().Get(v1.ConditionTypeValidationSucceeded).IsTrue()).To(BeTrue())
-		Expect(nodeClass.StatusConditions().Get(status.ConditionReady).IsTrue()).To(BeTrue())
-		// The cache still has an entry so we don't revalidate tags
-		Expect(awsEnv.ValidationCache.Items()).To(HaveLen(1))
-		// We shouldn't make any new calls when validation is disabled
-		Expect(awsEnv.EC2API.CreateFleetBehavior.Calls()).To(Equal(0))
-		Expect(awsEnv.EC2API.CreateLaunchTemplateBehavior.Calls()).To(Equal(0))
-		Expect(awsEnv.EC2API.RunInstancesBehavior.Calls()).To(Equal(0))
 	})
 })

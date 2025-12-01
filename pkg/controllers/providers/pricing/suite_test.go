@@ -100,7 +100,7 @@ var _ = Describe("Pricing", func() {
 			"should return correct static data for all partitions",
 			func(staticPricing map[string]map[ec2types.InstanceType]float64) {
 				for region, prices := range staticPricing {
-					provider := pricing.NewDefaultProvider(awsEnv.PricingAPI, awsEnv.EC2API, region, false)
+					provider := pricing.NewDefaultProvider(ctx, awsEnv.PricingAPI, awsEnv.EC2API, region)
 					for instance, price := range prices {
 						val, ok := provider.OnDemandPrice(instance)
 						Expect(ok).To(BeTrue())
@@ -166,7 +166,7 @@ var _ = Describe("Pricing", func() {
 				To(ContainElements("Linux/UNIX", "Linux/UNIX (Amazon VPC)"))
 		})
 		It("should update on-demand pricing with response from the pricing API when in the CN partition", func() {
-			tmpPricingProvider := pricing.NewDefaultProvider(awsEnv.PricingAPI, awsEnv.EC2API, "cn-anywhere-1", false)
+			tmpPricingProvider := pricing.NewDefaultProvider(ctx, awsEnv.PricingAPI, awsEnv.EC2API, "cn-anywhere-1")
 			tmpController := controllerspricing.NewController(tmpPricingProvider)
 
 			now := time.Now()
@@ -476,14 +476,6 @@ var _ = Describe("Pricing", func() {
 			price, ok = awsEnv.PricingProvider.SpotPrice("c98.large", "test-zone-1b")
 			Expect(ok).To(BeTrue())
 			Expect(price).To(BeNumerically("==", 1.10))
-		})
-		It("should return static on-demand data when in an AWS GovCloud region", func() {
-			provider := pricing.NewDefaultProvider(awsEnv.PricingAPI, awsEnv.EC2API, "us-gov-east-1", false)
-			err := provider.UpdateOnDemandPricing(ctx)
-			Expect(err).To(BeNil())
-			Expect(awsEnv.PricingAPI.GetProductsBehavior.CalledWithInput.Len()).To(Equal(0))
-			_, ok := provider.OnDemandPrice("c5.12xlarge")
-			Expect(ok).To(BeTrue())
 		})
 		It("should maintain previous data when pricing API returns partial data", func() {
 			now := time.Now()

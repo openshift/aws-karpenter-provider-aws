@@ -212,7 +212,6 @@ For example, an instance type may be specified using a nodeSelector in a pod spe
 - key: `karpenter.k8s.aws/instance-family`
 - key: `karpenter.k8s.aws/instance-category`
 - key: `karpenter.k8s.aws/instance-generation`
-- key: `karpenter.k8s.aws/instance-capability-flex`
 
 Generally, instance types should be a list and not a single value. Leaving these requirements undefined is recommended, as it maximizes choices for efficiently placing pods.
 
@@ -254,7 +253,7 @@ Karpenter supports `linux` and `windows` operating systems.
   - `on-demand`
   - `reserved`
 
-Karpenter supports specifying capacity type, which is analogous to [EC2 purchase options](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-purchasing-options.html). Note that the `reserved` capacity type refers to [capacity reservations](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/capacity-reservation-overview.html) (on-demand capacity reservations and capacity blocks) not [reserved instances](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-reserved-instances.html) (RIs).
+Karpenter supports specifying capacity type, which is analogous to [EC2 purchase options](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-purchasing-options.html).
 
 If a NodePool is compatible with multiple capacity types, Karpenter will prioritize `reserved` capacity, followed by `spot`, then finally `on-demand`.
 If the provider API (e.g. EC2 Fleet's API) indicates capacity is unavailable, Karpenter caches that result across all attempts to provision EC2 capacity for that instance type and zone for the next 3 minutes.
@@ -268,7 +267,7 @@ There is currently a limit of 100 on the total number of requirements on both th
 
 ### Min Values
 
-Along with the combination of [key,operator,values] in the requirements, Karpenter also supports `minValues` in the NodePool requirements block, allowing the scheduler to be aware of user-specified flexibility minimums while scheduling pods to a cluster. Depending on the policy configured via the flag `--min-values-policy` or environment variable `MIN_VALUES_POLICY`, if Karpenter cannot meet this minimum flexibility for each key when scheduling a pod, it will either fail the scheduling loop for that NodePool, either falling back to another NodePool which meets the pod requirements or failing scheduling the pod altogether (when policy is set to `Strict`) or relax `minValues` until they can be met (when policy is set to `BestEffort`).
+Along with the combination of [key,operator,values] in the requirements, Karpenter also supports `minValues` in the NodePool requirements block, allowing the scheduler to be aware of user-specified flexibility minimums while scheduling pods to a cluster. If Karpenter cannot meet this minimum flexibility for each key when scheduling a pod, it will fail the scheduling loop for that NodePool, either falling back to another NodePool which meets the pod requirements or failing scheduling the pod altogether.
 
 For example, the below spec will use spot instance type for all provisioned instances and enforces `minValues` to various keys where it is defined
 i.e at least 2 unique instance families from [c,m,r], 5 unique instance families [eg: "m5","m5d","r4","c5","c5d","c4" etc], 10 unique instance types [eg: "c5.2xlarge","c4.xlarge" etc] is required for scheduling the pods.
@@ -369,9 +368,9 @@ Read [Disruption]({{<ref "disruption" >}}) for more.
 
 ## spec.limits
 
-The NodePool spec includes a limits section (`spec.limits`), which constrains the maximum amount of resources that the NodePool can consume.
+The NodePool spec includes a limits section (`spec.limits`), which constrains the maximum amount of resources that the NodePool will manage.
 
-If the `NodePool.spec.limits` section is unspecified, it means that there is no default limitation on resource allocation. In this case, the maximum resource consumption is governed by the quotas set by your cloud provider. If a limit has been exceeded, nodes provisioning is prevented until some nodes have been terminated.
+Karpenter supports limits of any resource type reported by your cloudprovider. It limits instance types when scheduling to those that will not exceed the specified limits.  If a limit has been exceeded, nodes provisioning is prevented until some nodes have been terminated.
 
 ```yaml
 apiVersion: karpenter.sh/v1

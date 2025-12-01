@@ -21,7 +21,8 @@ Content-Type: application/node.eks.aws
 # Karpenter Generated NodeConfig
 apiVersion: node.eks.aws/v1alpha1
 kind: NodeConfig
-metadata: {}
+metadata:
+  creationTimestamp: null
 spec:
   cluster:
     apiServerEndpoint: https://test-cluster
@@ -40,6 +41,6 @@ spec:
       - effect: NoExecute
         key: karpenter.sh/unregistered
     flags:
-    - --node-labels="karpenter.k8s.aws/ec2nodeclass=%s,karpenter.sh/capacity-type=on-demand,karpenter.sh/do-not-sync-taints=true,%s=%s,testing/cluster=unspecified"
+    - --node-labels="karpenter.k8s.aws/ec2nodeclass=%s,karpenter.sh/capacity-type=on-demand,%s=%s,testing/cluster=unspecified"
 
 --//--

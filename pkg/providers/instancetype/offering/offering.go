@@ -17,7 +17,6 @@ package offering
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/mitchellh/hashstructure/v2"
@@ -40,17 +39,11 @@ type Provider interface {
 	InjectOfferings(context.Context, []*cloudprovider.InstanceType, *v1.EC2NodeClass, []string) []*cloudprovider.InstanceType
 }
 
-type NodeClass interface {
-	CapacityReservations() []v1.CapacityReservation
-	ZoneInfo() []v1.ZoneInfo
-}
-
 type DefaultProvider struct {
-	pricingProvider                pricing.Provider
-	capacityReservationProvider    capacityreservation.Provider
-	unavailableOfferings           *awscache.UnavailableOfferings
-	lastUnavailableOfferingsSeqNum sync.Map // instance type -> seqNum
-	cache                          *cache.Cache
+	pricingProvider             pricing.Provider
+	capacityReservationProvider capacityreservation.Provider
+	unavailableOfferings        *awscache.UnavailableOfferings
+	cache                       *cache.Cache
 }
 
 func NewDefaultProvider(
@@ -70,11 +63,11 @@ func NewDefaultProvider(
 func (p *DefaultProvider) InjectOfferings(
 	ctx context.Context,
 	instanceTypes []*cloudprovider.InstanceType,
-	nodeClass NodeClass,
+	nodeClass *v1.EC2NodeClass,
 	allZones sets.Set[string],
 ) []*cloudprovider.InstanceType {
-	subnetZonesToZoneIDs := lo.SliceToMap(nodeClass.ZoneInfo(), func(info v1.ZoneInfo) (string, string) {
-		return info.Zone, info.ZoneID
+	subnetZones := lo.SliceToMap(nodeClass.Status.Subnets, func(s v1.Subnet) (string, string) {
+		return s.Zone, s.ZoneID
 	})
 	var its []*cloudprovider.InstanceType
 	for _, it := range instanceTypes {
@@ -83,7 +76,7 @@ func (p *DefaultProvider) InjectOfferings(
 			it,
 			nodeClass,
 			allZones,
-			subnetZonesToZoneIDs,
+			subnetZones,
 		)
 		// NOTE: By making this copy one level deep, we can modify the offerings without mutating the results from previous
 		// GetInstanceTypes calls. This should still be done with caution - it is currently done here in the provider, and
@@ -103,20 +96,14 @@ func (p *DefaultProvider) InjectOfferings(
 func (p *DefaultProvider) createOfferings(
 	ctx context.Context,
 	it *cloudprovider.InstanceType,
-	nodeClass NodeClass,
+	nodeClass *v1.EC2NodeClass,
 	allZones sets.Set[string],
-	subnetZonesToZoneIDs map[string]string,
+	subnetZones map[string]string,
 ) cloudprovider.Offerings {
 	var offerings []*cloudprovider.Offering
 	itZones := sets.New(it.Requirements.Get(corev1.LabelTopologyZone).Values()...)
 
-	// If the sequence number has changed for the unavailable offerings, we know that we can't use the previously cached value
-	lastSeqNum, ok := p.lastUnavailableOfferingsSeqNum.Load(ec2types.InstanceType(it.Name))
-	if !ok {
-		lastSeqNum = 0
-	}
-	seqNum := p.unavailableOfferings.SeqNum(ec2types.InstanceType(it.Name))
-	if ofs, ok := p.cache.Get(p.cacheKeyFromInstanceType(it)); ok && lastSeqNum == seqNum {
+	if ofs, ok := p.cache.Get(p.cacheKeyFromInstanceType(it)); ok {
 		offerings = append(offerings, ofs.([]*cloudprovider.Offering)...)
 	} else {
 		var cachedOfferings []*cloudprovider.Offering
@@ -142,31 +129,28 @@ func (p *DefaultProvider) createOfferings(
 						scheduling.NewRequirement(karpv1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, capacityType),
 						scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, zone),
 						scheduling.NewRequirement(cloudprovider.ReservationIDLabel, corev1.NodeSelectorOpDoesNotExist),
-						scheduling.NewRequirement(v1.LabelCapacityReservationType, corev1.NodeSelectorOpDoesNotExist),
 					),
 					Price:     price,
 					Available: !isUnavailable && hasPrice && itZones.Has(zone),
 				}
-				if id, ok := subnetZonesToZoneIDs[zone]; ok {
+				if id, ok := subnetZones[zone]; ok {
 					offering.Requirements.Add(scheduling.NewRequirement(v1.LabelTopologyZoneID, corev1.NodeSelectorOpIn, id))
 				}
 				cachedOfferings = append(cachedOfferings, offering)
 			}
 		}
 		p.cache.SetDefault(p.cacheKeyFromInstanceType(it), cachedOfferings)
-		p.lastUnavailableOfferingsSeqNum.Store(ec2types.InstanceType(it.Name), seqNum)
 		offerings = append(offerings, cachedOfferings...)
 	}
 	if !options.FromContext(ctx).FeatureGates.ReservedCapacity {
 		return offerings
 	}
 
-	capacityReservations := nodeClass.CapacityReservations()
-	for i := range capacityReservations {
-		if capacityReservations[i].InstanceType != it.Name {
+	for i := range nodeClass.Status.CapacityReservations {
+		if nodeClass.Status.CapacityReservations[i].InstanceType != it.Name {
 			continue
 		}
-		reservation := &capacityReservations[i]
+		reservation := &nodeClass.Status.CapacityReservations[i]
 		price := 0.0
 		if odPrice, ok := p.pricingProvider.OnDemandPrice(ec2types.InstanceType(it.Name)); ok {
 			// Divide the on-demand price by a sufficiently large constant. This allows us to treat the reservation as "free",
@@ -181,13 +165,12 @@ func (p *DefaultProvider) createOfferings(
 				scheduling.NewRequirement(karpv1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, karpv1.CapacityTypeReserved),
 				scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, reservation.AvailabilityZone),
 				scheduling.NewRequirement(cloudprovider.ReservationIDLabel, corev1.NodeSelectorOpIn, reservation.ID),
-				scheduling.NewRequirement(v1.LabelCapacityReservationType, corev1.NodeSelectorOpIn, string(reservation.ReservationType)),
 			),
 			Price:               price,
-			Available:           reservationCapacity != 0 && itZones.Has(reservation.AvailabilityZone) && reservation.State != v1.CapacityReservationStateExpiring,
+			Available:           reservationCapacity != 0 && itZones.Has(reservation.AvailabilityZone),
 			ReservationCapacity: reservationCapacity,
 		}
-		if id, ok := subnetZonesToZoneIDs[reservation.AvailabilityZone]; ok {
+		if id, ok := subnetZones[reservation.AvailabilityZone]; ok {
 			offering.Requirements.Add(scheduling.NewRequirement(v1.LabelTopologyZoneID, corev1.NodeSelectorOpIn, id))
 		}
 		offerings = append(offerings, offering)
@@ -207,9 +190,10 @@ func (p *DefaultProvider) cacheKeyFromInstanceType(it *cloudprovider.InstanceTyp
 		&hashstructure.HashOptions{SlicesAsSets: true},
 	)
 	return fmt.Sprintf(
-		"%s-%016x-%016x",
+		"%s-%016x-%016x-%d",
 		it.Name,
 		zonesHash,
 		capacityTypesHash,
+		p.unavailableOfferings.SeqNum,
 	)
 }

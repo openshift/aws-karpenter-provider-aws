@@ -25,8 +25,8 @@ spec:
          operator: In
          values: ["c", "m", "r"]
        - key: karpenter.k8s.aws/instance-generation
-         operator: Gt
-         values: ["4"]
+         operator: In
+         values: ["2"]
        - key: karpenter.k8s.aws/instance-family
          operator: NotIn
          values: ["a1"]

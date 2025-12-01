@@ -62,8 +62,7 @@ var _ = Describe("Options", func() {
 			"--isolated-vpc",
 			"--vm-memory-overhead-percent", "0.1",
 			"--interruption-queue", "env-cluster",
-			"--reserved-enis", "10",
-			"--disable-dry-run")
+			"--reserved-enis", "10")
 		Expect(err).ToNot(HaveOccurred())
 		expectOptionsEqual(opts, test.Options(test.OptionsFields{
 			ClusterCABundle:         lo.ToPtr("env-bundle"),
@@ -73,7 +72,6 @@ var _ = Describe("Options", func() {
 			VMMemoryOverheadPercent: lo.ToPtr[float64](0.1),
 			InterruptionQueue:       lo.ToPtr("env-cluster"),
 			ReservedENIs:            lo.ToPtr(10),
-			DisableDryRun:           lo.ToPtr(true),
 		}))
 	})
 	It("should correctly fallback to env vars when CLI flags aren't set", func() {
@@ -84,7 +82,6 @@ var _ = Describe("Options", func() {
 		os.Setenv("VM_MEMORY_OVERHEAD_PERCENT", "0.1")
 		os.Setenv("INTERRUPTION_QUEUE", "env-cluster")
 		os.Setenv("RESERVED_ENIS", "10")
-		os.Setenv("DISABLE_DRY_RUN", "false")
 
 		// Add flags after we set the environment variables so that the parsing logic correctly refers
 		// to the new environment variable values
@@ -99,7 +96,6 @@ var _ = Describe("Options", func() {
 			VMMemoryOverheadPercent: lo.ToPtr[float64](0.1),
 			InterruptionQueue:       lo.ToPtr("env-cluster"),
 			ReservedENIs:            lo.ToPtr(10),
-			DisableDryRun:           lo.ToPtr(false),
 		}))
 	})
 
@@ -135,5 +131,4 @@ func expectOptionsEqual(optsA *options.Options, optsB *options.Options) {
 	Expect(optsA.VMMemoryOverheadPercent).To(Equal(optsB.VMMemoryOverheadPercent))
 	Expect(optsA.InterruptionQueue).To(Equal(optsB.InterruptionQueue))
 	Expect(optsA.ReservedENIs).To(Equal(optsB.ReservedENIs))
-	Expect(optsA.DisableDryRun).To(Equal(optsB.DisableDryRun))
 }
