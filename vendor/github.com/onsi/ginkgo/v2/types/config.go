@@ -24,7 +24,6 @@ type SuiteConfig struct {
 	FocusFiles            []string
 	SkipFiles             []string
 	LabelFilter           string
-	SemVerFilter          string
 	FailOnPending         bool
 	FailOnEmpty           bool
 	FailFast              bool
@@ -309,8 +308,6 @@ var SuiteConfigFlags = GinkgoFlags{
 
 	{KeyPath: "S.LabelFilter", Name: "label-filter", SectionKey: "filter", UsageArgument: "expression",
 		Usage: "If set, ginkgo will only run specs with labels that match the label-filter.  The passed-in expression can include boolean operations (!, &&, ||, ','), groupings via '()', and regular expressions '/regexp/'.  e.g. '(cat || dog) && !fruit'"},
-	{KeyPath: "S.SemVerFilter", Name: "sem-ver-filter", SectionKey: "filter", UsageArgument: "version",
-		Usage: "If set, ginkgo will only run specs with semantic version constraints that are satisfied by the provided version. e.g. '2.1.0'"},
 	{KeyPath: "S.FocusStrings", Name: "focus", SectionKey: "filter",
 		Usage: "If set, ginkgo will only run specs that match this regular expression. Can be specified multiple times, values are ORed."},
 	{KeyPath: "S.SkipStrings", Name: "skip", SectionKey: "filter",
@@ -446,13 +443,6 @@ func VetConfig(flagSet GinkgoFlagSet, suiteConfig SuiteConfig, reporterConfig Re
 		}
 	}
 
-	if suiteConfig.SemVerFilter != "" {
-		_, err := ParseSemVerFilter(suiteConfig.SemVerFilter)
-		if err != nil {
-			errors = append(errors, err)
-		}
-	}
-
 	switch strings.ToLower(suiteConfig.OutputInterceptorMode) {
 	case "", "dup", "swap", "none":
 	default:
@@ -583,9 +573,6 @@ var GoBuildFlags = GinkgoFlags{
 		Usage: "print the name of the temporary work directory and do not delete it when exiting."},
 	{KeyPath: "Go.X", Name: "x", SectionKey: "go-build",
 		Usage: "print the commands."},
-}
-
-var GoBuildOFlags = GinkgoFlags{
 	{KeyPath: "Go.O", Name: "o", SectionKey: "go-build",
 		Usage: "output binary path (including name)."},
 }
@@ -686,7 +673,7 @@ func GenerateGoTestCompileArgs(goFlagsConfig GoFlagsConfig, packageToBuild strin
 
 	args := []string{"test", "-c", packageToBuild}
 	goArgs, err := GenerateFlagArgs(
-		GoBuildFlags.CopyAppend(GoBuildOFlags...),
+		GoBuildFlags,
 		map[string]any{
 			"Go": &goFlagsConfig,
 		},
@@ -776,7 +763,6 @@ func BuildWatchCommandFlagSet(suiteConfig *SuiteConfig, reporterConfig *Reporter
 func BuildBuildCommandFlagSet(cliConfig *CLIConfig, goFlagsConfig *GoFlagsConfig) (GinkgoFlagSet, error) {
 	flags := GinkgoCLISharedFlags
 	flags = flags.CopyAppend(GoBuildFlags...)
-	flags = flags.CopyAppend(GoBuildOFlags...)
 
 	bindings := map[string]any{
 		"C":  cliConfig,

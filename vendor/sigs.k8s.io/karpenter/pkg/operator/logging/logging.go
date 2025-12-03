@@ -110,7 +110,7 @@ func (i ignoreDebugEventsSink) Error(err error, msg string, keysAndValues ...int
 	i.sink.Error(err, msg, keysAndValues...)
 }
 func (i ignoreDebugEventsSink) WithValues(keysAndValues ...interface{}) logr.LogSink {
-	return &ignoreDebugEventsSink{name: i.name, sink: i.sink.WithValues(keysAndValues...)}
+	return i.sink.WithValues(keysAndValues...)
 }
 func (i ignoreDebugEventsSink) WithName(name string) logr.LogSink {
 	return &ignoreDebugEventsSink{name: name, sink: i.sink.WithName(name)}

@@ -109,7 +109,6 @@ const (
 	AMITypesAl2023Arm64Standard     AMITypes = "AL2023_ARM_64_STANDARD"
 	AMITypesAl2023X8664Neuron       AMITypes = "AL2023_x86_64_NEURON"
 	AMITypesAl2023X8664Nvidia       AMITypes = "AL2023_x86_64_NVIDIA"
-	AMITypesAl2023Arm64Nvidia       AMITypes = "AL2023_ARM_64_NVIDIA"
 )
 
 // Values returns all known values for AMITypes. Note that this can be expanded in
@@ -136,7 +135,6 @@ func (AMITypes) Values() []AMITypes {
 		"AL2023_ARM_64_STANDARD",
 		"AL2023_x86_64_NEURON",
 		"AL2023_x86_64_NVIDIA",
-		"AL2023_ARM_64_NVIDIA",
 	}
 }
 
@@ -187,7 +185,6 @@ type Category string
 // Enum values for Category
 const (
 	CategoryUpgradeReadiness Category = "UPGRADE_READINESS"
-	CategoryMisconfiguration Category = "MISCONFIGURATION"
 )
 
 // Values returns all known values for Category. Note that this can be expanded in
@@ -197,7 +194,6 @@ const (
 func (Category) Values() []Category {
 	return []Category{
 		"UPGRADE_READINESS",
-		"MISCONFIGURATION",
 	}
 }
 
@@ -517,27 +513,6 @@ func (FargateProfileStatus) Values() []FargateProfileStatus {
 	}
 }
 
-type InsightsRefreshStatus string
-
-// Enum values for InsightsRefreshStatus
-const (
-	InsightsRefreshStatusInProgress InsightsRefreshStatus = "IN_PROGRESS"
-	InsightsRefreshStatusFailed     InsightsRefreshStatus = "FAILED"
-	InsightsRefreshStatusCompleted  InsightsRefreshStatus = "COMPLETED"
-)
-
-// Values returns all known values for InsightsRefreshStatus. Note that this can
-// be expanded in the future, and so it is only as up to date as the client.
-//
-// The ordering of this slice is not guaranteed to be stable across updates.
-func (InsightsRefreshStatus) Values() []InsightsRefreshStatus {
-	return []InsightsRefreshStatus{
-		"IN_PROGRESS",
-		"FAILED",
-		"COMPLETED",
-	}
-}
-
 type InsightStatusValue string
 
 // Enum values for InsightStatusValue
@@ -841,7 +816,6 @@ const (
 	UpdateParamTypeStorageConfig            UpdateParamType = "StorageConfig"
 	UpdateParamTypeKubernetesNetworkConfig  UpdateParamType = "KubernetesNetworkConfig"
 	UpdateParamTypeRemoteNetworkConfig      UpdateParamType = "RemoteNetworkConfig"
-	UpdateParamTypeDeletionProtection       UpdateParamType = "DeletionProtection"
 )
 
 // Values returns all known values for UpdateParamType. Note that this can be
@@ -886,7 +860,6 @@ func (UpdateParamType) Values() []UpdateParamType {
 		"StorageConfig",
 		"KubernetesNetworkConfig",
 		"RemoteNetworkConfig",
-		"DeletionProtection",
 	}
 }
 
@@ -931,7 +904,6 @@ const (
 	UpdateTypeZonalShiftConfigUpdate             UpdateType = "ZonalShiftConfigUpdate"
 	UpdateTypeAutoModeUpdate                     UpdateType = "AutoModeUpdate"
 	UpdateTypeRemoteNetworkConfigUpdate          UpdateType = "RemoteNetworkConfigUpdate"
-	UpdateTypeDeletionProtectionUpdate           UpdateType = "DeletionProtectionUpdate"
 )
 
 // Values returns all known values for UpdateType. Note that this can be expanded
@@ -954,7 +926,6 @@ func (UpdateType) Values() []UpdateType {
 		"ZonalShiftConfigUpdate",
 		"AutoModeUpdate",
 		"RemoteNetworkConfigUpdate",
-		"DeletionProtectionUpdate",
 	}
 }
 

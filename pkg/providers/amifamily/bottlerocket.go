@@ -19,13 +19,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/awslabs/operatorpkg/serrors"
 	"github.com/samber/lo"
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/amifamily/bootstrap"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/ssm"
-	"github.com/aws/karpenter-provider-aws/pkg/providers/version"
 
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
@@ -62,7 +60,7 @@ func (b Bottlerocket) DescribeImageQuery(ctx context.Context, ssmProvider ssm.Pr
 	}
 	// Failed to discover any AMIs, we should short circuit AMI discovery
 	if len(ids) == 0 {
-		return DescribeImageQuery{}, serrors.Wrap(fmt.Errorf(`failed to discover any AMIs for alias`), "alias", fmt.Sprintf("bottlerocket@%s", amiVersion))
+		return DescribeImageQuery{}, fmt.Errorf(`failed to discover any AMIs for alias "bottlerocket@%s"`, amiVersion)
 	}
 
 	return DescribeImageQuery{
@@ -89,94 +87,7 @@ func (b Bottlerocket) UserData(kubeletConfig *v1.KubeletConfiguration, taints []
 			CustomUserData:      customUserData,
 			InstanceStorePolicy: instanceStorePolicy,
 		},
-		EnableDefaultMountPaths: version.SupportsDefaultBind(b.resolveAMIVersion()),
 	}
-}
-
-// resolveAMIVersion extracts AMI version from selector terms
-func (b Bottlerocket) resolveAMIVersion() string {
-	if version := b.getVersionFromAlias(); version != "" {
-		return version
-	}
-	if version := b.getVersionFromName(); version != "" {
-		return version
-	}
-	if version := b.getVersionFromID(); version != "" {
-		return version
-	}
-	if version := b.getVersionFromResolvedAMIs(); version != "" {
-		return version
-	}
-	return ""
-}
-
-func (b Bottlerocket) getVersionFromAlias() string {
-	for _, term := range b.AMISelectorTerms {
-		if term.Alias == "" {
-			continue
-		}
-		parts := strings.Split(term.Alias, "@")
-		if len(parts) == 2 {
-			return parts[1]
-		}
-	}
-	return ""
-}
-
-func (b Bottlerocket) getVersionFromName() string {
-	for _, term := range b.AMISelectorTerms {
-		if term.Name == "" {
-			continue
-		}
-		if version := b.extractVersionFromName(term.Name); version != "" {
-			return version
-		}
-	}
-	return ""
-}
-
-func (b Bottlerocket) getVersionFromID() string {
-	for _, term := range b.AMISelectorTerms {
-		if term.ID == "" {
-			continue
-		}
-		if version := b.findVersionByID(term.ID); version != "" {
-			return version
-		}
-	}
-	return ""
-}
-
-func (b Bottlerocket) findVersionByID(id string) string {
-	for _, ami := range b.AMIs {
-		if ami.ID == id && ami.Name != "" && strings.Contains(ami.Name, "bottlerocket") {
-			return b.extractVersionFromName(ami.Name)
-		}
-	}
-	return ""
-}
-
-func (b Bottlerocket) getVersionFromResolvedAMIs() string {
-	for _, ami := range b.AMIs {
-		if ami.Name == "" || !strings.Contains(ami.Name, "bottlerocket") {
-			continue
-		}
-		if version := b.extractVersionFromName(ami.Name); version != "" {
-			return version
-		}
-	}
-	return ""
-}
-
-func (b Bottlerocket) extractVersionFromName(name string) string {
-	// Bottlerocket pattern: bottlerocket-aws-k8s-1.33-x86_64-v1.46.0-431fe75a
-	parts := strings.SplitSeq(name, "-")
-	for part := range parts {
-		if strings.HasPrefix(part, "v") && strings.Contains(part, ".") {
-			return part
-		}
-	}
-	return ""
 }
 
 // DefaultBlockDeviceMappings returns the default block device mappings for the AMI Family
@@ -215,6 +126,7 @@ func (b Bottlerocket) FeatureFlags() FeatureFlags {
 	return FeatureFlags{
 		UsesENILimitedMemoryOverhead: false,
 		PodsPerCoreEnabled:           false,
+		EvictionSoftEnabled:          false,
 		SupportsENILimitedPodDensity: true,
 	}
 }

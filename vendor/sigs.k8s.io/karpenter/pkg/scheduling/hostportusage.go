@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/awslabs/operatorpkg/serrors"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -77,7 +76,7 @@ func (u *HostPortUsage) Conflicts(usedBy *v1.Pod, ports []HostPort) error {
 		for podKey, entries := range u.reserved {
 			for _, existing := range entries {
 				if newEntry.Matches(existing) && podKey != client.ObjectKeyFromObject(usedBy) {
-					return serrors.Wrap(fmt.Errorf("pod hostport conflicts with existing hostport configuration"), "pod-hostport-ip", newEntry.IP, "pod-hostport-port", newEntry.Port, "pod-hostport-protocol", newEntry.Protocol, "existing-hostport-ip", existing.IP, "existing-hostport-port", existing.Port, "existing-hostport-protocol", existing.Protocol)
+					return fmt.Errorf("%s conflicts with existing HostPort configuration %s", newEntry, existing)
 				}
 			}
 		}

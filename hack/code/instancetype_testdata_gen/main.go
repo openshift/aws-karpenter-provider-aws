@@ -138,15 +138,12 @@ func getDescribeInstanceTypeOfferingsOutput() string {
 		"c6g.large":      {"test-zone-1a"},
 		"m5.metal":       {"test-zone-1a", "test-zone-1b"},
 		"m6idn.32xlarge": {"test-zone-1a", "test-zone-1b", "test-zone-1c"},
-		"m7i-flex.large": {"test-zone-1a"},
 	}
 
 	fmt.Fprintln(src, "var defaultDescribeInstanceTypeOfferingsOutput = &ec2.DescribeInstanceTypeOfferingsOutput{")
 	fmt.Fprintln(src, "InstanceTypeOfferings: []ec2types.InstanceTypeOffering{")
-	instanceTypes := lo.Keys(instanceTypeToZones)
-	sort.Strings(instanceTypes)
-	for _, elem := range lo.Flatten(lo.Map(instanceTypes, func(it string, _ int) []lo.Tuple2[string, string] {
-		return lo.Map(instanceTypeToZones[it], func(z string, _ int) lo.Tuple2[string, string] { return lo.Tuple2[string, string]{A: it, B: z} })
+	for _, elem := range lo.Flatten(lo.MapToSlice(instanceTypeToZones, func(it string, zones []string) []lo.Tuple2[string, string] {
+		return lo.Map(zones, func(z string, _ int) lo.Tuple2[string, string] { return lo.Tuple2[string, string]{A: it, B: z} })
 	})) {
 		fmt.Fprintln(src, "{")
 		fmt.Fprintf(src, "InstanceType: \"%s\",\n", elem.A)

@@ -38,8 +38,8 @@ func UniqMap[T any, R comparable](collection []T, iteratee func(item T, index in
 	result := make([]R, 0, len(collection))
 	seen := make(map[R]struct{}, len(collection))
 
-	for i := range collection {
-		r := iteratee(collection[i], i)
+	for i, item := range collection {
+		r := iteratee(item, i)
 		if _, ok := seen[r]; !ok {
 			result = append(result, r)
 			seen[r] = struct{}{}
@@ -55,7 +55,7 @@ func UniqMap[T any, R comparable](collection []T, iteratee func(item T, index in
 //
 // Play: https://go.dev/play/p/-AuYXfy7opz
 func FilterMap[T any, R any](collection []T, callback func(item T, index int) (R, bool)) []R {
-	result := make([]R, 0, len(collection))
+	result := []R{}
 
 	for i := range collection {
 		if r, ok := callback(collection[i], i); ok {
@@ -183,19 +183,6 @@ func GroupBy[T any, U comparable, Slice ~[]T](collection Slice, iteratee func(it
 		key := iteratee(collection[i])
 
 		result[key] = append(result[key], collection[i])
-	}
-
-	return result
-}
-
-// GroupByMap returns an object composed of keys generated from the results of running each element of collection through iteratee.
-func GroupByMap[T any, K comparable, V any](collection []T, iteratee func(item T) (K, V)) map[K][]V {
-	result := map[K][]V{}
-
-	for i := range collection {
-		k, v := iteratee(collection[i])
-
-		result[k] = append(result[k], v)
 	}
 
 	return result
@@ -421,8 +408,8 @@ func FilterSliceToMap[T any, K comparable, V any](collection []T, transform func
 func Keyify[T comparable, Slice ~[]T](collection Slice) map[T]struct{} {
 	result := make(map[T]struct{}, len(collection))
 
-	for i := range collection {
-		result[collection[i]] = struct{}{}
+	for _, item := range collection {
+		result[item] = struct{}{}
 	}
 
 	return result

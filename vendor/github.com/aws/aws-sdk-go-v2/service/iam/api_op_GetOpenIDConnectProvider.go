@@ -33,12 +33,11 @@ type GetOpenIDConnectProviderInput struct {
 
 	// The Amazon Resource Name (ARN) of the OIDC provider resource object in IAM to
 	// get information for. You can get a list of OIDC provider resource ARNs by using
-	// the [ListOpenIDConnectProviders]operation.
+	// the ListOpenIDConnectProvidersoperation.
 	//
 	// For more information about ARNs, see [Amazon Resource Names (ARNs)] in the Amazon Web Services General
 	// Reference.
 	//
-	// [ListOpenIDConnectProviders]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListOpenIDConnectProviders.html
 	// [Amazon Resource Names (ARNs)]: https://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html
 	//
 	// This member is required.
@@ -47,15 +46,11 @@ type GetOpenIDConnectProviderInput struct {
 	noSmithyDocumentSerde
 }
 
-// Contains the response to a successful [GetOpenIDConnectProvider] request.
-//
-// [GetOpenIDConnectProvider]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetOpenIDConnectProvider.html
+// Contains the response to a successful GetOpenIDConnectProvider request.
 type GetOpenIDConnectProviderOutput struct {
 
 	// A list of client IDs (also known as audiences) that are associated with the
-	// specified IAM OIDC provider resource object. For more information, see [CreateOpenIDConnectProvider].
-	//
-	// [CreateOpenIDConnectProvider]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateOpenIDConnectProvider.html
+	// specified IAM OIDC provider resource object. For more information, see CreateOpenIDConnectProvider.
 	ClientIDList []string
 
 	// The date and time when the IAM OIDC provider resource object was created in the
@@ -70,15 +65,11 @@ type GetOpenIDConnectProviderOutput struct {
 	Tags []types.Tag
 
 	// A list of certificate thumbprints that are associated with the specified IAM
-	// OIDC provider resource object. For more information, see [CreateOpenIDConnectProvider].
-	//
-	// [CreateOpenIDConnectProvider]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateOpenIDConnectProvider.html
+	// OIDC provider resource object. For more information, see CreateOpenIDConnectProvider.
 	ThumbprintList []string
 
 	// The URL that the IAM OIDC provider resource object is associated with. For more
-	// information, see [CreateOpenIDConnectProvider].
-	//
-	// [CreateOpenIDConnectProvider]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateOpenIDConnectProvider.html
+	// information, see CreateOpenIDConnectProvider.
 	Url *string
 
 	// Metadata pertaining to the operation's result.
@@ -173,36 +164,6 @@ func (c *Client) addOperationGetOpenIDConnectProviderMiddlewares(stack *middlewa
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAttempt(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptExecution(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeSerialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterSerialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeSigning(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterSigning(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptTransmit(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeDeserialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterDeserialization(stack, options); err != nil {
 		return err
 	}
 	if err = addSpanInitializeStart(stack); err != nil {

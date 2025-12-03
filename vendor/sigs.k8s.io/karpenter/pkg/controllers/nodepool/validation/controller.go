@@ -54,7 +54,8 @@ func (c *Controller) Reconcile(ctx context.Context, nodePool *v1.NodePool) (reco
 		return reconcile.Result{}, nil
 	}
 	stored := nodePool.DeepCopy()
-	if err := nodePool.RuntimeValidate(ctx); err != nil {
+	err := nodePool.RuntimeValidate()
+	if err != nil {
 		nodePool.StatusConditions().SetFalse(v1.ConditionTypeValidationSucceeded, "NodePoolValidationFailed", err.Error())
 	} else {
 		nodePool.StatusConditions().SetTrue(v1.ConditionTypeValidationSucceeded)

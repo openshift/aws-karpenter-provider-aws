@@ -38,7 +38,6 @@ const (
 	Evicted                        = "Evicted"
 	FailedDraining                 = "FailedDraining"
 	TerminationGracePeriodExpiring = "TerminationGracePeriodExpiring"
-	TerminationFailed              = "FailedTermination"
 
 	// nodeclaim/consistency
 	FailedConsistencyCheck = "FailedConsistencyCheck"

@@ -328,9 +328,7 @@ func (r *resolver) ResolveEndpoint(
 		return endpoint, fmt.Errorf("endpoint parameters are not valid, %w", err)
 	}
 	_UseDualStack := *params.UseDualStack
-	_ = _UseDualStack
 	_UseFIPS := *params.UseFIPS
-	_ = _UseFIPS
 
 	if exprVal := params.Endpoint; exprVal != nil {
 		_Endpoint := *exprVal
@@ -363,44 +361,6 @@ func (r *resolver) ResolveEndpoint(
 				if _UseDualStack == true {
 					if true == _PartitionResult.SupportsFIPS {
 						if true == _PartitionResult.SupportsDualStack {
-							if "aws" == _PartitionResult.Name {
-								uriString := func() string {
-									var out strings.Builder
-									out.WriteString("https://timestream-ingest-fips.")
-									out.WriteString(_Region)
-									out.WriteString(".api.aws")
-									return out.String()
-								}()
-
-								uri, err := url.Parse(uriString)
-								if err != nil {
-									return endpoint, fmt.Errorf("Failed to parse uri: %s", uriString)
-								}
-
-								return smithyendpoints.Endpoint{
-									URI:     *uri,
-									Headers: http.Header{},
-								}, nil
-							}
-							if "aws-us-gov" == _PartitionResult.Name {
-								uriString := func() string {
-									var out strings.Builder
-									out.WriteString("https://timestream-ingest.")
-									out.WriteString(_Region)
-									out.WriteString(".api.aws")
-									return out.String()
-								}()
-
-								uri, err := url.Parse(uriString)
-								if err != nil {
-									return endpoint, fmt.Errorf("Failed to parse uri: %s", uriString)
-								}
-
-								return smithyendpoints.Endpoint{
-									URI:     *uri,
-									Headers: http.Header{},
-								}, nil
-							}
 							uriString := func() string {
 								var out strings.Builder
 								out.WriteString("https://ingest.timestream-fips.")
@@ -468,44 +428,6 @@ func (r *resolver) ResolveEndpoint(
 			}
 			if _UseDualStack == true {
 				if true == _PartitionResult.SupportsDualStack {
-					if "aws" == _PartitionResult.Name {
-						uriString := func() string {
-							var out strings.Builder
-							out.WriteString("https://timestream-ingest.")
-							out.WriteString(_Region)
-							out.WriteString(".api.aws")
-							return out.String()
-						}()
-
-						uri, err := url.Parse(uriString)
-						if err != nil {
-							return endpoint, fmt.Errorf("Failed to parse uri: %s", uriString)
-						}
-
-						return smithyendpoints.Endpoint{
-							URI:     *uri,
-							Headers: http.Header{},
-						}, nil
-					}
-					if "aws-us-gov" == _PartitionResult.Name {
-						uriString := func() string {
-							var out strings.Builder
-							out.WriteString("https://timestream-ingest.")
-							out.WriteString(_Region)
-							out.WriteString(".api.aws")
-							return out.String()
-						}()
-
-						uri, err := url.Parse(uriString)
-						if err != nil {
-							return endpoint, fmt.Errorf("Failed to parse uri: %s", uriString)
-						}
-
-						return smithyendpoints.Endpoint{
-							URI:     *uri,
-							Headers: http.Header{},
-						}, nil
-					}
 					uriString := func() string {
 						var out strings.Builder
 						out.WriteString("https://ingest.timestream.")

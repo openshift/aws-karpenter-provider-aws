@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/awslabs/operatorpkg/option"
 	"github.com/awslabs/operatorpkg/reasonable"
 	corev1 "k8s.io/api/core/v1"
 	controllerruntime "sigs.k8s.io/controller-runtime"
@@ -38,29 +37,14 @@ import (
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instancetype"
 )
 
-type ControllerOpts struct {
-	EC2NodeClassProvider
-}
-
 type Controller struct {
-	ControllerOpts
 	kubeClient           client.Client
 	cloudProvider        cloudprovider.CloudProvider
 	instancetypeProvider *instancetype.DefaultProvider
 }
 
-func NewController(
-	kubeClient client.Client,
-	cloudProvider cloudprovider.CloudProvider,
-	instancetypeProvider *instancetype.DefaultProvider,
-	opts ...option.Function[ControllerOpts],
-) *Controller {
-	resolvedOpts := option.Resolve(opts...)
-	if resolvedOpts.EC2NodeClassProvider == nil {
-		resolvedOpts.EC2NodeClassProvider = &defaultNodeClassProvider{kubeClient: kubeClient}
-	}
+func NewController(kubeClient client.Client, cloudProvider cloudprovider.CloudProvider, instancetypeProvider *instancetype.DefaultProvider) *Controller {
 	return &Controller{
-		ControllerOpts:       *resolvedOpts,
 		kubeClient:           kubeClient,
 		cloudProvider:        cloudProvider,
 		instancetypeProvider: instancetypeProvider,
@@ -74,11 +58,11 @@ func (c *Controller) Reconcile(ctx context.Context, node *corev1.Node) (reconcil
 	}
 	nodeClaim, err := nodeutils.NodeClaimForNode(ctx, c.kubeClient, node)
 	if err != nil {
-		return reconcile.Result{}, nodeutils.IgnoreNodeClaimNotFoundError(fmt.Errorf("failed to get nodeclaim for node, %w", err))
+		return reconcile.Result{}, fmt.Errorf("failed to get nodeclaim for node, %w", err)
 	}
 
-	nodeClass, err := c.GetEC2NodeClass(ctx, nodeClaim)
-	if err != nil {
+	nodeClass := &v1.EC2NodeClass{}
+	if err = c.kubeClient.Get(ctx, client.ObjectKey{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get ec2nodeclass, %w", err)
 	}
 	if err := c.instancetypeProvider.UpdateInstanceTypeCapacityFromNode(ctx, node, nodeClaim, nodeClass); err != nil {
@@ -110,24 +94,4 @@ func (c *Controller) Register(_ context.Context, m manager.Manager) error {
 			MaxConcurrentReconciles: 1,
 		}).
 		Complete(reconcile.AsReconciler(m.GetClient(), c))
-}
-
-type EC2NodeClassProvider interface {
-	GetEC2NodeClass(context.Context, *karpv1.NodeClaim) (*v1.EC2NodeClass, error)
-}
-
-type defaultNodeClassProvider struct {
-	kubeClient client.Client
-}
-
-func (p *defaultNodeClassProvider) GetEC2NodeClass(ctx context.Context, nodeClaim *karpv1.NodeClaim) (*v1.EC2NodeClass, error) {
-	nodeClass := &v1.EC2NodeClass{}
-	err := p.kubeClient.Get(ctx, client.ObjectKey{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass)
-	return nodeClass, err
-}
-
-func WithEC2NodeClassProvider(provider EC2NodeClassProvider) option.Function[ControllerOpts] {
-	return func(c *ControllerOpts) {
-		c.EC2NodeClassProvider = provider
-	}
 }

@@ -27,40 +27,32 @@ import (
 //   - ExecutionTime. The time the patch, association, or custom compliance item
 //     was applied to the managed node.
 //
-// For State Manager associations, this represents the time when compliance status
+//   - Id: The patch, association, or custom compliance ID.
 //
-//	was captured by the Systems Manager service during its internal compliance
-//	aggregation workflow, not necessarily when the association was executed on the
-//	managed node. State Manager updates compliance information for all associations
-//	on an instance whenever any association executes, which may result in multiple
-//	associations showing the same execution time.
+//   - Title: A title.
 //
-//	- Id: The patch, association, or custom compliance ID.
+//   - Status: The status of the compliance item. For example, approved for
+//     patches, or Failed for associations.
 //
-//	- Title: A title.
+//   - Severity: A patch severity. For example, Critical .
 //
-//	- Status: The status of the compliance item. For example, approved for
-//	patches, or Failed for associations.
+//   - DocumentName: An SSM document name. For example, AWS-RunPatchBaseline .
 //
-//	- Severity: A patch severity. For example, Critical .
+//   - DocumentVersion: An SSM document version number. For example, 4.
 //
-//	- DocumentName: An SSM document name. For example, AWS-RunPatchBaseline .
+//   - Classification: A patch classification. For example, security updates .
 //
-//	- DocumentVersion: An SSM document version number. For example, 4.
+//   - PatchBaselineId: A patch baseline ID.
 //
-//	- Classification: A patch classification. For example, security updates .
+//   - PatchSeverity: A patch severity. For example, Critical .
 //
-//	- PatchBaselineId: A patch baseline ID.
+//   - PatchState: A patch state. For example, InstancesWithFailedPatches .
 //
-//	- PatchSeverity: A patch severity. For example, Critical .
+//   - PatchGroup: The name of a patch group.
 //
-//	- PatchState: A patch state. For example, InstancesWithFailedPatches .
-//
-//	- PatchGroup: The name of a patch group.
-//
-//	- InstalledTime: The time the association, patch, or custom compliance item
-//	was applied to the resource. Specify the time by using the following format:
-//	yyyy-MM-dd'T'HH:mm:ss'Z'
+//   - InstalledTime: The time the association, patch, or custom compliance item
+//     was applied to the resource. Specify the time by using the following format:
+//     yyyy-MM-dd'T'HH:mm:ss'Z'
 func (c *Client) PutComplianceItems(ctx context.Context, params *PutComplianceItemsInput, optFns ...func(*Options)) (*PutComplianceItemsOutput, error) {
 	if params == nil {
 		params = &PutComplianceItemsInput{}
@@ -222,36 +214,6 @@ func (c *Client) addOperationPutComplianceItemsMiddlewares(stack *middleware.Sta
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAttempt(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptExecution(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeSerialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterSerialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeSigning(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterSigning(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptTransmit(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeDeserialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterDeserialization(stack, options); err != nil {
 		return err
 	}
 	if err = addSpanInitializeStart(stack); err != nil {

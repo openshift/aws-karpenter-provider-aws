@@ -1,13 +1,12 @@
 package lo
 
 import (
+	"github.com/samber/lo/internal/rand"
 	"math"
 	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/samber/lo/internal/rand"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -109,7 +108,7 @@ func Substring[T ~string](str T, offset int, length uint) T {
 		length = uint(size - offset)
 	}
 
-	return T(strings.ReplaceAll(string(rs[offset:offset+int(length)]), "\x00", ""))
+	return T(strings.Replace(string(rs[offset:offset+int(length)]), "\x00", "", -1))
 }
 
 // ChunkString returns an array of strings split into groups the length of size. If array can't be split evenly,
@@ -210,9 +209,7 @@ func Capitalize(str string) string {
 	return cases.Title(language.English).String(str)
 }
 
-// Ellipsis trims and truncates a string to a specified length **in bytes** and appends an ellipsis
-// if truncated. If the string contains non-ASCII characters (which may occupy multiple bytes in UTF-8),
-// truncating by byte length may split a character in the middle, potentially resulting in garbled output.
+// Ellipsis trims and truncates a string to a specified length and appends an ellipsis if truncated.
 func Ellipsis(str string, length int) string {
 	str = strings.TrimSpace(str)
 

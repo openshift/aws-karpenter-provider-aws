@@ -36,7 +36,6 @@ import (
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/operator/injection"
-	utilscontroller "sigs.k8s.io/karpenter/pkg/utils/controller"
 	nodeutils "sigs.k8s.io/karpenter/pkg/utils/node"
 	nodeclaimutils "sigs.k8s.io/karpenter/pkg/utils/nodeclaim"
 )
@@ -86,14 +85,14 @@ func (c *Controller) Name() string {
 	return "node.hydration"
 }
 
-func (c *Controller) Register(ctx context.Context, m manager.Manager) error {
+func (c *Controller) Register(_ context.Context, m manager.Manager) error {
 	return controllerruntime.NewControllerManagedBy(m).
 		Named(c.Name()).
 		For(&corev1.Node{}).
 		Watches(&v1.NodeClaim{}, nodeutils.NodeClaimEventHandler(c.kubeClient)).
 		WithOptions(controller.Options{
 			RateLimiter:             reasonable.RateLimiter(),
-			MaxConcurrentReconciles: utilscontroller.LinearScaleReconciles(utilscontroller.CPUCount(ctx), 1000, 5000),
+			MaxConcurrentReconciles: 1000,
 		}).
 		Complete(reconcile.AsReconciler(m.GetClient(), c))
 }

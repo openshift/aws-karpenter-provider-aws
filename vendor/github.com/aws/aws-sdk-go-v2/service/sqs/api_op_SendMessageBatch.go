@@ -22,8 +22,8 @@ import (
 // returns an HTTP status code of 200 .
 //
 // The maximum allowed individual message size and the maximum total payload size
-// (the sum of the individual lengths of all of the batched messages) are both 1
-// MiB 1,048,576 bytes.
+// (the sum of the individual lengths of all of the batched messages) are both 256
+// KiB (262,144 bytes).
 //
 // A message can include only XML, JSON, and unformatted text. The following
 // Unicode characters are allowed. For more information, see the [W3C specification for characters].
@@ -180,36 +180,6 @@ func (c *Client) addOperationSendMessageBatchMiddlewares(stack *middleware.Stack
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAttempt(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptExecution(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeSerialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterSerialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeSigning(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterSigning(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptTransmit(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeDeserialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterDeserialization(stack, options); err != nil {
 		return err
 	}
 	if err = addSpanInitializeStart(stack); err != nil {

@@ -18,9 +18,7 @@ package disruption
 
 import (
 	"context"
-	"time"
 
-	"github.com/patrickmn/go-cache"
 	"go.uber.org/multierr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -39,7 +37,6 @@ import (
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/operator/injection"
-	utilscontroller "sigs.k8s.io/karpenter/pkg/utils/controller"
 	nodeclaimutils "sigs.k8s.io/karpenter/pkg/utils/nodeclaim"
 	"sigs.k8s.io/karpenter/pkg/utils/result"
 )
@@ -64,7 +61,7 @@ func NewController(clk clock.Clock, kubeClient client.Client, cloudProvider clou
 	return &Controller{
 		kubeClient:    kubeClient,
 		cloudProvider: cloudProvider,
-		drift:         &Drift{clock: clk, cloudProvider: cloudProvider, instanceTypeNotFoundCheckCache: cache.New(time.Minute*30, time.Minute)},
+		drift:         &Drift{cloudProvider: cloudProvider},
 		consolidation: &Consolidation{kubeClient: kubeClient, clock: clk},
 	}
 }
@@ -76,7 +73,10 @@ func (c *Controller) Reconcile(ctx context.Context, nodeClaim *v1.NodeClaim) (re
 		ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("Node", klog.KRef("", nodeClaim.Status.NodeName)))
 	}
 
-	if !nodeclaimutils.IsManaged(nodeClaim, c.cloudProvider) || !nodeClaim.DeletionTimestamp.IsZero() {
+	if !nodeclaimutils.IsManaged(nodeClaim, c.cloudProvider) {
+		return reconcile.Result{}, nil
+	}
+	if !nodeClaim.DeletionTimestamp.IsZero() {
 		return reconcile.Result{}, nil
 	}
 
@@ -89,7 +89,17 @@ func (c *Controller) Reconcile(ctx context.Context, nodeClaim *v1.NodeClaim) (re
 	if err := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodePoolName}, nodePool); err != nil {
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
-	results, errs := c.runReconcilers(ctx, nodePool, nodeClaim)
+	var results []reconcile.Result
+	var errs error
+	reconcilers := []nodeClaimReconciler{
+		c.drift,
+		c.consolidation,
+	}
+	for _, reconciler := range reconcilers {
+		res, err := reconciler.Reconcile(ctx, nodePool, nodeClaim)
+		errs = multierr.Append(errs, err)
+		results = append(results, res)
+	}
 	if !equality.Semantic.DeepEqual(stored, nodeClaim) {
 		// We use client.MergeFromWithOptimisticLock because patching a list with a JSON merge patch
 		// can cause races due to the fact that it fully replaces the list on a change
@@ -107,11 +117,11 @@ func (c *Controller) Reconcile(ctx context.Context, nodeClaim *v1.NodeClaim) (re
 	return result.Min(results...), nil
 }
 
-func (c *Controller) Register(ctx context.Context, m manager.Manager) error {
+func (c *Controller) Register(_ context.Context, m manager.Manager) error {
 	b := controllerruntime.NewControllerManagedBy(m).
 		Named("nodeclaim.disruption").
 		For(&v1.NodeClaim{}, builder.WithPredicates(nodeclaimutils.IsManagedPredicateFuncs(c.cloudProvider))).
-		WithOptions(controller.Options{MaxConcurrentReconciles: utilscontroller.LinearScaleReconciles(utilscontroller.CPUCount(ctx), 10, 1000)}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: 10}).
 		Watches(&v1.NodePool{}, nodeclaimutils.NodePoolEventHandler(c.kubeClient, c.cloudProvider)).
 		Watches(&corev1.Pod{}, nodeclaimutils.PodEventHandler(c.kubeClient, c.cloudProvider))
 
@@ -119,28 +129,4 @@ func (c *Controller) Register(ctx context.Context, m manager.Manager) error {
 		b.Watches(nodeClass, nodeclaimutils.NodeClassEventHandler(c.kubeClient))
 	}
 	return b.Complete(reconcile.AsReconciler(m.GetClient(), c))
-}
-
-func (c *Controller) Reset() {
-	c.drift.instanceTypeNotFoundCheckCache.Flush()
-}
-
-func (c *Controller) runReconcilers(
-	ctx context.Context,
-	np *v1.NodePool,
-	nc *v1.NodeClaim,
-) ([]reconcile.Result, error) {
-	reconcilers := []nodeClaimReconciler{c.drift}
-	// NodeClaims belonging to static NodePools are never eligible for consolidation, so we shouldn't mark them as consolidatable
-	if np.Spec.Replicas == nil {
-		reconcilers = append(reconcilers, c.consolidation)
-	}
-	results := make([]reconcile.Result, 0, len(reconcilers))
-	var errs error
-	for _, r := range reconcilers {
-		res, err := r.Reconcile(ctx, np, nc)
-		errs = multierr.Append(errs, err)
-		results = append(results, res)
-	}
-	return results, errs
 }

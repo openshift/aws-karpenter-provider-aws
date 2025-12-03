@@ -74,9 +74,7 @@ type ListAccessKeysInput struct {
 	noSmithyDocumentSerde
 }
 
-// Contains the response to a successful [ListAccessKeys] request.
-//
-// [ListAccessKeys]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListAccessKeys.html
+// Contains the response to a successful ListAccessKeys request.
 type ListAccessKeysOutput struct {
 
 	// A list of objects containing metadata about the access keys.
@@ -185,36 +183,6 @@ func (c *Client) addOperationListAccessKeysMiddlewares(stack *middleware.Stack, 
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAttempt(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptExecution(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeSerialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterSerialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeSigning(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterSigning(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptTransmit(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeDeserialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterDeserialization(stack, options); err != nil {
 		return err
 	}
 	if err = addSpanInitializeStart(stack); err != nil {

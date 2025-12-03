@@ -69,7 +69,7 @@ var _ = BeforeSuite(func() {
 	ctx = options.ToContext(ctx, test.Options())
 	awsEnv = test.NewEnvironment(ctx, env)
 	cloudProvider = cloudprovider.New(awsEnv.InstanceTypesProvider, awsEnv.InstanceProvider, events.NewRecorder(&record.FakeRecorder{}),
-		env.Client, awsEnv.AMIProvider, awsEnv.SecurityGroupProvider, awsEnv.CapacityReservationProvider, awsEnv.InstanceTypeStore)
+		env.Client, awsEnv.AMIProvider, awsEnv.SecurityGroupProvider, awsEnv.CapacityReservationProvider)
 	controller = metrics.NewController(env.Client, cloudProvider)
 
 	pricingController = pricing.NewController(awsEnv.PricingProvider)
@@ -277,8 +277,6 @@ var _ = Describe("MetricsController", func() {
 					InstanceMatchCriteria: string(ec2types.InstanceMatchCriteriaTargeted),
 					InstanceType:          "m5.large",
 					OwnerID:               "012345678901",
-					State:                 v1.CapacityReservationStateActive,
-					ReservationType:       v1.CapacityReservationTypeDefault,
 				},
 				{
 					AvailabilityZone:      "test-zone-1b",
@@ -286,8 +284,6 @@ var _ = Describe("MetricsController", func() {
 					InstanceMatchCriteria: string(ec2types.InstanceMatchCriteriaTargeted),
 					InstanceType:          "m5.large",
 					OwnerID:               "012345678901",
-					State:                 v1.CapacityReservationStateActive,
-					ReservationType:       v1.CapacityReservationTypeDefault,
 				},
 				{
 					AvailabilityZone:      "test-zone-1a",
@@ -295,8 +291,6 @@ var _ = Describe("MetricsController", func() {
 					InstanceMatchCriteria: string(ec2types.InstanceMatchCriteriaTargeted),
 					InstanceType:          "m5.metal",
 					OwnerID:               "012345678901",
-					State:                 v1.CapacityReservationStateActive,
-					ReservationType:       v1.CapacityReservationTypeDefault,
 				},
 			}
 			for _, elem := range nodeClass.Status.CapacityReservations {
@@ -375,8 +369,6 @@ var _ = Describe("MetricsController", func() {
 					InstanceMatchCriteria: string(ec2types.InstanceMatchCriteriaTargeted),
 					InstanceType:          "m5.large",
 					OwnerID:               "012345678901",
-					State:                 v1.CapacityReservationStateActive,
-					ReservationType:       v1.CapacityReservationTypeDefault,
 				},
 				{
 					AvailabilityZone:      "test-zone-1b",
@@ -384,8 +376,6 @@ var _ = Describe("MetricsController", func() {
 					InstanceMatchCriteria: string(ec2types.InstanceMatchCriteriaTargeted),
 					InstanceType:          "m5.large",
 					OwnerID:               "012345678901",
-					State:                 v1.CapacityReservationStateActive,
-					ReservationType:       v1.CapacityReservationTypeDefault,
 				},
 				{
 					AvailabilityZone:      "test-zone-1a",
@@ -393,8 +383,6 @@ var _ = Describe("MetricsController", func() {
 					InstanceMatchCriteria: string(ec2types.InstanceMatchCriteriaTargeted),
 					InstanceType:          "m5.metal",
 					OwnerID:               "012345678901",
-					State:                 v1.CapacityReservationStateActive,
-					ReservationType:       v1.CapacityReservationTypeDefault,
 				},
 			}
 			for _, elem := range nodeClass.Status.CapacityReservations {
@@ -493,8 +481,6 @@ var _ = Describe("MetricsController", func() {
 					InstanceMatchCriteria: string(ec2types.InstanceMatchCriteriaTargeted),
 					InstanceType:          "m5.large",
 					OwnerID:               "012345678901",
-					State:                 v1.CapacityReservationStateActive,
-					ReservationType:       v1.CapacityReservationTypeDefault,
 				},
 				{
 					AvailabilityZone:      "test-zone-1b",
@@ -502,8 +488,6 @@ var _ = Describe("MetricsController", func() {
 					InstanceMatchCriteria: string(ec2types.InstanceMatchCriteriaTargeted),
 					InstanceType:          "m5.large",
 					OwnerID:               "012345678901",
-					State:                 v1.CapacityReservationStateActive,
-					ReservationType:       v1.CapacityReservationTypeDefault,
 				},
 				{
 					AvailabilityZone:      "test-zone-1a",
@@ -511,8 +495,6 @@ var _ = Describe("MetricsController", func() {
 					InstanceMatchCriteria: string(ec2types.InstanceMatchCriteriaTargeted),
 					InstanceType:          "m5.metal",
 					OwnerID:               "012345678901",
-					State:                 v1.CapacityReservationStateActive,
-					ReservationType:       v1.CapacityReservationTypeDefault,
 				},
 			}
 			for _, elem := range nodeClass.Status.CapacityReservations {
@@ -587,8 +569,6 @@ var _ = Describe("MetricsController", func() {
 					InstanceMatchCriteria: string(ec2types.InstanceMatchCriteriaTargeted),
 					InstanceType:          "m5.large",
 					OwnerID:               "012345678901",
-					State:                 v1.CapacityReservationStateActive,
-					ReservationType:       v1.CapacityReservationTypeDefault,
 				},
 				{
 					AvailabilityZone:      "test-zone-1b",
@@ -596,8 +576,6 @@ var _ = Describe("MetricsController", func() {
 					InstanceMatchCriteria: string(ec2types.InstanceMatchCriteriaTargeted),
 					InstanceType:          "m5.large",
 					OwnerID:               "012345678901",
-					State:                 v1.CapacityReservationStateActive,
-					ReservationType:       v1.CapacityReservationTypeDefault,
 				},
 				{
 					AvailabilityZone:      "test-zone-1a",
@@ -605,8 +583,6 @@ var _ = Describe("MetricsController", func() {
 					InstanceMatchCriteria: string(ec2types.InstanceMatchCriteriaTargeted),
 					InstanceType:          "m5.metal",
 					OwnerID:               "012345678901",
-					State:                 v1.CapacityReservationStateActive,
-					ReservationType:       v1.CapacityReservationTypeDefault,
 				},
 			}
 			for _, elem := range nodeClass.Status.CapacityReservations {

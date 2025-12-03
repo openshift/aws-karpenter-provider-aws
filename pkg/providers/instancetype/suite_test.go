@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net"
 	"reflect"
 	"sort"
 	"strings"
@@ -87,7 +88,7 @@ var _ = BeforeSuite(func() {
 	awsEnv = test.NewEnvironment(ctx, env)
 	fakeClock = &clock.FakeClock{}
 	cloudProvider = cloudprovider.New(awsEnv.InstanceTypesProvider, awsEnv.InstanceProvider, events.NewRecorder(&record.FakeRecorder{}),
-		env.Client, awsEnv.AMIProvider, awsEnv.SecurityGroupProvider, awsEnv.CapacityReservationProvider, awsEnv.InstanceTypeStore)
+		env.Client, awsEnv.AMIProvider, awsEnv.SecurityGroupProvider, awsEnv.CapacityReservationProvider)
 	cluster = state.NewCluster(fakeClock, env.Client, cloudProvider)
 	prov = provisioning.NewProvisioner(env.Client, events.NewRecorder(&record.FakeRecorder{}), cloudProvider, cluster, fakeClock)
 })
@@ -101,6 +102,8 @@ var _ = BeforeEach(func() {
 	ctx = options.ToContext(ctx, test.Options())
 	cluster.Reset()
 	awsEnv.Reset()
+	awsEnv.LaunchTemplateProvider.KubeDNSIP = net.ParseIP("10.0.100.10")
+	awsEnv.LaunchTemplateProvider.ClusterEndpoint = "https://test-cluster"
 })
 
 var _ = AfterEach(func() {
@@ -233,7 +236,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 			v1.LabelInstanceHypervisor:                   "nitro",
 			v1.LabelInstanceEncryptionInTransitSupported: "true",
 			v1.LabelInstanceCategory:                     "g",
-			v1.LabelInstanceCapabilityFlex:               "false",
 			v1.LabelInstanceGeneration:                   "4",
 			v1.LabelInstanceFamily:                       "g4dn",
 			v1.LabelInstanceSize:                         "8xlarge",
@@ -267,7 +269,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 		Expect(lo.Keys(nodeSelector)).To(ContainElements(append(karpv1.WellKnownLabels.Difference(sets.New(
 			// TODO: add back to test with a preconfigured reserved instance type
 			v1.LabelCapacityReservationID,
-			v1.LabelCapacityReservationType,
 		)).UnsortedList(), lo.Keys(karpv1.NormalizedLabels)...)))
 
 		var pods []*corev1.Pod
@@ -295,7 +296,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 			v1.LabelInstanceHypervisor:                   "nitro",
 			v1.LabelInstanceEncryptionInTransitSupported: "true",
 			v1.LabelInstanceCategory:                     "g",
-			v1.LabelInstanceCapabilityFlex:               "false",
 			v1.LabelInstanceGeneration:                   "4",
 			v1.LabelInstanceFamily:                       "g4dn",
 			v1.LabelInstanceSize:                         "8xlarge",
@@ -325,7 +325,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 			append(
 				karpv1.WellKnownLabels.Difference(sets.New(
 					v1.LabelCapacityReservationID,
-					v1.LabelCapacityReservationType,
 					v1.LabelInstanceAcceleratorCount,
 					v1.LabelInstanceAcceleratorName,
 					v1.LabelInstanceAcceleratorManufacturer,
@@ -352,7 +351,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 			v1.LabelInstanceHypervisor:                   "nitro",
 			v1.LabelInstanceEncryptionInTransitSupported: "true",
 			v1.LabelInstanceCategory:                     "inf",
-			v1.LabelInstanceCapabilityFlex:               "false",
 			v1.LabelInstanceGeneration:                   "2",
 			v1.LabelInstanceFamily:                       "inf2",
 			v1.LabelInstanceSize:                         "xlarge",
@@ -378,7 +376,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 		// Ensure that we're exercising all well known labels except for the gpu, nvme and capacity reservation id labels
 		expectedLabels := append(karpv1.WellKnownLabels.Difference(sets.New(
 			v1.LabelCapacityReservationID,
-			v1.LabelCapacityReservationType,
 			v1.LabelInstanceGPUCount,
 			v1.LabelInstanceGPUName,
 			v1.LabelInstanceGPUManufacturer,
@@ -635,47 +632,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 			return ok && limits.IsTrunkingCompatible
 		}
 		Expect(supportsPodENI()).To(Equal(true))
-	})
-	It("should launch pod in flex instance type", func() {
-		ExpectApplied(ctx, env.Client, nodePool, nodeClass)
-		pod := coretest.UnschedulablePod(coretest.PodOptions{
-			NodeSelector: map[string]string{
-				v1.LabelInstanceCapabilityFlex: "true",
-			},
-		})
-		ExpectProvisioned(ctx, env.Client, cluster, cloudProvider, prov, pod)
-		node := ExpectScheduled(ctx, env.Client, pod)
-		Expect(node.Labels).To(HaveKeyWithValue(v1.LabelInstanceCapabilityFlex, "true"))
-		Expect(node.Labels).To(HaveKeyWithValue(corev1.LabelInstanceTypeStable, MatchRegexp(".*flex.*")))
-	})
-	It("should not launch pod when flex instances are disallowed", func() {
-		nodePool.Spec.Template.Spec.Requirements = append(nodePool.Spec.Template.Spec.Requirements, karpv1.NodeSelectorRequirementWithMinValues{
-			NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-				Key:      v1.LabelInstanceCapabilityFlex,
-				Operator: corev1.NodeSelectorOpNotIn,
-				Values:   []string{"true"},
-			},
-		})
-		ExpectApplied(ctx, env.Client, nodePool, nodeClass)
-		pod := coretest.UnschedulablePod(coretest.PodOptions{
-			NodeSelector: map[string]string{
-				v1.LabelInstanceCapabilityFlex: "true",
-			},
-		})
-		ExpectProvisioned(ctx, env.Client, cluster, cloudProvider, prov, pod)
-		ExpectNotScheduled(ctx, env.Client, pod)
-	})
-	It("should launch pod in non-flex instances", func() {
-		ExpectApplied(ctx, env.Client, nodePool, nodeClass)
-		pod := coretest.UnschedulablePod(coretest.PodOptions{
-			NodeSelector: map[string]string{
-				v1.LabelInstanceCapabilityFlex: "false",
-			},
-		})
-		ExpectProvisioned(ctx, env.Client, cluster, cloudProvider, prov, pod)
-		node := ExpectScheduled(ctx, env.Client, pod)
-		Expect(node.Labels).To(HaveKeyWithValue(v1.LabelInstanceCapabilityFlex, "false"))
-		Expect(node.Labels).ToNot(HaveKeyWithValue(corev1.LabelInstanceTypeStable, MatchRegexp("^.*flex.*")))
 	})
 	It("should launch vpc.amazonaws.com/PrivateIPv4Address on a compatible instance type", func() {
 		nodeClass.Spec.AMISelectorTerms = []v1.AMISelectorTerm{{Alias: "windows2022@latest"}}
@@ -1663,52 +1619,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 				Expect(it.Capacity.Pods().Value()).To(BeNumerically("==", 10))
 			}
 		})
-		DescribeTable(
-			"should set max-pods to user-defined value if specified",
-			func(alias string, family string, maxPods int, memory string) {
-				instanceInfo, err := awsEnv.EC2API.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{})
-				Expect(err).To(BeNil())
-				t3Large, ok := lo.Find(instanceInfo.InstanceTypes, func(info ec2types.InstanceTypeInfo) bool {
-					return info.InstanceType == "t3.large"
-				})
-				Expect(ok).To(Equal(true))
-
-				nodeClass.Spec.AMIFamily = lo.ToPtr(family)
-				nodeClass.Spec.AMISelectorTerms = []v1.AMISelectorTerm{{Alias: alias}}
-				nodeClass.Spec.Kubelet = &v1.KubeletConfiguration{
-					MaxPods: lo.ToPtr(int32(10)),
-				}
-				it := instancetype.NewInstanceType(ctx,
-					t3Large,
-					fake.DefaultRegion,
-					nil,
-					nil,
-					nodeClass.Spec.BlockDeviceMappings,
-					nodeClass.Spec.InstanceStorePolicy,
-					nodeClass.Spec.Kubelet.MaxPods,
-					nodeClass.Spec.Kubelet.PodsPerCore,
-					nodeClass.Spec.Kubelet.KubeReserved,
-					nodeClass.Spec.Kubelet.SystemReserved,
-					nodeClass.Spec.Kubelet.EvictionHard,
-					nodeClass.Spec.Kubelet.EvictionSoft,
-					nodeClass.AMIFamily(),
-					nil,
-				)
-				// t3.large
-				// maxInterfaces = 3
-				// maxIPv4PerInterface = 12
-				// reservedENIs = 1
-				Expect(it.Capacity.Pods().Value()).To(BeNumerically("==", maxPods))
-				// 11 * pods + 255
-				Expect(it.Overhead.KubeReserved.Memory().String()).To(Equal(memory))
-			},
-			Entry("al2 (latest)", "al2@latest", v1.AMIFamilyAL2, 10, "640Mi"),                            // 11 * 35 + 255
-			Entry("al2023 (latest)", "al2023@latest", v1.AMIFamilyAL2023, 10, "640Mi"),                   // 11 * 35 + 255
-			Entry("bottlerocket (latest)", "bottlerocket@latest", v1.AMIFamilyBottlerocket, 10, "365Mi"), // 11 * 10 + 255
-			Entry("windows2019 (latest)", "windows2019@latest", v1.AMIFamilyWindows2019, 10, "365Mi"),    // 11 * 10 + 255
-			Entry("windows2022 (latest)", "windows2022@latest", v1.AMIFamilyWindows2022, 10, "365Mi"),    // 11 * 10 + 255
-			Entry("custom", fake.ImageID(), v1.AMIFamilyCustom, 10, "640Mi"),                             // 11 * 35 + 255
-		)
 		It("should override max-pods value", func() {
 			instanceInfo, err := awsEnv.EC2API.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{})
 			Expect(err).To(BeNil())
@@ -1735,54 +1645,42 @@ var _ = Describe("InstanceTypeProvider", func() {
 				Expect(it.Capacity.Pods().Value()).To(BeNumerically("==", 10))
 			}
 		})
-		DescribeTable(
-			"should reserve ENIs when aws.reservedENIs is set and use it in max-pods calculation",
-			func(alias string, family string, maxPods int, memory string) {
-				ctx = options.ToContext(ctx, test.Options(test.OptionsFields{
-					ReservedENIs: lo.ToPtr(1),
-				}))
-				instanceInfo, err := awsEnv.EC2API.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{})
-				Expect(err).To(BeNil())
-				t3Large, ok := lo.Find(instanceInfo.InstanceTypes, func(info ec2types.InstanceTypeInfo) bool {
-					return info.InstanceType == "t3.large"
-				})
-				Expect(ok).To(Equal(true))
+		It("should reserve ENIs when aws.reservedENIs is set and is used in max-pods calculation", func() {
+			ctx = options.ToContext(ctx, test.Options(test.OptionsFields{
+				ReservedENIs: lo.ToPtr(1),
+			}))
 
-				nodeClass.Spec.AMIFamily = lo.ToPtr(family)
-				nodeClass.Spec.AMISelectorTerms = []v1.AMISelectorTerm{{Alias: alias}}
-				nodeClass.Spec.Kubelet = &v1.KubeletConfiguration{}
-
-				it := instancetype.NewInstanceType(ctx,
-					t3Large,
-					fake.DefaultRegion,
-					nil,
-					nil,
-					nodeClass.Spec.BlockDeviceMappings,
-					nodeClass.Spec.InstanceStorePolicy,
-					nodeClass.Spec.Kubelet.MaxPods,
-					nodeClass.Spec.Kubelet.PodsPerCore,
-					nodeClass.Spec.Kubelet.KubeReserved,
-					nodeClass.Spec.Kubelet.SystemReserved,
-					nodeClass.Spec.Kubelet.EvictionHard,
-					nodeClass.Spec.Kubelet.EvictionSoft,
-					nodeClass.AMIFamily(),
-					nil,
-				)
-				// t3.large
-				// maxInterfaces = 3
-				// maxIPv4PerInterface = 12
-				// reservedENIs = 1
-				Expect(it.Capacity.Pods().Value()).To(BeNumerically("==", maxPods))
-				// 11 * pods + 255
-				Expect(it.Overhead.KubeReserved.Memory().String()).To(Equal(memory))
-			},
-			Entry("al2 (latest)", "al2@latest", v1.AMIFamilyAL2, 24, "640Mi"),                            // 11 * 35 + 255
-			Entry("al2023 (latest)", "al2023@latest", v1.AMIFamilyAL2023, 24, "640Mi"),                   // 11 * 35 + 255
-			Entry("bottlerocket (latest)", "bottlerocket@latest", v1.AMIFamilyBottlerocket, 24, "519Mi"), // 11 * 24 + 255
-			Entry("windows2019 (latest)", "windows2019@latest", v1.AMIFamilyWindows2019, 110, "1465Mi"),  // 11 * 110 + 255
-			Entry("windows2022 (latest)", "windows2022@latest", v1.AMIFamilyWindows2022, 110, "1465Mi"),  // 11 * 110 + 255
-			Entry("custom", fake.ImageID(), v1.AMIFamilyCustom, 24, "640Mi"),                             // 11 * 35 + 255
-		)
+			instanceInfo, err := awsEnv.EC2API.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{})
+			Expect(err).To(BeNil())
+			t3Large, ok := lo.Find(instanceInfo.InstanceTypes, func(info ec2types.InstanceTypeInfo) bool {
+				return info.InstanceType == "t3.large"
+			})
+			Expect(ok).To(Equal(true))
+			nodeClass.Spec.Kubelet = &v1.KubeletConfiguration{}
+			it := instancetype.NewInstanceType(ctx,
+				t3Large,
+				fake.DefaultRegion,
+				nil,
+				nil,
+				nodeClass.Spec.BlockDeviceMappings,
+				nodeClass.Spec.InstanceStorePolicy,
+				nodeClass.Spec.Kubelet.MaxPods,
+				nodeClass.Spec.Kubelet.PodsPerCore,
+				nodeClass.Spec.Kubelet.KubeReserved,
+				nodeClass.Spec.Kubelet.SystemReserved,
+				nodeClass.Spec.Kubelet.EvictionHard,
+				nodeClass.Spec.Kubelet.EvictionSoft,
+				nodeClass.AMIFamily(),
+				nil,
+			)
+			// t3.large
+			// maxInterfaces = 3
+			// maxIPv4PerInterface = 12
+			// reservedENIs = 1
+			// (3 - 1) * (12 - 1) + 2 = 24
+			maxPods := 24
+			Expect(it.Capacity.Pods().Value()).To(BeNumerically("==", maxPods))
+		})
 		It("should reserve ENIs when aws.reservedENIs is set and not go below 0 ENIs in max-pods calculation", func() {
 			ctx = options.ToContext(ctx, test.Options(test.OptionsFields{
 				ReservedENIs: lo.ToPtr(1_000_000),
@@ -1897,7 +1795,7 @@ var _ = Describe("InstanceTypeProvider", func() {
 					nodeClass.AMIFamily(),
 					nil,
 				)
-				limitedPods := instancetype.ENILimitedPods(ctx, info, 0)
+				limitedPods := instancetype.ENILimitedPods(ctx, info)
 				Expect(it.Capacity.Pods().Value()).To(BeNumerically("==", limitedPods.Value()))
 			}
 		})
@@ -2265,129 +2163,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 			}
 			Expect(instanceTypeNames.Has("m5.xlarge"))
 		})
-		It("should not return an offering when marking an offering as unavailable in the Insufficient Capacity Error Cache", func() {
-			ExpectApplied(ctx, env.Client, nodeClass)
-
-			// Initial list of GetInstanceTypes
-			instanceTypes, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-
-			m5InstanceType, ok := lo.Find(instanceTypes, func(it *corecloudprovider.InstanceType) bool {
-				return it.Name == string(ec2types.InstanceTypeM5Large)
-			})
-			Expect(ok).To(BeTrue())
-			Expect(m5InstanceType.Offerings.Available()).To(HaveLen(6))
-
-			// Mark spot m5.xlarge instance as unavailable in a few zones, nothing should change
-			awsEnv.UnavailableOfferingsCache.MarkUnavailable(ctx, "test", ec2types.InstanceTypeM5Xlarge, "test-zone-1a", karpv1.CapacityTypeSpot)
-			awsEnv.UnavailableOfferingsCache.MarkUnavailable(ctx, "test", ec2types.InstanceTypeM5Xlarge, "test-zone-1b", karpv1.CapacityTypeSpot)
-			Expect(err).ToNot(HaveOccurred())
-			m5InstanceType, ok = lo.Find(instanceTypes, func(it *corecloudprovider.InstanceType) bool {
-				return it.Name == string(ec2types.InstanceTypeM5Large)
-			})
-			Expect(ok).To(BeTrue())
-			Expect(m5InstanceType.Offerings.Available()).To(HaveLen(6))
-
-			// Mark spot m5.large instance in test-zone-1a as unavailable
-			awsEnv.UnavailableOfferingsCache.MarkUnavailable(ctx, "test", ec2types.InstanceTypeM5Large, "test-zone-1a", karpv1.CapacityTypeSpot)
-			instanceTypes, err = cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-			m5InstanceType, ok = lo.Find(instanceTypes, func(it *corecloudprovider.InstanceType) bool {
-				return it.Name == string(ec2types.InstanceTypeM5Large)
-			})
-			Expect(ok).To(BeTrue())
-			Expect(m5InstanceType.Offerings.Available()).To(HaveLen(5))
-			Expect(m5InstanceType.Offerings.Compatible(scheduling.NewLabelRequirements(map[string]string{
-				corev1.LabelTopologyZone:    "test-zone-1a",
-				karpv1.CapacityTypeLabelKey: karpv1.CapacityTypeSpot,
-			}))[0].Available).To(BeFalse())
-
-			// Mark on-demand m5.large instance in test-zone-1b and test-zone-1c as unavailable
-			awsEnv.UnavailableOfferingsCache.MarkUnavailable(ctx, "test", ec2types.InstanceTypeM5Large, "test-zone-1b", karpv1.CapacityTypeOnDemand)
-			awsEnv.UnavailableOfferingsCache.MarkUnavailable(ctx, "test", ec2types.InstanceTypeM5Large, "test-zone-1c", karpv1.CapacityTypeOnDemand)
-
-			instanceTypes, err = cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-			m5InstanceType, ok = lo.Find(instanceTypes, func(it *corecloudprovider.InstanceType) bool {
-				return it.Name == string(ec2types.InstanceTypeM5Large)
-			})
-			Expect(ok).To(BeTrue())
-			Expect(m5InstanceType.Offerings.Available()).To(HaveLen(3))
-			Expect(m5InstanceType.Offerings.Compatible(scheduling.NewLabelRequirements(map[string]string{
-				corev1.LabelTopologyZone:    "test-zone-1a",
-				karpv1.CapacityTypeLabelKey: karpv1.CapacityTypeSpot,
-			}))[0].Available).To(BeFalse())
-			Expect(m5InstanceType.Offerings.Compatible(scheduling.NewLabelRequirements(map[string]string{
-				corev1.LabelTopologyZone:    "test-zone-1b",
-				karpv1.CapacityTypeLabelKey: karpv1.CapacityTypeOnDemand,
-			}))[0].Available).To(BeFalse())
-			Expect(m5InstanceType.Offerings.Compatible(scheduling.NewLabelRequirements(map[string]string{
-				corev1.LabelTopologyZone:    "test-zone-1c",
-				karpv1.CapacityTypeLabelKey: karpv1.CapacityTypeOnDemand,
-			}))[0].Available).To(BeFalse())
-		})
-		It("should not return a capacity type when marking a capacity type as unavailable in the Insufficient Capacity Error Cache", func() {
-			ExpectApplied(ctx, env.Client, nodeClass)
-
-			// Initial list of GetInstanceTypes
-			instanceTypes, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-			capacityTypes := sets.New[string]()
-			for _, it := range instanceTypes {
-				for _, of := range it.Offerings.Available() {
-					capacityTypes.Insert(of.CapacityType())
-				}
-			}
-
-			Expect(capacityTypes).To(HaveLen(2))
-			Expect(capacityTypes.UnsortedList()).To(ConsistOf([]string{karpv1.CapacityTypeOnDemand, karpv1.CapacityTypeSpot}))
-
-			// Mark one of the zones as unavailable
-			awsEnv.UnavailableOfferingsCache.MarkCapacityTypeUnavailable(karpv1.CapacityTypeSpot)
-
-			// Initial list of GetInstanceTypes
-			instanceTypes, err = cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-			capacityTypes = sets.New[string]()
-			for _, it := range instanceTypes {
-				for _, of := range it.Offerings.Available() {
-					capacityTypes.Insert(of.CapacityType())
-				}
-			}
-			Expect(capacityTypes).To(HaveLen(1))
-			Expect(capacityTypes.UnsortedList()).To(ConsistOf([]string{karpv1.CapacityTypeOnDemand}))
-		})
-		It("should not return a zone when marking a zone as unavailable in the Insufficient Capacity Error Cache", func() {
-			ExpectApplied(ctx, env.Client, nodeClass)
-
-			// Initial list of GetInstanceTypes
-			instanceTypes, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-			zones := sets.New[string]()
-			for _, it := range instanceTypes {
-				for _, of := range it.Offerings.Available() {
-					zones.Insert(of.Zone())
-				}
-			}
-
-			Expect(zones).To(HaveLen(3))
-			Expect(zones.UnsortedList()).To(ConsistOf([]string{"test-zone-1a", "test-zone-1b", "test-zone-1c"}))
-
-			// Mark one of the zones as unavailable
-			awsEnv.UnavailableOfferingsCache.MarkAZUnavailable("test-zone-1a")
-
-			// Initial list of GetInstanceTypes
-			instanceTypes, err = cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-			zones = sets.New[string]()
-			for _, it := range instanceTypes {
-				for _, of := range it.Offerings.Available() {
-					zones.Insert(of.Zone())
-				}
-			}
-			Expect(zones).To(HaveLen(2))
-			Expect(zones.UnsortedList()).To(ConsistOf([]string{"test-zone-1b", "test-zone-1c"}))
-		})
 	})
 	Context("CapacityType", func() {
 		It("should default to on-demand", func() {
@@ -2466,8 +2241,7 @@ var _ = Describe("InstanceTypeProvider", func() {
 				{
 					DeviceName: aws.String("/dev/xvda"),
 					EBS: &v1.BlockDevice{
-						SnapshotID:               aws.String("snap-xxxxxxxx"),
-						VolumeInitializationRate: aws.Int32(100),
+						SnapshotID: aws.String("snap-xxxxxxxx"),
 					},
 				},
 			}
@@ -2491,7 +2265,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 				Expect(ltInput.LaunchTemplateData.BlockDeviceMappings).To(HaveLen(1))
 				Expect(*ltInput.LaunchTemplateData.BlockDeviceMappings[0].DeviceName).To(Equal("/dev/xvda"))
 				Expect(*ltInput.LaunchTemplateData.BlockDeviceMappings[0].Ebs.SnapshotId).To(Equal("snap-xxxxxxxx"))
-				Expect(*ltInput.LaunchTemplateData.BlockDeviceMappings[0].Ebs.VolumeInitializationRate).To(Equal(int32(100)))
 			})
 		})
 		It("should default to EBS defaults when volumeSize is not defined in blockDeviceMappings for AL2 Root volume", func() {
@@ -2505,11 +2278,12 @@ var _ = Describe("InstanceTypeProvider", func() {
 				Expect(ltInput.LaunchTemplateData.BlockDeviceMappings).To(HaveLen(1))
 				Expect(*ltInput.LaunchTemplateData.BlockDeviceMappings[0].DeviceName).To(Equal("/dev/xvda"))
 				Expect(*ltInput.LaunchTemplateData.BlockDeviceMappings[0].Ebs.SnapshotId).To(Equal("snap-xxxxxxxx"))
-				Expect(*ltInput.LaunchTemplateData.BlockDeviceMappings[0].Ebs.VolumeInitializationRate).To(Equal(int32(100)))
 			})
 		})
 		It("should default to EBS defaults when volumeSize is not defined in blockDeviceMappings for AL2023 Root volume", func() {
 			nodeClass.Spec.AMISelectorTerms = []v1.AMISelectorTerm{{Alias: "al2023@latest"}}
+			awsEnv.LaunchTemplateProvider.CABundle = lo.ToPtr("Y2EtYnVuZGxlCg==")
+			awsEnv.LaunchTemplateProvider.ClusterCIDR.Store(lo.ToPtr("10.100.0.0/16"))
 			ExpectApplied(ctx, env.Client, nodePool, nodeClass)
 			pod := coretest.UnschedulablePod()
 			ExpectProvisioned(ctx, env.Client, cluster, cloudProvider, prov, pod)
@@ -2520,7 +2294,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 				Expect(ltInput.LaunchTemplateData.BlockDeviceMappings).To(HaveLen(1))
 				Expect(*ltInput.LaunchTemplateData.BlockDeviceMappings[0].DeviceName).To(Equal("/dev/xvda"))
 				Expect(*ltInput.LaunchTemplateData.BlockDeviceMappings[0].Ebs.SnapshotId).To(Equal("snap-xxxxxxxx"))
-				Expect(*ltInput.LaunchTemplateData.BlockDeviceMappings[0].Ebs.VolumeInitializationRate).To(Equal(int32(100)))
 			})
 		})
 		It("should default to EBS defaults when volumeSize is not defined in blockDeviceMappings for Bottlerocket Root volume", func() {
@@ -2537,7 +2310,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 				Expect(ltInput.LaunchTemplateData.BlockDeviceMappings).To(HaveLen(1))
 				Expect(*ltInput.LaunchTemplateData.BlockDeviceMappings[0].DeviceName).To(Equal("/dev/xvdb"))
 				Expect(*ltInput.LaunchTemplateData.BlockDeviceMappings[0].Ebs.SnapshotId).To(Equal("snap-xxxxxxxx"))
-				Expect(*ltInput.LaunchTemplateData.BlockDeviceMappings[0].Ebs.VolumeInitializationRate).To(Equal(int32(100)))
 			})
 		})
 	})
@@ -2603,15 +2375,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 		})
 	})
 	Context("Provider Cache", func() {
-		It("should return the same set of instance types from the cache when no changes are made", func() {
-			ExpectApplied(ctx, env.Client, nodeClass)
-			list1, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-
-			list2, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-			ExpectSameInstanceTypeLists(list1, list2)
-		})
 		// Keeping the Cache testing in one IT block to validate the combinatorial expansion of instance types generated by different configs
 		It("changes to kubelet configuration fields should result in a different set of instances types", func() {
 			// We should expect these kubelet configuration fields to change the result of the instance type call
@@ -2631,18 +2394,22 @@ var _ = Describe("InstanceTypeProvider", func() {
 				MaxPods: aws.Int32(10),
 			}
 			kubeletChanges := []*v1.KubeletConfiguration{
+				{}, // Testing the base case black EC2NodeClass
 				{KubeReserved: map[string]string{string(corev1.ResourceCPU): "20"}},
 				{SystemReserved: map[string]string{string(corev1.ResourceMemory): "10Gi"}},
 				{EvictionHard: map[string]string{"memory.available": "52%"}},
 				{EvictionSoft: map[string]string{"nodefs.available": "132%"}},
 				{MaxPods: aws.Int32(20)},
 			}
+			var instanceTypeResult [][]*corecloudprovider.InstanceType
 			ExpectApplied(ctx, env.Client, nodeClass)
 			// Adding the general set of to the instancetype into the cache
-			fullInstanceTypeResult, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
+			fullInstanceTypeList, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
 			Expect(err).To(BeNil())
+			sort.Slice(fullInstanceTypeList, func(x int, y int) bool {
+				return fullInstanceTypeList[x].Name < fullInstanceTypeList[y].Name
+			})
 
-			instanceTypeResults := [][]*corecloudprovider.InstanceType{fullInstanceTypeResult}
 			sorted := nodePool.DeepCopy()
 			for _, change := range kubeletChanges {
 				nodePool = sorted.DeepCopy()
@@ -2653,11 +2420,14 @@ var _ = Describe("InstanceTypeProvider", func() {
 				// We are making sure to pull from the cache
 				instancetypes, err := awsEnv.InstanceTypesProvider.List(ctx, nodeClass)
 				Expect(err).To(BeNil())
-				instanceTypeResults = append(instanceTypeResults, instancetypes)
+				sort.Slice(instancetypes, func(x int, y int) bool {
+					return instancetypes[x].Name < instancetypes[y].Name
+				})
+				instanceTypeResult = append(instanceTypeResult, instancetypes)
 			}
 
 			// Based on the nodeclass configuration, we expect to have 5 unique set of instance types
-			ExpectUniqueInstanceTypeLists(instanceTypeResults...)
+			uniqueInstanceTypeList(instanceTypeResult)
 		})
 		It("changes to nodeclass fields should result in a different set of instances types", func() {
 			// We should expect these nodeclass fields to change the result of the instance type
@@ -2674,6 +2444,7 @@ var _ = Describe("InstanceTypeProvider", func() {
 				},
 			}
 			nodeClassChanges := []*v1.EC2NodeClass{
+				{}, // Testing the base case black EC2NodeClass
 				{Spec: v1.EC2NodeClassSpec{InstanceStorePolicy: lo.ToPtr(v1.InstanceStorePolicyRAID0)}},
 				{Spec: v1.EC2NodeClassSpec{AMISelectorTerms: []v1.AMISelectorTerm{{Alias: "bottlerocket@latest"}}}},
 				{
@@ -2711,13 +2482,16 @@ var _ = Describe("InstanceTypeProvider", func() {
 					},
 				},
 			}
+			var instanceTypeResult [][]*corecloudprovider.InstanceType
 			ExpectApplied(ctx, env.Client, nodeClass)
 			nodePool.Spec.Template.Spec.NodeClassRef.Name = nodeClass.Name
 			// Adding the general set of to the instancetype into the cache
-			fullInstanceTypeResult, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
+			fullInstanceTypeList, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
 			Expect(err).To(BeNil())
+			sort.Slice(fullInstanceTypeList, func(x int, y int) bool {
+				return fullInstanceTypeList[x].Name < fullInstanceTypeList[y].Name
+			})
 
-			instanceTypeResults := [][]*corecloudprovider.InstanceType{fullInstanceTypeResult}
 			sorted := nodeClass.DeepCopy()
 			for _, change := range nodeClassChanges {
 				nodeClass = sorted.DeepCopy()
@@ -2728,130 +2502,14 @@ var _ = Describe("InstanceTypeProvider", func() {
 				// We are making sure to pull from the cache
 				its, err := awsEnv.InstanceTypesProvider.List(ctx, nodeClass)
 				Expect(err).To(BeNil())
-				instanceTypeResults = append(instanceTypeResults, its)
+				sort.Slice(its, func(x int, y int) bool {
+					return its[x].Name < its[y].Name
+				})
+				instanceTypeResult = append(instanceTypeResult, its)
 			}
 
 			// Based on the nodeclass configuration, we expect to have 5 unique set of instance types
-			ExpectUniqueInstanceTypeLists(instanceTypeResults...)
-		})
-		It("updates to the instanceTypeInfo should result in a different set of instance types", func() {
-			ExpectApplied(ctx, env.Client, nodeClass)
-			// Initial list of GetInstanceTypes
-			list1, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-
-			// Update the instance types but don't change anything -- everything should remain cached
-			Expect(awsEnv.InstanceTypesProvider.UpdateInstanceTypes(ctx))
-			list2, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-			ExpectSameInstanceTypeLists(list1, list2)
-
-			// Now, update the instance types, we should refresh the cache
-			out, err := awsEnv.EC2API.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{})
-			Expect(err).ToNot(HaveOccurred())
-			awsEnv.EC2API.DescribeInstanceTypesOutput.Set(&ec2.DescribeInstanceTypesOutput{
-				InstanceTypes: append([]ec2types.InstanceTypeInfo{}, out.InstanceTypes[1:]...), // Drop one of the instance types from the response
-			})
-			Expect(awsEnv.InstanceTypesProvider.UpdateInstanceTypes(ctx))
-
-			list3, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-			ExpectUniqueInstanceTypeLists(list2, list3)
-		})
-		It("updates to the instanceTypeOfferingInfo should result in a different set of instance types", func() {
-			ExpectApplied(ctx, env.Client, nodeClass)
-			// Initial list of GetInstanceTypes
-			list1, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-
-			// Update the instance types but don't change anything -- everything should remain cached
-			Expect(awsEnv.InstanceTypesProvider.UpdateInstanceTypeOfferings(ctx))
-			list2, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-			ExpectSameInstanceTypeLists(list1, list2)
-
-			// Now, update the instance types, we should refresh the cache
-			out, err := awsEnv.EC2API.DescribeInstanceTypeOfferings(ctx, &ec2.DescribeInstanceTypeOfferingsInput{})
-			Expect(err).ToNot(HaveOccurred())
-
-			awsEnv.EC2API.DescribeInstanceTypeOfferingsOutput.Set(&ec2.DescribeInstanceTypeOfferingsOutput{InstanceTypeOfferings: append(
-				[]ec2types.InstanceTypeOffering{
-					{
-						InstanceType: "m5.xlarge",
-						Location:     lo.ToPtr("test-zone-1c"),
-					},
-				},
-				out.InstanceTypeOfferings..., // Add an instance type offering option
-			)})
-			Expect(awsEnv.InstanceTypesProvider.UpdateInstanceTypeOfferings(ctx))
-
-			list3, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-			ExpectUniqueInstanceTypeLists(list2, list3)
-		})
-		It("returning an ICE error only results in a cache miss for that instance type", func() {
-			ExpectApplied(ctx, env.Client, nodeClass)
-			// Initial list of GetInstanceTypes
-			list1, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-
-			awsEnv.UnavailableOfferingsCache.MarkUnavailable(ctx, "test", "m5.xlarge", "test-zone-1a", karpv1.CapacityTypeSpot)
-			list2, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-
-			// Only the m5.xlarge instance type should cache miss
-			Expect(list2).To(HaveLen(len(list1)))
-			for _, it2 := range list2 {
-				it, ok := lo.Find(list1, func(it *corecloudprovider.InstanceType) bool {
-					return it.Name == it2.Name
-				})
-				Expect(ok).To(BeTrue())
-				if it2.Name == "m5.xlarge" {
-					Expect(it2).ToNot(Equal(it))
-					for _, of2 := range it2.Offerings {
-						Expect(it.Offerings).ToNot(ContainElement(BeIdenticalTo(of2)))
-					}
-				} else {
-					Expect(it2).To(Equal(it))
-					Expect(it2.Offerings).To(ContainElements(lo.Map(it.Offerings, func(of *corecloudprovider.Offering, _ int) any { return BeIdenticalTo(of) })...))
-				}
-			}
-		})
-		It("returning an ICE error for capacity type results in a cache miss for every instance type", func() {
-			ExpectApplied(ctx, env.Client, nodeClass)
-			// Initial list of GetInstanceTypes
-			list1, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-
-			awsEnv.UnavailableOfferingsCache.MarkCapacityTypeUnavailable(karpv1.CapacityTypeSpot)
-			list2, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-
-			Expect(list2).To(HaveLen(len(list1)))
-			for _, it2 := range list2 {
-				it, ok := lo.Find(list1, func(it *corecloudprovider.InstanceType) bool {
-					return it.Name == it2.Name
-				})
-				Expect(ok).To(BeTrue())
-				for _, of2 := range it2.Offerings {
-					Expect(it.Offerings).ToNot(ContainElement(BeIdenticalTo(of2)))
-				}
-			}
-
-			awsEnv.UnavailableOfferingsCache.MarkAZUnavailable("test-zone-1a")
-			list3, err := cloudProvider.GetInstanceTypes(ctx, nodePool)
-			Expect(err).ToNot(HaveOccurred())
-
-			Expect(list3).To(HaveLen(len(list2)))
-			for _, it3 := range list3 {
-				it2, ok := lo.Find(list2, func(it2 *corecloudprovider.InstanceType) bool {
-					return it2.Name == it3.Name
-				})
-				Expect(ok).To(BeTrue())
-				for _, of3 := range it3.Offerings {
-					Expect(it2.Offerings).ToNot(ContainElement(BeIdenticalTo(of3)))
-				}
-			}
+			uniqueInstanceTypeList(instanceTypeResult)
 		})
 	})
 	It("should not cause data races when calling List() simultaneously", func() {
@@ -2889,116 +2547,16 @@ var _ = Describe("InstanceTypeProvider", func() {
 		}
 		wg.Wait()
 	})
-	Context("Capacity Blocks", func() {
-		const crInstanceType = "c6g.large"
-		const crZone = "test-zone-1a"
-		const crID = "cr-123"
-		const crCapacity = 1
-		BeforeEach(func() {
-			awsEnv.CapacityReservationProvider.SetAvailableInstanceCount(crID, crCapacity)
-			nodeClass.Status.CapacityReservations = []v1.CapacityReservation{{
-				AvailabilityZone: crZone,
-				ID:               crID,
-				InstanceType:     crInstanceType,
-				ReservationType:  v1.CapacityReservationTypeCapacityBlock,
-			}}
-		})
-		DescribeTable(
-			"should create an offering for a capacity block",
-			func(state v1.CapacityReservationState) {
-				nodeClass.Status.CapacityReservations[0].State = state
-				instanceTypes, err := awsEnv.InstanceTypesProvider.List(ctx, nodeClass)
-				Expect(err).ToNot(HaveOccurred())
-
-				var instanceType *corecloudprovider.InstanceType
-				for _, it := range instanceTypes {
-					if it.Name == crInstanceType {
-						instanceType = it
-						break
-					}
-				}
-				Expect(instanceType).ToNot(BeNil())
-
-				var offering *corecloudprovider.Offering
-				for _, o := range instanceType.Offerings {
-					if o.CapacityType() == karpv1.CapacityTypeReserved {
-						if offering != nil {
-							Fail("only a single reserved offering should exist")
-						}
-						offering = o
-					}
-				}
-				Expect(offering).ToNot(BeNil())
-
-				Expect(offering.Requirements.Has(karpv1.CapacityTypeLabelKey)).To(BeTrue())
-				Expect(offering.Requirements.Get(karpv1.CapacityTypeLabelKey).Any()).To(Equal(karpv1.CapacityTypeReserved))
-				Expect(offering.Requirements.Has(corev1.LabelTopologyZone)).To(BeTrue())
-				Expect(offering.Requirements.Get(corev1.LabelTopologyZone).Any()).To(Equal(crZone))
-				Expect(offering.Requirements.Has(v1.LabelCapacityReservationType)).To(BeTrue())
-				Expect(offering.Requirements.Get(v1.LabelCapacityReservationType).Any()).To(Equal(string(v1.CapacityReservationTypeCapacityBlock)))
-				Expect(offering.Requirements.Has(v1.LabelCapacityReservationID)).To(BeTrue())
-				Expect(offering.Requirements.Get(v1.LabelCapacityReservationID).Any()).To(Equal(crID))
-				Expect(offering.Available).To(Equal(state != v1.CapacityReservationStateExpiring))
-				Expect(offering.ReservationCapacity).To(Equal(crCapacity))
-			},
-			Entry("when the capacity block is active", v1.CapacityReservationStateActive),
-			Entry("when the capacity block is expiring", v1.CapacityReservationStateExpiring),
-		)
-	})
 })
 
-func ExpectSameInstanceTypeLists(instanceTypesLists ...[]*corecloudprovider.InstanceType) {
+func uniqueInstanceTypeList(instanceTypesLists [][]*corecloudprovider.InstanceType) {
 	GinkgoHelper()
-
-	for _, itList := range instanceTypesLists {
-		sort.Slice(itList, func(x int, y int) bool {
-			return itList[x].Name < itList[y].Name
-		})
-	}
-	for x := range instanceTypesLists {
-		for y := range instanceTypesLists {
-			if x == y {
-				continue
-			}
-			Expect(instanceTypesLists[x]).To(HaveLen(len(instanceTypesLists[y])))
-			for i := range instanceTypesLists[x] {
-				ExpectIdenticalInstanceTypes(instanceTypesLists[x][i], instanceTypesLists[y][i])
-			}
-		}
-	}
-}
-
-func ExpectUniqueInstanceTypeLists(instanceTypesLists ...[]*corecloudprovider.InstanceType) {
-	GinkgoHelper()
-
-	for _, itList := range instanceTypesLists {
-		sort.Slice(itList, func(x int, y int) bool {
-			return itList[x].Name < itList[y].Name
-		})
-	}
 	for x := range instanceTypesLists {
 		for y := range instanceTypesLists {
 			if x == y {
 				continue
 			}
 			Expect(reflect.DeepEqual(instanceTypesLists[x], instanceTypesLists[y])).To(BeFalse())
-		}
-	}
-}
-
-func ExpectIdenticalInstanceTypes(instanceTypes ...*corecloudprovider.InstanceType) {
-	GinkgoHelper()
-
-	for x := range instanceTypes {
-		for y := range instanceTypes {
-			if x == y {
-				continue
-			}
-			// We have to compare a subset of the instance type fields because we create a new pointer for the instance type each time we call GetInstanceTypes()
-			Expect(instanceTypes[x].Name).To(BeIdenticalTo(instanceTypes[y].Name))
-			Expect(reflect.ValueOf(instanceTypes[x].Requirements).Pointer()).To(BeIdenticalTo(reflect.ValueOf(instanceTypes[y].Requirements).Pointer()))
-			Expect(reflect.ValueOf(instanceTypes[x].Capacity).Pointer()).To(BeIdenticalTo(reflect.ValueOf(instanceTypes[y].Capacity).Pointer()))
-			Expect(reflect.ValueOf(instanceTypes[x].Overhead).Pointer()).To(BeIdenticalTo(reflect.ValueOf(instanceTypes[y].Overhead).Pointer()))
 		}
 	}
 }

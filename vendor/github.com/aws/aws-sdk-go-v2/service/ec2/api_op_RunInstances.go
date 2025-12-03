@@ -125,11 +125,11 @@ type RunInstancesInput struct {
 	// request. If you do not specify a client token, a randomly generated token is
 	// used for the request to ensure idempotency.
 	//
-	// For more information, see [Ensuring idempotency in Amazon EC2 API requests].
+	// For more information, see [Ensuring Idempotency].
 	//
 	// Constraints: Maximum 64 ASCII characters
 	//
-	// [Ensuring idempotency in Amazon EC2 API requests]: https://docs.aws.amazon.com/ec2/latest/devguide/ec2-api-idempotency.html
+	// [Ensuring Idempotency]: https://docs.aws.amazon.com/AWSEC2/latest/APIReference/Run_Instance_Idempotency.html
 	ClientToken *string
 
 	// The CPU options for the instance. For more information, see [Optimize CPU options] in the Amazon EC2
@@ -151,9 +151,9 @@ type RunInstancesInput struct {
 	CreditSpecification *types.CreditSpecificationRequest
 
 	// Indicates whether an instance is enabled for stop protection. For more
-	// information, see [Enable stop protection for your EC2 instances].
+	// information, see [Stop protection].
 	//
-	// [Enable stop protection for your EC2 instances]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-stop-protection.html
+	// [Stop protection]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Stop_Start.html#Using_StopProtection
 	DisableApiStop *bool
 
 	// Indicates whether termination protection is enabled for the instance. The
@@ -181,17 +181,11 @@ type RunInstancesInput struct {
 	// An elastic GPU to associate with the instance.
 	//
 	// Amazon Elastic Graphics reached end of life on January 8, 2024.
-	//
-	// Deprecated: Specifying Elastic Graphics accelerators is no longer supported on
-	// the RunInstances API.
 	ElasticGpuSpecification []types.ElasticGpuSpecification
 
 	// An elastic inference accelerator to associate with the instance.
 	//
 	// Amazon Elastic Inference is no longer available.
-	//
-	// Deprecated: Specifying Elastic Inference accelerators is no longer supported on
-	// the RunInstances API.
 	ElasticInferenceAccelerators []types.ElasticInferenceAccelerator
 
 	// If you’re launching an instance into a dual-stack or IPv6-only subnet, you can
@@ -210,12 +204,13 @@ type RunInstancesInput struct {
 	EnablePrimaryIpv6 *bool
 
 	// Indicates whether the instance is enabled for Amazon Web Services Nitro
-	// Enclaves. For more information, see [Amazon Web Services Nitro Enclaves User Guide].
+	// Enclaves. For more information, see [What is Amazon Web Services Nitro Enclaves?]in the Amazon Web Services Nitro Enclaves
+	// User Guide.
 	//
 	// You can't enable Amazon Web Services Nitro Enclaves and hibernation on the same
 	// instance.
 	//
-	// [Amazon Web Services Nitro Enclaves User Guide]: https://docs.aws.amazon.com/enclaves/latest/user/
+	// [What is Amazon Web Services Nitro Enclaves?]: https://docs.aws.amazon.com/enclaves/latest/user/nitro-enclave.html
 	EnclaveOptions *types.EnclaveOptionsRequest
 
 	// Indicates whether an instance is enabled for hibernation. This parameter is
@@ -248,9 +243,9 @@ type RunInstancesInput struct {
 	// InstanceInterruptionBehavior is set to either hibernate or stop .
 	InstanceMarketOptions *types.InstanceMarketOptionsRequest
 
-	// The instance type. For more information, see [Amazon EC2 Instance Types Guide].
+	// The instance type. For more information, see [Amazon EC2 instance types] in the Amazon EC2 User Guide.
 	//
-	// [Amazon EC2 Instance Types Guide]: https://docs.aws.amazon.com/ec2/latest/instancetypes/instance-types.html
+	// [Amazon EC2 instance types]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-types.html
 	InstanceType types.InstanceType
 
 	// The number of IPv6 addresses to associate with the primary network interface.
@@ -280,12 +275,13 @@ type RunInstancesInput struct {
 	// [PV-GRUB]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/UserProvidedkernels.html
 	KernelId *string
 
-	// The name of the key pair. For more information, see [Create a key pair for your EC2 instance].
+	// The name of the key pair. You can create a key pair using [CreateKeyPair] or [ImportKeyPair].
 	//
 	// If you do not specify a key pair, you can't connect to the instance unless you
 	// choose an AMI that is configured to allow users another way to log in.
 	//
-	// [Create a key pair for your EC2 instance]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/create-key-pairs.html
+	// [ImportKeyPair]: https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_ImportKeyPair.html
+	// [CreateKeyPair]: https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateKeyPair.html
 	KeyName *string
 
 	// The launch template. Any additional parameters that you specify for the new
@@ -298,9 +294,9 @@ type RunInstancesInput struct {
 	// The maintenance and recovery options for the instance.
 	MaintenanceOptions *types.InstanceMaintenanceOptionsRequest
 
-	// The metadata options for the instance. For more information, see [Configure the Instance Metadata Service options].
+	// The metadata options for the instance. For more information, see [Instance metadata and user data].
 	//
-	// [Configure the Instance Metadata Service options]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-options.html
+	// [Instance metadata and user data]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html
 	MetadataOptions *types.InstanceMetadataOptionsRequest
 
 	// Specifies whether detailed monitoring is enabled for the instance.
@@ -346,10 +342,12 @@ type RunInstancesInput struct {
 	// [PV-GRUB]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/UserProvidedkernels.html
 	RamdiskId *string
 
-	// The IDs of the security groups.
+	// The IDs of the security groups. You can create a security group using [CreateSecurityGroup].
 	//
 	// If you specify a network interface, you must specify any security groups as
 	// part of the network interface instead of using this parameter.
+	//
+	// [CreateSecurityGroup]: https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateSecurityGroup.html
 	SecurityGroupIds []string
 
 	// [Default VPC] The names of the security groups.
@@ -385,9 +383,9 @@ type RunInstancesInput struct {
 
 	// The user data to make available to the instance. User data must be
 	// base64-encoded. Depending on the tool or SDK that you're using, the
-	// base64-encoding might be performed for you. For more information, see [Run commands at launch using instance user data].
+	// base64-encoding might be performed for you. For more information, see [Work with instance user data].
 	//
-	// [Run commands at launch using instance user data]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/user-data.html
+	// [Work with instance user data]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instancedata-add-user-data.html
 	UserData *string
 
 	noSmithyDocumentSerde
@@ -509,36 +507,6 @@ func (c *Client) addOperationRunInstancesMiddlewares(stack *middleware.Stack, op
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAttempt(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptExecution(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeSerialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterSerialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeSigning(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterSigning(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptTransmit(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptBeforeDeserialization(stack, options); err != nil {
-		return err
-	}
-	if err = addInterceptAfterDeserialization(stack, options); err != nil {
 		return err
 	}
 	if err = addSpanInitializeStart(stack); err != nil {

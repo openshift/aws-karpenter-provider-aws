@@ -25,7 +25,6 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/component-helpers/storage/volume"
 )
 
 type PersistentVolumeOptions struct {
@@ -109,9 +108,6 @@ func PersistentVolumeClaim(overrides ...PersistentVolumeClaimOptions) *v1.Persis
 	}
 	if len(options.Resources.Requests) == 0 {
 		options.Resources = v1.VolumeResourceRequirements{Requests: v1.ResourceList{v1.ResourceStorage: resource.MustParse("1Gi")}}
-	}
-	if options.VolumeName != "" {
-		options.Annotations = lo.Assign(options.Annotations, map[string]string{volume.AnnBindCompleted: "yes"})
 	}
 	return &v1.PersistentVolumeClaim{
 		ObjectMeta: NamespacedObjectMeta(options.ObjectMeta),

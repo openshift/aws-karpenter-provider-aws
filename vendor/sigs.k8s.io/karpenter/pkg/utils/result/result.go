@@ -33,7 +33,6 @@ func Min(results ...reconcile.Result) (result reconcile.Result) {
 		if r.RequeueAfter < min {
 			min = r.RequeueAfter
 			result.RequeueAfter = min
-			//nolint:staticcheck
 			result.Requeue = true
 		}
 	}

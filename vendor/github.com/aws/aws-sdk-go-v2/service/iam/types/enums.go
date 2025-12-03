@@ -443,7 +443,6 @@ type StatusType string
 const (
 	StatusTypeActive   StatusType = "Active"
 	StatusTypeInactive StatusType = "Inactive"
-	StatusTypeExpired  StatusType = "Expired"
 )
 
 // Values returns all known values for StatusType. Note that this can be expanded
@@ -454,7 +453,6 @@ func (StatusType) Values() []StatusType {
 	return []StatusType{
 		"Active",
 		"Inactive",
-		"Expired",
 	}
 }
 

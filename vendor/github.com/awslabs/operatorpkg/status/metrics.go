@@ -21,11 +21,10 @@ const (
 )
 
 // Cardinality is limited to # objects * # conditions * # objectives
-var ConditionDuration = conditionDurationMetric("", nil, pmetrics.LabelGroup, pmetrics.LabelKind)
+var ConditionDuration = conditionDurationMetric("", pmetrics.LabelGroup, pmetrics.LabelKind)
 
-func conditionDurationMetric(objectName string, buckets []float64, additionalLabels ...string) pmetrics.ObservationMetric {
+func conditionDurationMetric(objectName string, additionalLabels ...string) pmetrics.ObservationMetric {
 	subsystem := lo.Ternary(len(objectName) == 0, MetricSubsystem, fmt.Sprintf("%s_%s", objectName, MetricSubsystem))
-	buckets = lo.Ternary(len(buckets) == 0, prometheus.DefBuckets, buckets)
 
 	return pmetrics.NewPrometheusHistogram(
 		metrics.Registry,
@@ -34,7 +33,6 @@ func conditionDurationMetric(objectName string, buckets []float64, additionalLab
 			Subsystem: subsystem,
 			Name:      "transition_seconds",
 			Help:      "The amount of time a condition was in a given state before transitioning. e.g. Alarm := P99(Updated=False) > 5 minutes",
-			Buckets:   buckets,
 		},
 		append([]string{
 			pmetrics.LabelType,
@@ -55,7 +53,7 @@ func conditionCountMetric(objectName string, additionalLabels ...string) pmetric
 			Namespace: pmetrics.Namespace,
 			Subsystem: subsystem,
 			Name:      "count",
-			Help:      "The number of a condition for a given object, type and status. e.g. Alarm := Available=False > 0",
+			Help:      "The number of an condition for a given object, type and status. e.g. Alarm := Available=False > 0",
 		},
 		append([]string{
 			MetricLabelNamespace,
@@ -136,11 +134,10 @@ func terminationCurrentTimeSecondsMetric(objectName string, additionalLabels ...
 	)
 }
 
-var TerminationDuration = terminationDurationMetric("", nil, pmetrics.LabelGroup, pmetrics.LabelKind)
+var TerminationDuration = terminationDurationMetric("", pmetrics.LabelGroup, pmetrics.LabelKind)
 
-func terminationDurationMetric(objectName string, buckets []float64, additionalLabels ...string) pmetrics.ObservationMetric {
+func terminationDurationMetric(objectName string, additionalLabels ...string) pmetrics.ObservationMetric {
 	subsystem := lo.Ternary(len(objectName) == 0, TerminationSubsystem, fmt.Sprintf("%s_%s", objectName, TerminationSubsystem))
-	buckets = lo.Ternary(len(buckets) == 0, prometheus.DefBuckets, buckets)
 
 	return pmetrics.NewPrometheusHistogram(
 		metrics.Registry,
@@ -149,7 +146,6 @@ func terminationDurationMetric(objectName string, buckets []float64, additionalL
 			Subsystem: subsystem,
 			Name:      "duration_seconds",
 			Help:      "The amount of time taken by an object to terminate completely.",
-			Buckets:   buckets,
 		},
 		additionalLabels,
 	)

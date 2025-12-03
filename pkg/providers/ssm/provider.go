@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/awslabs/operatorpkg/serrors"
 	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -52,7 +51,7 @@ func (p *DefaultProvider) Get(ctx context.Context, parameter Parameter) (string,
 	}
 	result, err := p.ssmapi.GetParameter(ctx, parameter.GetParameterInput())
 	if err != nil {
-		return "", serrors.Wrap(fmt.Errorf("getting ssm parameter, %w", err), "parameter", parameter.Name)
+		return "", fmt.Errorf("getting ssm parameter %q, %w", parameter.Name, err)
 	}
 	p.cache.Set(parameter.CacheKey(), CacheEntry{
 		Parameter: parameter,

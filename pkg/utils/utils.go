@@ -24,7 +24,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
-	"github.com/awslabs/operatorpkg/serrors"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
@@ -33,7 +32,7 @@ import (
 )
 
 var (
-	instanceIDRegex = regexp.MustCompile(`(?P<Provider>.*):///(?P<AZ>.*)/(?P<InstanceID>.*)`)
+	instanceIDRegex = regexp.MustCompile(`aws:///(?P<AZ>.*)/(?P<InstanceID>.*)`)
 )
 
 // ParseInstanceID parses the provider ID stored on the node to get the instance ID
@@ -41,14 +40,14 @@ var (
 func ParseInstanceID(providerID string) (string, error) {
 	matches := instanceIDRegex.FindStringSubmatch(providerID)
 	if matches == nil {
-		return "", serrors.Wrap(fmt.Errorf("provider id does not match known format"), "provider-id", providerID)
+		return "", fmt.Errorf("parsing instance id %s", providerID)
 	}
 	for i, name := range instanceIDRegex.SubexpNames() {
 		if name == "InstanceID" {
 			return matches[i], nil
 		}
 	}
-	return "", serrors.Wrap(fmt.Errorf("provider id does not match known format"), "provider-id", providerID)
+	return "", fmt.Errorf("parsing instance id %s", providerID)
 }
 
 // EC2MergeTags takes a variadic list of maps and merges them together into a list of
@@ -111,7 +110,7 @@ func GetTags(nodeClass *v1.EC2NodeClass, nodeClaim *karpv1.NodeClaim, clusterNam
 		quotedTags := lo.Map(invalidTags, func(tag string, _ int) string {
 			return fmt.Sprintf("%q", tag)
 		})
-		return nil, serrors.Wrap(fmt.Errorf("tags failed validation requirements"), "tags", strings.Join(quotedTags, ", "))
+		return nil, fmt.Errorf("the following tags failed validation requirements (%s)", strings.Join(quotedTags, ", "))
 	}
 	staticTags := map[string]string{
 		fmt.Sprintf("kubernetes.io/cluster/%s", clusterName): "owned",

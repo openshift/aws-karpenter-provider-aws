@@ -32,7 +32,6 @@ type OptionsFields struct {
 	VMMemoryOverheadPercent *float64
 	InterruptionQueue       *string
 	ReservedENIs            *int
-	DisableDryRun           *bool
 }
 
 func Options(overrides ...OptionsFields) *options.Options {
@@ -51,6 +50,5 @@ func Options(overrides ...OptionsFields) *options.Options {
 		VMMemoryOverheadPercent: lo.FromPtrOr(opts.VMMemoryOverheadPercent, 0.075),
 		InterruptionQueue:       lo.FromPtrOr(opts.InterruptionQueue, ""),
 		ReservedENIs:            lo.FromPtrOr(opts.ReservedENIs, 0),
-		DisableDryRun:           lo.FromPtrOr(opts.DisableDryRun, false),
 	}
 }

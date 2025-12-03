@@ -38,7 +38,6 @@ type Options struct {
 	ContainerRuntime    *string
 	CustomUserData      *string
 	InstanceStorePolicy *v1.InstanceStorePolicy
-	AMIVersion          string
 }
 
 func (o Options) kubeletExtraArgs() (args []string) {

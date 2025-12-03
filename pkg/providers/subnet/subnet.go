@@ -23,7 +23,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/awslabs/operatorpkg/serrors"
 
 	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
@@ -102,7 +101,7 @@ func (p *DefaultProvider) List(ctx context.Context, nodeClass *v1.EC2NodeClass) 
 		for paginator.HasMorePages() {
 			output, err := paginator.NextPage(ctx)
 			if err != nil {
-				return nil, serrors.Wrap(fmt.Errorf("describing subnets with filters, %w", err), "filters", pretty.Concise(filters))
+				return nil, fmt.Errorf("describing subnets %s, %w", pretty.Concise(filters), err)
 			}
 			for i := range output.Subnets {
 				subnets[lo.FromPtr(output.Subnets[i].SubnetId)] = output.Subnets[i]

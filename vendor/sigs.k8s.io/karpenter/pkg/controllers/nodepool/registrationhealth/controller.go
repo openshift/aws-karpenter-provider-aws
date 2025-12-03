@@ -22,8 +22,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 
-	"sigs.k8s.io/karpenter/pkg/state/nodepoolhealth"
-
 	"sigs.k8s.io/karpenter/pkg/operator/injection"
 
 	controllerruntime "sigs.k8s.io/controller-runtime"
@@ -35,7 +33,6 @@ import (
 
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
-	utilscontroller "sigs.k8s.io/karpenter/pkg/utils/controller"
 	nodepoolutils "sigs.k8s.io/karpenter/pkg/utils/nodepool"
 )
 
@@ -43,19 +40,16 @@ import (
 type Controller struct {
 	kubeClient    client.Client
 	cloudProvider cloudprovider.CloudProvider
-	npState       nodepoolhealth.State
 }
 
 // NewController will create a controller to reset NodePool's registration health when there is an update to NodePool/NodeClass spec
-func NewController(kubeClient client.Client, cloudProvider cloudprovider.CloudProvider, npState nodepoolhealth.State) *Controller {
+func NewController(kubeClient client.Client, cloudProvider cloudprovider.CloudProvider) *Controller {
 	return &Controller{
 		kubeClient:    kubeClient,
 		cloudProvider: cloudProvider,
-		npState:       npState,
 	}
 }
 
-//nolint:gocyclo
 func (c *Controller) Reconcile(ctx context.Context, nodePool *v1.NodePool) (reconcile.Result, error) {
 	ctx = injection.WithControllerName(ctx, "nodepool.registrationhealth")
 
@@ -69,25 +63,12 @@ func (c *Controller) Reconcile(ctx context.Context, nodePool *v1.NodePool) (reco
 	}
 	stored := nodePool.DeepCopy()
 
-	// If Karpenter restarts i.e. if the buffer for the nodePool is empty and the NodeRegistrationHealthy status condition
-	// is set to either true/false then we pre-hydrate the buffer with the existing state of the status condition
-	if c.npState.Status(nodePool.UID) == nodepoolhealth.StatusUnknown {
-		if nodePool.StatusConditions().Get(v1.ConditionTypeNodeRegistrationHealthy).IsTrue() {
-			c.npState.SetStatus(nodePool.UID, nodepoolhealth.StatusHealthy)
-		}
-		if nodePool.StatusConditions().Get(v1.ConditionTypeNodeRegistrationHealthy).IsFalse() {
-			c.npState.SetStatus(nodePool.UID, nodepoolhealth.StatusUnhealthy)
-		}
-	}
-
-	// If NodeClass/NodePool have been updated then NodeRegistrationHealthy = Unknown and reset the buffer
+	// If NodeClass/NodePool have been updated then NodeRegistrationHealthy = Unknown
 	if nodePool.StatusConditions().Get(v1.ConditionTypeNodeRegistrationHealthy) == nil ||
 		nodePool.Status.NodeClassObservedGeneration != nodeClass.GetGeneration() ||
 		nodePool.Generation != nodePool.StatusConditions().Get(v1.ConditionTypeNodeRegistrationHealthy).ObservedGeneration {
 		nodePool.StatusConditions().SetUnknown(v1.ConditionTypeNodeRegistrationHealthy)
-		c.npState.SetStatus(nodePool.UID, nodepoolhealth.StatusUnknown)
 	}
-
 	nodePool.Status.NodeClassObservedGeneration = nodeClass.GetGeneration()
 	if !equality.Semantic.DeepEqual(stored, nodePool) {
 		// We use client.MergeFromWithOptimisticLock because patching a list with a JSON merge patch
@@ -103,11 +84,11 @@ func (c *Controller) Reconcile(ctx context.Context, nodePool *v1.NodePool) (reco
 	return reconcile.Result{}, nil
 }
 
-func (c *Controller) Register(ctx context.Context, m manager.Manager) error {
+func (c *Controller) Register(_ context.Context, m manager.Manager) error {
 	b := controllerruntime.NewControllerManagedBy(m).
 		Named("nodepool.registrationhealth").
 		For(&v1.NodePool{}, builder.WithPredicates(nodepoolutils.IsManagedPredicateFuncs(c.cloudProvider))).
-		WithOptions(controller.Options{MaxConcurrentReconciles: utilscontroller.LinearScaleReconciles(utilscontroller.CPUCount(ctx), 10, 1000)})
+		WithOptions(controller.Options{MaxConcurrentReconciles: 10})
 	for _, nodeClass := range c.cloudProvider.GetSupportedNodeClasses() {
 		b.Watches(nodeClass, nodepoolutils.NodeClassEventHandler(c.kubeClient))
 	}

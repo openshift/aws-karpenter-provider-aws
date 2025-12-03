@@ -90,13 +90,7 @@ var _ = Describe("Tags", func() {
 			nodeClass.Spec.Tags["TestTag"] = "TestVal"
 			env.ExpectCreated(nodeClass)
 
-			Eventually(func(g Gomega) {
-				err := env.Client.Get(env.Context, client.ObjectKeyFromObject(nodeClass), nodeClass)
-				g.Expect(err).ToNot(HaveOccurred())
-				g.Expect(nodeClass.Status.InstanceProfile).ToNot(BeEmpty())
-			}).Should(Succeed())
-
-			profile := env.EventuallyExpectInstanceProfileExists(nodeClass.Status.InstanceProfile)
+			profile := env.EventuallyExpectInstanceProfileExists(env.GetInstanceProfileName(nodeClass))
 			Expect(profile.Tags).To(ContainElements(
 				iamtypes.Tag{Key: lo.ToPtr(fmt.Sprintf("kubernetes.io/cluster/%s", env.ClusterName)), Value: lo.ToPtr("owned")},
 				iamtypes.Tag{Key: lo.ToPtr(v1.LabelNodeClass), Value: lo.ToPtr(nodeClass.Name)},

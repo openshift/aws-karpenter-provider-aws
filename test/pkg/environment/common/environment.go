@@ -163,7 +163,7 @@ func (env *Environment) DefaultNodePool(nodeClass *v1.EC2NodeClass) *karpv1.Node
 			NodeSelectorRequirement: corev1.NodeSelectorRequirement{
 				Key:      v1.LabelInstanceGeneration,
 				Operator: corev1.NodeSelectorOpGt,
-				Values:   []string{"4"},
+				Values:   []string{"2"},
 			},
 		},
 		// Filter out a1 instance types, which are incompatible with AL2023 AMIs

@@ -54,7 +54,7 @@ func Node(overrides ...NodeOptions) *corev1.Node {
 	}
 
 	return &corev1.Node{
-		ObjectMeta: NamespacedObjectMeta(options.ObjectMeta),
+		ObjectMeta: ObjectMeta(options.ObjectMeta),
 		Spec: corev1.NodeSpec{
 			Unschedulable: options.Unschedulable,
 			Taints:        options.Taints,
