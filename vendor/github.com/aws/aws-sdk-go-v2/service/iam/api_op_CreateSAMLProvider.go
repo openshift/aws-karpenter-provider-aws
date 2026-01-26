@@ -96,7 +96,9 @@ type CreateSAMLProviderInput struct {
 	noSmithyDocumentSerde
 }
 
-// Contains the response to a successful CreateSAMLProvider request.
+// Contains the response to a successful [CreateSAMLProvider] request.
+//
+// [CreateSAMLProvider]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateSAMLProvider.html
 type CreateSAMLProviderOutput struct {
 
 	// The Amazon Resource Name (ARN) of the new SAML provider resource in IAM.
@@ -179,6 +181,9 @@ func (c *Client) addOperationCreateSAMLProviderMiddlewares(stack *middleware.Sta
 	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
+	if err = addCredentialSource(stack, options); err != nil {
+		return err
+	}
 	if err = addOpCreateSAMLProviderValidationMiddleware(stack); err != nil {
 		return err
 	}
@@ -198,6 +203,36 @@ func (c *Client) addOperationCreateSAMLProviderMiddlewares(stack *middleware.Sta
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAttempt(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptExecution(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeSerialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterSerialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeSigning(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterSigning(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptTransmit(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeDeserialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterDeserialization(stack, options); err != nil {
 		return err
 	}
 	if err = addSpanInitializeStart(stack); err != nil {

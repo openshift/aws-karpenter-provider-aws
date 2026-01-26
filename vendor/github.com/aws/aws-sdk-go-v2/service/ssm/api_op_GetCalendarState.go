@@ -43,7 +43,7 @@ func (c *Client) GetCalendarState(ctx context.Context, params *GetCalendarStateI
 
 type GetCalendarStateInput struct {
 
-	// The names or Amazon Resource Names (ARNs) of the Systems Manager documents (SSM
+	// The names of Amazon Resource Names (ARNs) of the Systems Manager documents (SSM
 	// documents) that represent the calendar entries for which you want to get the
 	// state.
 	//
@@ -150,6 +150,9 @@ func (c *Client) addOperationGetCalendarStateMiddlewares(stack *middleware.Stack
 	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
+	if err = addCredentialSource(stack, options); err != nil {
+		return err
+	}
 	if err = addOpGetCalendarStateValidationMiddleware(stack); err != nil {
 		return err
 	}
@@ -169,6 +172,36 @@ func (c *Client) addOperationGetCalendarStateMiddlewares(stack *middleware.Stack
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAttempt(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptExecution(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeSerialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterSerialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeSigning(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterSigning(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptTransmit(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeDeserialization(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAfterDeserialization(stack, options); err != nil {
 		return err
 	}
 	if err = addSpanInitializeStart(stack); err != nil {
