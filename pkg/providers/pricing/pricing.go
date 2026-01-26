@@ -27,7 +27,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	sdk "github.com/aws/karpenter-provider-aws/pkg/aws"
-	"github.com/aws/karpenter-provider-aws/pkg/operator/options"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -57,10 +56,11 @@ type Provider interface {
 // fails, the previous pricing information is retained and used which may be the static initial pricing data if pricing
 // updates never succeed.
 type DefaultProvider struct {
-	ec2     sdk.EC2API
-	pricing sdk.PricingAPI
-	region  string
-	cm      *pretty.ChangeMonitor
+	ec2         sdk.EC2API
+	pricing     sdk.PricingAPI
+	region      string
+	isolatedVPC bool
+	cm          *pretty.ChangeMonitor
 
 	muOnDemand     sync.RWMutex
 	onDemandPrices map[ec2types.InstanceType]float64
@@ -117,12 +117,13 @@ func NewAPI(cfg aws.Config) *pricing.Client {
 	return pricing.NewFromConfig(pricingCfg)
 }
 
-func NewDefaultProvider(_ context.Context, pricing sdk.PricingAPI, ec2Api sdk.EC2API, region string) *DefaultProvider {
+func NewDefaultProvider(pricing sdk.PricingAPI, ec2Api sdk.EC2API, region string, isolatedVPC bool) *DefaultProvider {
 	p := &DefaultProvider{
-		region:  region,
-		ec2:     ec2Api,
-		pricing: pricing,
-		cm:      pretty.NewChangeMonitor(),
+		region:      region,
+		ec2:         ec2Api,
+		pricing:     pricing,
+		cm:          pretty.NewChangeMonitor(),
+		isolatedVPC: isolatedVPC,
 	}
 	// sets the pricing data from the static default state for the provider
 	p.Reset()
@@ -176,9 +177,16 @@ func (p *DefaultProvider) UpdateOnDemandPricing(ctx context.Context) error {
 
 	// if we are in isolated vpc, skip updating on demand pricing
 	// as pricing api may not be available
-	if options.FromContext(ctx).IsolatedVPC {
+	if p.isolatedVPC {
 		if p.cm.HasChanged("on-demand-prices", nil) {
 			log.FromContext(ctx).V(1).Info("running in an isolated VPC, on-demand pricing information will not be updated")
+		}
+		return nil
+	}
+
+	if strings.HasPrefix(p.region, "us-gov") {
+		if p.cm.HasChanged("on-demand-prices", nil) {
+			log.FromContext(ctx).V(1).Info("pricing APIs aren't available in AWS GovCloud regions, on-demand pricing information will not be updated")
 		}
 		return nil
 	}
@@ -276,6 +284,8 @@ func (p *DefaultProvider) fetchOnDemandPricing(ctx context.Context, additionalFi
 	input := &pricing.GetProductsInput{
 		Filters:     filters,
 		ServiceCode: aws.String("AmazonEC2"),
+		// MaxResults for DescribeInstances is capped at 100
+		MaxResults: lo.ToPtr[int32](100),
 	}
 
 	paginator := pricing.NewGetProductsPaginator(p.pricing, input)
@@ -379,6 +389,8 @@ func (p *DefaultProvider) UpdateSpotPricing(ctx context.Context) error {
 		},
 		// get the latest spot price for each instance type
 		StartTime: aws.Time(time.Now()),
+		// MaxResults for DescribeSpotPriceHistory is set at 2000 arbitrarily since EC2 doesn't seem to limit page size here
+		MaxResults: lo.ToPtr[int32](2000),
 	}
 
 	paginator := ec2.NewDescribeSpotPriceHistoryPaginator(p.ec2, input)

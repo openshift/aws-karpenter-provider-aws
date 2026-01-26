@@ -24,11 +24,13 @@ import (
 )
 
 const (
-	launchTemplateNameNotFoundCode        = "InvalidLaunchTemplateName.NotFoundException"
-	RunInstancesInvalidParameterValueCode = "InvalidParameterValue"
-	DryRunOperationErrorCode              = "DryRunOperation"
-	UnauthorizedOperationErrorCode        = "UnauthorizedOperation"
-	RateLimitingErrorCode                 = "RequestLimitExceeded"
+	launchTemplateNameNotFoundCode                 = "InvalidLaunchTemplateName.NotFoundException"
+	RunInstancesInvalidParameterValueCode          = "InvalidParameterValue"
+	DryRunOperationErrorCode                       = "DryRunOperation"
+	UnauthorizedOperationErrorCode                 = "UnauthorizedOperation"
+	RateLimitingErrorCode                          = "RequestLimitExceeded"
+	ServiceLinkedRoleCreationNotPermittedErrorCode = "AuthFailure.ServiceLinkedRoleCreationNotPermitted"
+	InsufficientFreeAddressesInSubnetErrorCode     = "InsufficientFreeAddressesInSubnet"
 )
 
 var (
@@ -171,6 +173,14 @@ func IsUnfulfillableCapacity(err ec2types.CreateFleetError) bool {
 	return unfulfillableCapacityErrorCodes.Has(*err.ErrorCode)
 }
 
+func IsServiceLinkedRoleCreationNotPermitted(err ec2types.CreateFleetError) bool {
+	return *err.ErrorCode == ServiceLinkedRoleCreationNotPermittedErrorCode
+}
+
+func IsInsufficientFreeAddressesInSubnet(err ec2types.CreateFleetError) bool {
+	return *err.ErrorCode == InsufficientFreeAddressesInSubnetErrorCode
+}
+
 // IsReservationCapacityExceeded returns true if the fleet error means there is no remaining capacity for the provided
 // capacity reservation.
 func IsReservationCapacityExceeded(err ec2types.CreateFleetError) bool {
@@ -221,6 +231,9 @@ func ToReasonMessage(err error) (string, string) {
 	}
 	if strings.Contains(err.Error(), "InvalidAMIID.Malformed") {
 		return "InvalidAMIID", "AMI used for instance launch is invalid"
+	}
+	if strings.Contains(err.Error(), "InvalidAMIID.NotFound") {
+		return "AMINotFound", "AMI used for instance launch either does not exist or you don't have permissions to use it"
 	}
 	if strings.Contains(err.Error(), "RequestLimitExceeded") {
 		return "RequestLimitExceeded", "Request limit exceeded"
