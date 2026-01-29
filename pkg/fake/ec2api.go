@@ -27,6 +27,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
+	"github.com/awslabs/operatorpkg/serrors"
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/util/sets"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -119,21 +120,23 @@ func (e *EC2API) Reset() {
 		e.launchTemplatesToCapacityReservations.Delete(k)
 		return true
 	})
+	e.RunInstancesBehavior.Reset()
 }
 
 // nolint: gocyclo
 func (e *EC2API) CreateFleet(_ context.Context, input *ec2.CreateFleetInput, _ ...func(*ec2.Options)) (*ec2.CreateFleetOutput, error) {
-	if input.DryRun != nil && *input.DryRun {
-		err := e.CreateFleetBehavior.Error.Get()
-		if err == nil {
-			return &ec2.CreateFleetOutput{}, &smithy.GenericAPIError{
-				Code:    "DryRunOperation",
-				Message: "Request would have succeeded, but DryRun flag is set",
-			}
-		}
-		return nil, err
-	}
 	return e.CreateFleetBehavior.Invoke(input, func(input *ec2.CreateFleetInput) (*ec2.CreateFleetOutput, error) {
+		if input.DryRun != nil && *input.DryRun {
+			err := e.CreateFleetBehavior.Error.Get()
+			if err == nil {
+				return &ec2.CreateFleetOutput{}, &smithy.GenericAPIError{
+					Code:    "DryRunOperation",
+					Message: "Request would have succeeded, but DryRun flag is set",
+				}
+			}
+			return nil, err
+		}
+
 		if input.LaunchTemplateConfigs[0].LaunchTemplateSpecification.LaunchTemplateName == nil {
 			return nil, fmt.Errorf("missing launch template name")
 		}
@@ -263,17 +266,17 @@ func (e *EC2API) TerminateInstances(_ context.Context, input *ec2.TerminateInsta
 
 // Then modify the CreateLaunchTemplate method:
 func (e *EC2API) CreateLaunchTemplate(ctx context.Context, input *ec2.CreateLaunchTemplateInput, _ ...func(*ec2.Options)) (*ec2.CreateLaunchTemplateOutput, error) {
-	if input.DryRun != nil && *input.DryRun {
-		err := e.CreateLaunchTemplateBehavior.Error.Get()
-		if err == nil {
-			return &ec2.CreateLaunchTemplateOutput{}, &smithy.GenericAPIError{
-				Code:    "DryRunOperation",
-				Message: "Request would have succeeded, but DryRun flag is set",
-			}
-		}
-		return nil, err
-	}
 	return e.CreateLaunchTemplateBehavior.Invoke(input, func(input *ec2.CreateLaunchTemplateInput) (*ec2.CreateLaunchTemplateOutput, error) {
+		if input.DryRun != nil && *input.DryRun {
+			err := e.CreateLaunchTemplateBehavior.Error.Get()
+			if err == nil {
+				return &ec2.CreateLaunchTemplateOutput{}, &smithy.GenericAPIError{
+					Code:    "DryRunOperation",
+					Message: "Request would have succeeded, but DryRun flag is set",
+				}
+			}
+			return nil, err
+		}
 		if !e.NextError.IsNil() {
 			defer e.NextError.Reset()
 			return nil, e.NextError.Get()
@@ -293,7 +296,7 @@ func (e *EC2API) CreateTags(_ context.Context, input *ec2.CreateTagsInput, _ ...
 		for _, id := range input.Resources {
 			raw, ok := e.Instances.Load(id)
 			if !ok {
-				return nil, fmt.Errorf("instance with id '%s' does not exist", id)
+				return nil, serrors.Wrap(fmt.Errorf("instance does not exist"), "instance-id", id)
 			}
 			instance := raw.(ec2types.Instance)
 
@@ -484,6 +487,7 @@ func (e *EC2API) DescribeSubnets(_ context.Context, input *ec2.DescribeSubnetsIn
 					{Key: aws.String("Name"), Value: aws.String("test-subnet-1")},
 					{Key: aws.String("foo"), Value: aws.String("bar")},
 				},
+				VpcId: aws.String("vpc-test1"),
 			},
 			{
 				SubnetId:                aws.String("subnet-test2"),
@@ -495,6 +499,7 @@ func (e *EC2API) DescribeSubnets(_ context.Context, input *ec2.DescribeSubnetsIn
 					{Key: aws.String("Name"), Value: aws.String("test-subnet-2")},
 					{Key: aws.String("foo"), Value: aws.String("bar")},
 				},
+				VpcId: aws.String("vpc-test1"),
 			},
 			{
 				SubnetId:                aws.String("subnet-test3"),
@@ -506,6 +511,7 @@ func (e *EC2API) DescribeSubnets(_ context.Context, input *ec2.DescribeSubnetsIn
 					{Key: aws.String("TestTag")},
 					{Key: aws.String("foo"), Value: aws.String("bar")},
 				},
+				VpcId: aws.String("vpc-test1"),
 			},
 			{
 				SubnetId:                aws.String("subnet-test4"),
@@ -516,6 +522,7 @@ func (e *EC2API) DescribeSubnets(_ context.Context, input *ec2.DescribeSubnetsIn
 				Tags: []ec2types.Tag{
 					{Key: aws.String("Name"), Value: aws.String("test-subnet-4")},
 				},
+				VpcId: aws.String("vpc-test1"),
 			},
 		}
 		if len(input.Filters) == 0 {
@@ -607,20 +614,16 @@ func (e *EC2API) DescribeSpotPriceHistory(_ context.Context, input *ec2.Describe
 }
 
 func (e *EC2API) RunInstances(ctx context.Context, input *ec2.RunInstancesInput, optFns ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error) {
-	if input.DryRun != nil && *input.DryRun {
-		err := e.RunInstancesBehavior.Error.Get()
-		if err == nil {
-			return &ec2.RunInstancesOutput{}, &smithy.GenericAPIError{
-				Code:    "DryRunOperation",
-				Message: "Request would have succeeded, but DryRun flag is set",
-			}
-		}
-		return nil, err
-	}
 	return e.RunInstancesBehavior.Invoke(input, func(input *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
 		if !e.NextError.IsNil() {
 			defer e.NextError.Reset()
 			return nil, e.NextError.Get()
+		}
+		if lo.FromPtr(input.DryRun) {
+			return &ec2.RunInstancesOutput{}, &smithy.GenericAPIError{
+				Code:    "DryRunOperation",
+				Message: "Request would have succeeded, but DryRun flag is set",
+			}
 		}
 
 		// Default implementation

@@ -22,6 +22,7 @@ import (
 	"go.uber.org/multierr"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/utils/clock"
+	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/operator/injection"
 	karpoptions "sigs.k8s.io/karpenter/pkg/operator/options"
 	nodeclaimutils "sigs.k8s.io/karpenter/pkg/utils/nodeclaim"
@@ -43,6 +44,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/awslabs/operatorpkg/reasonable"
+	"github.com/awslabs/operatorpkg/serrors"
+
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/events"
 
@@ -52,6 +55,7 @@ import (
 	"github.com/aws/karpenter-provider-aws/pkg/providers/amifamily"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/capacityreservation"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instanceprofile"
+	"github.com/aws/karpenter-provider-aws/pkg/providers/instancetype"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/launchtemplate"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/securitygroup"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/subnet"
@@ -70,19 +74,23 @@ type Controller struct {
 func NewController(
 	clk clock.Clock,
 	kubeClient client.Client,
+	cloudProvider cloudprovider.CloudProvider,
 	recorder events.Recorder,
 	region string,
 	subnetProvider subnet.Provider,
 	securityGroupProvider securitygroup.Provider,
 	amiProvider amifamily.Provider,
 	instanceProfileProvider instanceprofile.Provider,
+	instanceTypeProvider instancetype.Provider,
 	launchTemplateProvider launchtemplate.Provider,
 	capacityReservationProvider capacityreservation.Provider,
 	ec2api sdk.EC2API,
 	validationCache *cache.Cache,
+	recreationCache *cache.Cache,
 	amiResolver amifamily.Resolver,
+	disableDryRun bool,
 ) *Controller {
-	validation := NewValidationReconciler(ec2api, amiResolver, launchTemplateProvider, validationCache)
+	validation := NewValidationReconciler(kubeClient, cloudProvider, ec2api, amiResolver, instanceTypeProvider, launchTemplateProvider, validationCache, disableDryRun)
 	return &Controller{
 		kubeClient:              kubeClient,
 		recorder:                recorder,
@@ -95,7 +103,7 @@ func NewController(
 			NewCapacityReservationReconciler(clk, capacityReservationProvider),
 			NewSubnetReconciler(subnetProvider),
 			NewSecurityGroupReconciler(securityGroupProvider),
-			NewInstanceProfileReconciler(instanceProfileProvider, region),
+			NewInstanceProfileReconciler(instanceProfileProvider, region, recreationCache),
 			validation,
 		},
 	}
@@ -120,7 +128,7 @@ func (c *Controller) Reconcile(ctx context.Context, nodeClass *v1.EC2NodeClass) 
 		// We use client.MergeFromWithOptimisticLock because patching a list with a JSON merge patch
 		// can cause races due to the fact that it fully replaces the list on a change
 		// Here, we are updating the finalizer list
-		if err := c.kubeClient.Patch(ctx, nodeClass, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{})); err != nil {
+		if err := c.kubeClient.Patch(ctx, nodeClass, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{})); client.IgnoreNotFound(err) != nil {
 			if errors.IsConflict(err) {
 				return reconcile.Result{Requeue: true}, nil
 			}
@@ -157,6 +165,21 @@ func (c *Controller) Reconcile(ctx context.Context, nodeClass *v1.EC2NodeClass) 
 	return result.Min(results...), nil
 }
 
+func (c *Controller) cleanupInstanceProfiles(ctx context.Context, nodeClass *v1.EC2NodeClass) error {
+	out, err := c.instanceProfileProvider.ListNodeClassProfiles(ctx, nodeClass)
+
+	if err != nil {
+		return fmt.Errorf("listing instance profiles, %w", err)
+	}
+
+	for _, profile := range out {
+		if err := c.instanceProfileProvider.Delete(ctx, *profile.InstanceProfileName); err != nil {
+			return serrors.Wrap(fmt.Errorf("deleting instance profile, %w", err), "instance-profile", *profile.InstanceProfileName)
+		}
+	}
+	return nil
+}
+
 func (c *Controller) finalize(ctx context.Context, nodeClass *v1.EC2NodeClass) (reconcile.Result, error) {
 	stored := nodeClass.DeepCopy()
 	if !controllerutil.ContainsFinalizer(nodeClass, v1.TerminationFinalizer) {
@@ -170,11 +193,19 @@ func (c *Controller) finalize(ctx context.Context, nodeClass *v1.EC2NodeClass) (
 		c.recorder.Publish(WaitingOnNodeClaimTerminationEvent(nodeClass, lo.Map(nodeClaims.Items, func(nc karpv1.NodeClaim, _ int) string { return nc.Name })))
 		return reconcile.Result{RequeueAfter: time.Minute * 10}, nil // periodically fire the event
 	}
-	if nodeClass.Spec.Role != "" {
-		if err := c.instanceProfileProvider.Delete(ctx, nodeClass.InstanceProfileName(options.FromContext(ctx).ClusterName, c.region)); err != nil {
-			return reconcile.Result{}, fmt.Errorf("deleting instance profile, %w", err)
+	// Instance profile cleanup should be skipped in isolated VPCs to avoid IAM calls.
+	if !options.FromContext(ctx).IsolatedVPC {
+		// Deletes karpenter managed instance profiles for this nodeclass
+		if err := c.cleanupInstanceProfiles(ctx, nodeClass); err != nil {
+			return reconcile.Result{}, err
+		}
+		// Ensure to clean up instance profile that may have been created pre-upgrade
+		legacyProfileName := nodeClass.LegacyInstanceProfileName(options.FromContext(ctx).ClusterName, c.region)
+		if err := c.instanceProfileProvider.Delete(ctx, legacyProfileName); err != nil {
+			return reconcile.Result{}, serrors.Wrap(fmt.Errorf("deleting instance profile, %w", err), "instance-profile", legacyProfileName)
 		}
 	}
+
 	if err := c.launchTemplateProvider.DeleteAll(ctx, nodeClass); err != nil {
 		return reconcile.Result{}, fmt.Errorf("deleting launch templates, %w", err)
 	}
