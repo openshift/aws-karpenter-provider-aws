@@ -20,12 +20,13 @@ import (
 	"context"
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/types"
-
+	"github.com/awslabs/operatorpkg/object"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -36,12 +37,14 @@ import (
 	"sigs.k8s.io/karpenter/pkg/events"
 	"sigs.k8s.io/karpenter/pkg/metrics"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
+	"sigs.k8s.io/karpenter/pkg/state/nodepoolhealth"
 	nodeclaimutils "sigs.k8s.io/karpenter/pkg/utils/nodeclaim"
 )
 
 type Registration struct {
 	kubeClient client.Client
 	recorder   events.Recorder
+	npState    *nodepoolhealth.State
 }
 
 func (r *Registration) Reconcile(ctx context.Context, nodeClaim *v1.NodeClaim) (reconcile.Result, error) {
@@ -68,7 +71,7 @@ func (r *Registration) Reconcile(ctx context.Context, nodeClaim *v1.NodeClaim) (
 	// if the sync hasn't happened yet and the race protecting startup taint isn't present then log it as missing and proceed
 	// if the sync has happened then the startup taint has been removed if it was present
 	if _, ok := node.Labels[v1.NodeRegisteredLabelKey]; !ok && !hasStartupTaint {
-		log.FromContext(ctx).Error(fmt.Errorf("missing %s taint which prevents registration related race conditions on Karpenter-managed nodes", v1.UnregisteredTaintKey), "node claim registration error")
+		log.FromContext(ctx).WithValues("taint", v1.UnregisteredTaintKey).Error(fmt.Errorf("missing taint prevents registration-related race conditions on Karpenter-managed nodes"), "node claim registration error")
 		r.recorder.Publish(UnregisteredTaintMissingEvent(nodeClaim))
 	}
 	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("Node", klog.KObj(node)))
@@ -94,8 +97,8 @@ func (r *Registration) Reconcile(ctx context.Context, nodeClaim *v1.NodeClaim) (
 	return reconcile.Result{}, nil
 }
 
-// updateNodePoolRegistrationHealth sets the NodeRegistrationHealthy=True
-// on the NodePool if the nodeClaim that registered is owned by a NodePool
+// updateNodePoolRegistrationHealth adds a positive value to the nodepool buffer that stores node
+// registration results and sets NodeRegistrationHealthy=True on the NodePool if IsHealthy() > 0
 func (r *Registration) updateNodePoolRegistrationHealth(ctx context.Context, nodeClaim *v1.NodeClaim) error {
 	nodePoolName := nodeClaim.Labels[v1.NodePoolLabelKey]
 	if nodePoolName != "" {
@@ -103,8 +106,13 @@ func (r *Registration) updateNodePoolRegistrationHealth(ctx context.Context, nod
 		if err := r.kubeClient.Get(ctx, types.NamespacedName{Name: nodePoolName}, nodePool); err != nil {
 			return err
 		}
+		if _, found := lo.Find(nodeClaim.GetOwnerReferences(), func(o metav1.OwnerReference) bool {
+			return o.Kind == object.GVK(nodePool).Kind && o.UID == nodePool.UID
+		}); !found {
+			return nil
+		}
 		stored := nodePool.DeepCopy()
-		if nodePool.StatusConditions().SetTrue(v1.ConditionTypeNodeRegistrationHealthy) {
+		if r.npState.DryRun(nodePool.UID, true).Status() == nodepoolhealth.StatusHealthy && nodePool.StatusConditions().SetTrue(v1.ConditionTypeNodeRegistrationHealthy) {
 			// We use client.MergeFromWithOptimisticLock because patching a list with a JSON merge patch
 			// can cause races due to the fact that it fully replaces the list on a change
 			// Here, we are updating the status condition list
@@ -112,6 +120,7 @@ func (r *Registration) updateNodePoolRegistrationHealth(ctx context.Context, nod
 				return err
 			}
 		}
+		r.npState.Update(nodePool.UID, true)
 	}
 	return nil
 }
@@ -121,11 +130,16 @@ func (r *Registration) syncNode(ctx context.Context, nodeClaim *v1.NodeClaim, no
 	controllerutil.AddFinalizer(node, v1.TerminationFinalizer)
 
 	node = nodeclaimutils.UpdateNodeOwnerReferences(nodeClaim, node)
-	node.Labels = lo.Assign(node.Labels, nodeClaim.Labels)
+
+	// We do not sync the taints if this label is present. We instead assume that the karpenter provider
+	// is managing taints. We still manage/remove the unregistered taint to signal the end of syncing.
+	if value, ok := node.Labels[v1.NodeDoNotSyncTaintsLabelKey]; !ok || value != "true" {
+		// Sync all taints inside NodeClaim into the Node taints
+		node.Spec.Taints = scheduling.Taints(node.Spec.Taints).Merge(nodeClaim.Spec.Taints)
+		node.Spec.Taints = scheduling.Taints(node.Spec.Taints).Merge(nodeClaim.Spec.StartupTaints)
+	}
+
 	node.Annotations = lo.Assign(node.Annotations, nodeClaim.Annotations)
-	// Sync all taints inside NodeClaim into the Node taints
-	node.Spec.Taints = scheduling.Taints(node.Spec.Taints).Merge(nodeClaim.Spec.Taints)
-	node.Spec.Taints = scheduling.Taints(node.Spec.Taints).Merge(nodeClaim.Spec.StartupTaints)
 	// Remove karpenter.sh/unregistered taint
 	node.Spec.Taints = lo.Reject(node.Spec.Taints, func(t corev1.Taint, _ int) bool {
 		return t.MatchTaint(&v1.UnregisteredNoExecuteTaint)
@@ -136,7 +150,6 @@ func (r *Registration) syncNode(ctx context.Context, nodeClaim *v1.NodeClaim, no
 	if !equality.Semantic.DeepEqual(stored, node) {
 		// We use client.MergeFromWithOptimisticLock because patching a list with a JSON merge patch
 		// can cause races due to the fact that it fully replaces the list on a change
-		// Here, we are updating the taint list
 		if err := r.kubeClient.Patch(ctx, node, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{})); err != nil {
 			return fmt.Errorf("syncing node, %w", err)
 		}

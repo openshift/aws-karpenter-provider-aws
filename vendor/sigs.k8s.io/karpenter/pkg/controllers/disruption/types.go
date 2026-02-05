@@ -19,7 +19,11 @@ package disruption
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/awslabs/operatorpkg/option"
+	"github.com/awslabs/operatorpkg/serrors"
+	"github.com/google/uuid"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
@@ -31,7 +35,6 @@ import (
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	disruptionevents "sigs.k8s.io/karpenter/pkg/controllers/disruption/events"
-	"sigs.k8s.io/karpenter/pkg/controllers/disruption/orchestration"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning/scheduling"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/events"
@@ -45,9 +48,19 @@ const (
 	EventualDisruptionClass = "eventual" // eventual disruption is bounded by a NodePool's TerminationGracePeriod, regardless of blocking pod PDBs and the do-not-disrupt annotation
 )
 
+type MethodOptions struct {
+	validator Validator
+}
+
+func WithValidator(v Validator) option.Function[MethodOptions] {
+	return func(o *MethodOptions) {
+		o.validator = v
+	}
+}
+
 type Method interface {
 	ShouldDisrupt(context.Context, *Candidate) bool
-	ComputeCommand(context.Context, map[string]int, ...*Candidate) (Command, scheduling.Results, error)
+	ComputeCommands(context.Context, map[string]int, ...*Candidate) ([]Command, error)
 	Reason() v1.DisruptionReason
 	Class() string
 	ConsolidationType() string
@@ -67,11 +80,19 @@ type Candidate struct {
 	reschedulablePods []*corev1.Pod
 }
 
+func (c *Candidate) OwnedByStaticNodePool() bool {
+	return c.NodePool.Spec.Replicas != nil
+}
+
 //nolint:gocyclo
 func NewCandidate(ctx context.Context, kubeClient client.Client, recorder events.Recorder, clk clock.Clock, node *state.StateNode, pdbs pdb.Limits,
-	nodePoolMap map[string]*v1.NodePool, nodePoolToInstanceTypesMap map[string]map[string]*cloudprovider.InstanceType, queue *orchestration.Queue, disruptionClass string) (*Candidate, error) {
+	nodePoolMap map[string]*v1.NodePool, nodePoolToInstanceTypesMap map[string]map[string]*cloudprovider.InstanceType, queue *Queue, disruptionClass string) (*Candidate, error) {
 	var err error
 	var pods []*corev1.Pod
+	// If the orchestration queue is already considering a candidate we want to disrupt, don't consider it a candidate.
+	if queue.HasAny(node.ProviderID()) {
+		return nil, fmt.Errorf("candidate is already being disrupted")
+	}
 	if err = node.ValidateNodeDisruptable(); err != nil {
 		// Only emit an event if the NodeClaim is not nil, ensuring that we only emit events for Karpenter-managed nodes
 		if node.NodeClaim != nil {
@@ -79,18 +100,14 @@ func NewCandidate(ctx context.Context, kubeClient client.Client, recorder events
 		}
 		return nil, err
 	}
-	// If the orchestration queue is already considering a candidate we want to disrupt, don't consider it a candidate.
-	if queue.HasAny(node.ProviderID()) {
-		return nil, fmt.Errorf("candidate is already being disrupted")
-	}
 	// We know that the node will have the label key because of the node.IsDisruptable check above
 	nodePoolName := node.Labels()[v1.NodePoolLabelKey]
 	nodePool := nodePoolMap[nodePoolName]
 	instanceTypeMap := nodePoolToInstanceTypesMap[nodePoolName]
 	// skip any candidates where we can't determine the nodePool
 	if nodePool == nil || instanceTypeMap == nil {
-		recorder.Publish(disruptionevents.Blocked(node.Node, node.NodeClaim, fmt.Sprintf("NodePool %q not found", nodePoolName))...)
-		return nil, fmt.Errorf("nodepool %q not found", nodePoolName)
+		recorder.Publish(disruptionevents.Blocked(node.Node, node.NodeClaim, fmt.Sprintf("NodePool not found (NodePool=%s)", nodePoolName))...)
+		return nil, serrors.Wrap(fmt.Errorf("nodepool not found"), "NodePool", klog.KRef("", nodePoolName))
 	}
 	// We only care if instanceType in non-empty consolidation to do price-comparison.
 	instanceType := instanceTypeMap[node.Labels()[corev1.LabelInstanceTypeStable]]
@@ -105,7 +122,7 @@ func NewCandidate(ctx context.Context, kubeClient client.Client, recorder events
 		}
 	}
 	return &Candidate{
-		StateNode:         node.DeepCopy(),
+		StateNode:         node,
 		instanceType:      instanceType,
 		NodePool:          nodePool,
 		capacityType:      node.Labels()[v1.CapacityTypeLabelKey],
@@ -116,9 +133,31 @@ func NewCandidate(ctx context.Context, kubeClient client.Client, recorder events
 	}, nil
 }
 
+type Replacement struct {
+	*scheduling.NodeClaim
+
+	Name string
+	// Use a bool track if a node has already been initialized so we can fire metrics for intialization once.
+	// This intentionally does not capture nodes that go initialized then go NotReady after as other pods can
+	// schedule to this node as well.
+	Initialized bool
+}
+
+func replacementsFromNodeClaims(newNodeClaims ...*scheduling.NodeClaim) []*Replacement {
+	return lo.Map(newNodeClaims, func(n *scheduling.NodeClaim, _ int) *Replacement { return &Replacement{NodeClaim: n} })
+}
+
 type Command struct {
-	candidates   []*Candidate
-	replacements []*scheduling.NodeClaim
+	Method
+
+	Succeeded bool
+
+	CreationTimestamp time.Time
+	ID                uuid.UUID
+
+	Results      scheduling.Results
+	Candidates   []*Candidate
+	Replacements []*Replacement
 }
 
 type Decision string
@@ -131,23 +170,19 @@ var (
 
 func (c Command) Decision() Decision {
 	switch {
-	case len(c.candidates) > 0 && len(c.replacements) > 0:
+	case len(c.Candidates) > 0 && len(c.Replacements) > 0:
 		return ReplaceDecision
-	case len(c.candidates) > 0 && len(c.replacements) == 0:
+	case len(c.Candidates) > 0 && len(c.Replacements) == 0:
 		return DeleteDecision
 	default:
 		return NoOpDecision
 	}
 }
 
-func (c Command) Candidates() []*Candidate {
-	return c.candidates
-}
-
 func (c Command) LogValues() []any {
-	podCount := lo.Reduce(c.candidates, func(_ int, cd *Candidate, _ int) int { return len(cd.reschedulablePods) }, 0)
+	podCount := lo.Reduce(c.Candidates, func(_ int, cd *Candidate, _ int) int { return len(cd.reschedulablePods) }, 0)
 
-	candidateNodes := lo.Map(c.candidates, func(candidate *Candidate, _ int) interface{} {
+	candidateNodes := lo.Map(c.Candidates, func(candidate *Candidate, _ int) interface{} {
 		return map[string]interface{}{
 			"Node":          klog.KObj(candidate.Node),
 			"NodeClaim":     klog.KObj(candidate.NodeClaim),
@@ -155,7 +190,7 @@ func (c Command) LogValues() []any {
 			"capacity-type": candidate.Labels()[v1.CapacityTypeLabelKey],
 		}
 	})
-	replacementNodes := lo.Map(c.replacements, func(replacement *scheduling.NodeClaim, _ int) interface{} {
+	replacementNodes := lo.Map(c.Replacements, func(replacement *Replacement, _ int) interface{} {
 		ct := replacement.Requirements.Get(v1.CapacityTypeLabelKey)
 		m := map[string]interface{}{
 			"capacity-type": lo.If(
@@ -164,7 +199,7 @@ func (c Command) LogValues() []any {
 				ct.Has(v1.CapacityTypeSpot), v1.CapacityTypeSpot,
 			).Else(v1.CapacityTypeOnDemand),
 		}
-		if len(c.replacements) == 1 {
+		if len(c.Replacements) == 1 {
 			m["instance-types"] = scheduling.InstanceTypeList(replacement.InstanceTypeOptions)
 		}
 		return m
