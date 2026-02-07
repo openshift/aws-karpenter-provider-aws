@@ -82,6 +82,15 @@ func IsDrainable(pod *corev1.Pod, clk clock.Clock) bool {
 		!IsOwnedByNode(pod)
 }
 
+// IsPodEligibleForForcedEviction checks if a pod needs to be deleted with a reduced grace period ensuring that the pod:
+// - Is terminating
+// - Has a deletion timestamp that is after the node's grace period expiration time
+func IsPodEligibleForForcedEviction(pod *corev1.Pod, nodeGracePeriodExpirationTime *time.Time) bool {
+	return nodeGracePeriodExpirationTime != nil &&
+		IsTerminating(pod) &&
+		pod.DeletionTimestamp.After(*nodeGracePeriodExpirationTime)
+}
+
 // IsProvisionable checks if a pod needs to be scheduled to new capacity by Karpenter by ensuring that the pod:
 // - Has been marked as "Unschedulable" in the PodScheduled reason by the kube-scheduler
 // - Has not been bound to a node
@@ -197,4 +206,19 @@ func HasPodAntiAffinity(pod *corev1.Pod) bool {
 	return pod.Spec.Affinity != nil && pod.Spec.Affinity.PodAntiAffinity != nil &&
 		(len(pod.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution) != 0 ||
 			len(pod.Spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution) != 0)
+}
+
+// HasDRARequirements returns true if any pod containers consume ResourceClaims
+func HasDRARequirements(pod *corev1.Pod) bool {
+	for _, container := range pod.Spec.InitContainers {
+		if len(container.Resources.Claims) > 0 {
+			return true
+		}
+	}
+	for _, container := range pod.Spec.Containers {
+		if len(container.Resources.Claims) > 0 {
+			return true
+		}
+	}
+	return false
 }

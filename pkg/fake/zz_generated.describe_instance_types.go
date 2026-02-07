@@ -583,6 +583,51 @@ var defaultDescribeInstanceTypesOutput = &ec2.DescribeInstanceTypesOutput{
 			},
 		},
 		{
+			InstanceType:                  "m7i-flex.large",
+			SupportedUsageClasses:         []ec2types.UsageClassType{"on-demand", "spot"},
+			SupportedVirtualizationTypes:  []ec2types.VirtualizationType{"hvm"},
+			BurstablePerformanceSupported: aws.Bool(false),
+			BareMetal:                     aws.Bool(false),
+			Hypervisor:                    "nitro",
+			ProcessorInfo: &ec2types.ProcessorInfo{
+				Manufacturer:             aws.String("Intel"),
+				SupportedArchitectures:   []ec2types.ArchitectureType{"x86_64"},
+				SustainedClockSpeedInGhz: aws.Float64(3.200000),
+			},
+			VCpuInfo: &ec2types.VCpuInfo{
+				DefaultCores: aws.Int32(1),
+				DefaultVCpus: aws.Int32(2),
+			},
+			MemoryInfo: &ec2types.MemoryInfo{
+				SizeInMiB: aws.Int64(8192),
+			},
+			EbsInfo: &ec2types.EbsInfo{
+				EbsOptimizedInfo: &ec2types.EbsOptimizedInfo{
+					BaselineBandwidthInMbps:  aws.Int32(312),
+					BaselineIops:             aws.Int32(2500),
+					BaselineThroughputInMBps: aws.Float64(39.06),
+					MaximumBandwidthInMbps:   aws.Int32(10000),
+					MaximumIops:              aws.Int32(40000),
+					MaximumThroughputInMBps:  aws.Float64(1250.00),
+				},
+				EbsOptimizedSupport: "default",
+				EncryptionSupport:   "supported",
+				NvmeSupport:         "required",
+			},
+			NetworkInfo: &ec2types.NetworkInfo{
+				MaximumNetworkInterfaces:     aws.Int32(3),
+				Ipv4AddressesPerInterface:    aws.Int32(10),
+				EncryptionInTransitSupported: aws.Bool(true),
+				DefaultNetworkCardIndex:      aws.Int32(0),
+				NetworkCards: []ec2types.NetworkCardInfo{
+					{
+						NetworkCardIndex:         aws.Int32(0),
+						MaximumNetworkInterfaces: aws.Int32(3),
+					},
+				},
+			},
+		},
+		{
 			InstanceType:                  "p3.8xlarge",
 			SupportedUsageClasses:         []ec2types.UsageClassType{"on-demand", "spot"},
 			SupportedVirtualizationTypes:  []ec2types.VirtualizationType{"hvm"},
@@ -888,7 +933,35 @@ var defaultDescribeInstanceTypesOutput = &ec2.DescribeInstanceTypesOutput{
 var defaultDescribeInstanceTypeOfferingsOutput = &ec2.DescribeInstanceTypeOfferingsOutput{
 	InstanceTypeOfferings: []ec2types.InstanceTypeOffering{
 		{
-			InstanceType: "m5.8xlarge",
+			InstanceType: "c6g.large",
+			Location:     lo.ToPtr("test-zone-1a"),
+		},
+		{
+			InstanceType: "dl1.24xlarge",
+			Location:     lo.ToPtr("test-zone-1a"),
+		},
+		{
+			InstanceType: "dl1.24xlarge",
+			Location:     lo.ToPtr("test-zone-1b"),
+		},
+		{
+			InstanceType: "g4ad.16xlarge",
+			Location:     lo.ToPtr("test-zone-1a"),
+		},
+		{
+			InstanceType: "g4ad.16xlarge",
+			Location:     lo.ToPtr("test-zone-1b"),
+		},
+		{
+			InstanceType: "g4dn.8xlarge",
+			Location:     lo.ToPtr("test-zone-1a"),
+		},
+		{
+			InstanceType: "g4dn.8xlarge",
+			Location:     lo.ToPtr("test-zone-1b"),
+		},
+		{
+			InstanceType: "inf2.24xlarge",
 			Location:     lo.ToPtr("test-zone-1a"),
 		},
 		{
@@ -896,28 +969,16 @@ var defaultDescribeInstanceTypeOfferingsOutput = &ec2.DescribeInstanceTypeOfferi
 			Location:     lo.ToPtr("test-zone-1a"),
 		},
 		{
-			InstanceType: "c6g.large",
+			InstanceType: "m5.2xlarge",
 			Location:     lo.ToPtr("test-zone-1a"),
 		},
 		{
-			InstanceType: "m5.metal",
+			InstanceType: "m5.4xlarge",
 			Location:     lo.ToPtr("test-zone-1a"),
 		},
 		{
-			InstanceType: "m5.metal",
-			Location:     lo.ToPtr("test-zone-1b"),
-		},
-		{
-			InstanceType: "m6idn.32xlarge",
+			InstanceType: "m5.8xlarge",
 			Location:     lo.ToPtr("test-zone-1a"),
-		},
-		{
-			InstanceType: "m6idn.32xlarge",
-			Location:     lo.ToPtr("test-zone-1b"),
-		},
-		{
-			InstanceType: "m6idn.32xlarge",
-			Location:     lo.ToPtr("test-zone-1c"),
 		},
 		{
 			InstanceType: "m5.large",
@@ -936,6 +997,38 @@ var defaultDescribeInstanceTypeOfferingsOutput = &ec2.DescribeInstanceTypeOfferi
 			Location:     lo.ToPtr("test-zone-1a-local"),
 		},
 		{
+			InstanceType: "m5.metal",
+			Location:     lo.ToPtr("test-zone-1a"),
+		},
+		{
+			InstanceType: "m5.metal",
+			Location:     lo.ToPtr("test-zone-1b"),
+		},
+		{
+			InstanceType: "m5.xlarge",
+			Location:     lo.ToPtr("test-zone-1a"),
+		},
+		{
+			InstanceType: "m5.xlarge",
+			Location:     lo.ToPtr("test-zone-1b"),
+		},
+		{
+			InstanceType: "m6idn.32xlarge",
+			Location:     lo.ToPtr("test-zone-1a"),
+		},
+		{
+			InstanceType: "m6idn.32xlarge",
+			Location:     lo.ToPtr("test-zone-1b"),
+		},
+		{
+			InstanceType: "m6idn.32xlarge",
+			Location:     lo.ToPtr("test-zone-1c"),
+		},
+		{
+			InstanceType: "m7i-flex.large",
+			Location:     lo.ToPtr("test-zone-1a"),
+		},
+		{
 			InstanceType: "p3.8xlarge",
 			Location:     lo.ToPtr("test-zone-1a"),
 		},
@@ -944,60 +1037,16 @@ var defaultDescribeInstanceTypeOfferingsOutput = &ec2.DescribeInstanceTypeOfferi
 			Location:     lo.ToPtr("test-zone-1b"),
 		},
 		{
-			InstanceType: "dl1.24xlarge",
+			InstanceType: "t3.large",
 			Location:     lo.ToPtr("test-zone-1a"),
 		},
 		{
-			InstanceType: "dl1.24xlarge",
+			InstanceType: "t3.large",
 			Location:     lo.ToPtr("test-zone-1b"),
-		},
-		{
-			InstanceType: "inf2.24xlarge",
-			Location:     lo.ToPtr("test-zone-1a"),
 		},
 		{
 			InstanceType: "trn1.2xlarge",
 			Location:     lo.ToPtr("test-zone-1a"),
-		},
-		{
-			InstanceType: "m5.4xlarge",
-			Location:     lo.ToPtr("test-zone-1a"),
-		},
-		{
-			InstanceType: "g4dn.8xlarge",
-			Location:     lo.ToPtr("test-zone-1a"),
-		},
-		{
-			InstanceType: "g4dn.8xlarge",
-			Location:     lo.ToPtr("test-zone-1b"),
-		},
-		{
-			InstanceType: "m5.2xlarge",
-			Location:     lo.ToPtr("test-zone-1a"),
-		},
-		{
-			InstanceType: "g4ad.16xlarge",
-			Location:     lo.ToPtr("test-zone-1a"),
-		},
-		{
-			InstanceType: "g4ad.16xlarge",
-			Location:     lo.ToPtr("test-zone-1b"),
-		},
-		{
-			InstanceType: "t3.large",
-			Location:     lo.ToPtr("test-zone-1a"),
-		},
-		{
-			InstanceType: "t3.large",
-			Location:     lo.ToPtr("test-zone-1b"),
-		},
-		{
-			InstanceType: "m5.xlarge",
-			Location:     lo.ToPtr("test-zone-1a"),
-		},
-		{
-			InstanceType: "m5.xlarge",
-			Location:     lo.ToPtr("test-zone-1b"),
 		},
 	},
 }

@@ -1,9 +1,14 @@
 CLUSTER_NAME ?= $(shell kubectl config view --minify -o jsonpath='{.clusters[].name}' | rev | cut -d"/" -f1 | rev | cut -d"." -f1)
 
-## Inject the app version into operator.Version
-LDFLAGS ?= -ldflags=-X=sigs.k8s.io/karpenter/pkg/operator.Version=$(shell git describe --tags --always | cut -d"v" -f2)
+# TODO(maxcao13): We don't maintain tags like upstream does, so we need to manually update a canonical version here.
+# Every time we do a rebase, we should update this variable to match upstream. If you have upstream as a remote repo, you can find the latest tag by:
+# git describe --tags --abbrev=0 --match "v*" --candidates=1
+OPENSHIFT_AWS_KARPENTER_VERSION = 1.8.6
 
-GOFLAGS ?= $(LDFLAGS)
+## Inject the app version into operator.Version
+LDFLAGS ?= -ldflags=-X=sigs.k8s.io/karpenter/pkg/operator.Version=${OPENSHIFT_AWS_KARPENTER_VERSION}
+
+GOFLAGS += $(LDFLAGS)
 WITH_GOFLAGS = GOFLAGS="$(GOFLAGS)"
 
 ## Extra helm options
@@ -20,7 +25,10 @@ HELM_OPTS ?= --set serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn=${K
 			--set settings.featureGates.nodeRepair=true \
 			--set settings.featureGates.reservedCapacity=true \
 			--set settings.featureGates.spotToSpotConsolidation=true \
+			--set settings.featureGates.nodeOverlay=true \
+			--set settings.featureGates.staticCapacity=true \
 			--set settings.preferencePolicy=Ignore \
+			--set logLevel=debug \
 			--create-namespace
 
 # CR for local builds of Karpenter
@@ -35,7 +43,7 @@ KARPENTER_CORE_DIR = $(shell go list -mod=readonly -m -f '{{ .Dir }}' sigs.k8s.i
 
 # TEST_SUITE enables you to select a specific test suite directory to run "make e2etests" against
 TEST_SUITE ?= "..."
-TMPFILE = $(shell mktemp) 
+TMPFILE := $(shell mktemp)
 
 # Filename when building the binary controller only
 GOARCH ?= $(shell go env GOARCH)
@@ -56,7 +64,7 @@ run: ## Run Karpenter controller binary against your local cluster
 		DISABLE_LEADER_ELECTION=true \
 		CLUSTER_NAME=${CLUSTER_NAME} \
 		INTERRUPTION_QUEUE=${CLUSTER_NAME} \
-		FEATURE_GATES="SpotToSpotConsolidation=true" \
+		FEATURE_GATES="SpotToSpotConsolidation=true,NodeOverlay=true,StaticCapacity=true" \
 		LOG_LEVEL="debug" \
 		go run ./cmd/controller/main.go
 
@@ -91,15 +99,15 @@ e2etests: ## Run the e2e suite against your local cluster
 		--ginkgo.grace-period=3m \
 		--ginkgo.vv
 
-upstream-e2etests: 
+upstream-e2etests: tidy download
 	CLUSTER_NAME=${CLUSTER_NAME} envsubst < $(shell pwd)/test/pkg/environment/aws/default_ec2nodeclass.yaml > ${TMPFILE}
-	go test \
+	cd $(KARPENTER_CORE_DIR) && go test \
 		-count 1 \
-		-timeout 1h \
+		-timeout 3.25h \
 		-v \
-		$(KARPENTER_CORE_DIR)/test/suites/$(shell echo $(TEST_SUITE) | tr A-Z a-z)/... \
+		./test/suites/... \
 		--ginkgo.focus="${FOCUS}" \
-		--ginkgo.timeout=1h \
+		--ginkgo.timeout=3h \
 		--ginkgo.grace-period=5m \
 		--ginkgo.vv \
 		--default-nodeclass="$(TMPFILE)"\
@@ -160,7 +168,6 @@ apply: verify image ## Deploy the controller from the current state of your git 
 	kubectl apply -f ./pkg/apis/crds/
 	helm upgrade --install karpenter charts/karpenter --namespace ${KARPENTER_NAMESPACE} \
         $(HELM_OPTS) \
-        --set logLevel=debug \
         --set controller.image.repository=$(IMG_REPOSITORY) \
         --set controller.image.tag=$(IMG_TAG) \
         --set controller.image.digest=$(IMG_DIGEST)
@@ -212,6 +219,15 @@ download: ## Recursively "go mod download" on all directories where go.mod exist
 update-karpenter: ## Update kubernetes-sigs/karpenter to latest
 	go get -u sigs.k8s.io/karpenter@HEAD
 	go mod tidy
+
+.PHONY: deploy-cfn
+deploy-cfn: ## Deploys the cloudformation stack defined in the docs preview directory
+	aws cloudformation deploy \
+		--stack-name "Karpenter-${CLUSTER_NAME}" \
+		--template-file "./website/content/en/preview/getting-started/getting-started-with-karpenter/cloudformation.yaml" \
+		--capabilities CAPABILITY_NAMED_IAM \
+		--parameter-overrides "ClusterName=${CLUSTER_NAME}"
+
 
 .PHONY: help presubmit ci-test ci-non-test run test deflake e2etests e2etests-deflake benchmark coverage verify vulncheck licenses image apply install delete docgen codegen stable-release-pr snapshot release prepare-website toolchain issues website tidy download update-karpenter
 

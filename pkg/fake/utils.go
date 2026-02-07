@@ -15,7 +15,6 @@ limitations under the License.
 package fake
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -26,7 +25,6 @@ import (
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/util/sets"
 
-	"github.com/aws/karpenter-provider-aws/pkg/operator/options"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/pricing"
 )
 
@@ -108,7 +106,7 @@ func FilterDescribeCapacityReservations(crs []ec2types.CapacityReservation, ids 
 		if len(ids) != 0 && !idSet.Has(*cr.CapacityReservationId) {
 			return false
 		}
-		return Filter(filters, *cr.CapacityReservationId, "", *cr.OwnerId, string(cr.State), cr.Tags)
+		return FilterCapacityReservation(filters, *cr.CapacityReservationId, "", *cr.OwnerId, string(cr.State), string(cr.InstanceMatchCriteria), cr.Tags)
 	})
 }
 
@@ -157,6 +155,15 @@ func Filter(filters []ec2types.Filter, id, name, owner, state string, tags []ec2
 	})
 }
 
+func FilterCapacityReservation(filters []ec2types.Filter, id, name, owner, state, instanceMatchCriteria string, tags []ec2types.Tag) bool {
+	return lo.EveryBy(filters, func(filter ec2types.Filter) bool {
+		if aws.ToString(filter.Name) == "instance-match-criteria" {
+			return lo.Contains(filter.Values, instanceMatchCriteria)
+		}
+		return Filter([]ec2types.Filter{filter}, id, name, owner, state, tags)
+	})
+}
+
 // matchTags is a predicate that matches a slice of tags with a tag:<key> or tag-keys filter
 // nolint: gocyclo
 func matchTags(tags []ec2types.Tag, filter ec2types.Filter) bool {
@@ -186,10 +193,9 @@ func matchTags(tags []ec2types.Tag, filter ec2types.Filter) bool {
 
 func MakeInstances() []ec2types.InstanceTypeInfo {
 	var instanceTypes []ec2types.InstanceTypeInfo
-	ctx := options.ToContext(context.Background(), &options.Options{IsolatedVPC: true})
 	// Use keys from the static pricing data so that we guarantee pricing for the data
 	// Create uniform instance data so all of them schedule for a given pod
-	for _, it := range pricing.NewDefaultProvider(ctx, nil, nil, "us-east-1").InstanceTypes() {
+	for _, it := range pricing.NewDefaultProvider(nil, nil, "us-east-1", true).InstanceTypes() {
 		instanceTypes = append(instanceTypes, ec2types.InstanceTypeInfo{
 			InstanceType: it,
 			ProcessorInfo: &ec2types.ProcessorInfo{
