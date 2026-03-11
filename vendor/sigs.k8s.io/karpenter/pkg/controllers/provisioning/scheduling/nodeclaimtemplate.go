@@ -24,7 +24,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
 
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/apis/v1alpha1"
@@ -77,6 +76,21 @@ func NewNodeClaimTemplate(nodePool *v1.NodePool) *NodeClaimTemplate {
 	return nct
 }
 
+// resolveCustomLabelsFromRequirements resolves the concrete values for user-defined labels from a NodeClaimTemplate's
+// requirements.
+func (i *NodeClaimTemplate) resolveCustomLabelsFromRequirements() map[string]string {
+	labels := map[string]string{}
+	for key, requirement := range i.Requirements {
+		if v1.WellKnownLabels.Has(key) || v1.RestrictedLabels.Has(key) {
+			continue
+		}
+		if value := requirement.Any(); value != "" {
+			labels[key] = value
+		}
+	}
+	return labels
+}
+
 func (i *NodeClaimTemplate) ToNodeClaim() *v1.NodeClaim {
 	// Inject instanceType requirements for NodeClaims belonging to dynamic NodePool
 	// For static we let cloudprovider.Create()
@@ -88,23 +102,13 @@ func (i *NodeClaimTemplate) ToNodeClaim() *v1.NodeClaim {
 		})...))
 
 		// Collect available capacity types from the selected instance types
-		availableCapacityTypes := sets.New[string]()
-		for _, instanceType := range instanceTypes {
-			for _, offering := range instanceType.Offerings {
-				// Only include available offerings that are compatible with current requirements
-				if offering.Available && i.Requirements.IsCompatible(offering.Requirements, scheduling.AllowUndefinedWellKnownLabels) {
-					availableCapacityTypes.Insert(offering.CapacityType())
-				}
-			}
-		}
-
-		// Add capacity type requirement if we have available types
-		if capacityTypeList := availableCapacityTypes.UnsortedList(); len(capacityTypeList) > 0 {
-			i.Requirements.Add(scheduling.NewRequirement(
-				v1.CapacityTypeLabelKey,
-				corev1.NodeSelectorOpIn,
-				capacityTypeList...,
-			))
+		capacityTypes := lo.Uniq(lo.FlatMap(instanceTypes, func(it *cloudprovider.InstanceType, _ int) []string {
+			return lo.Map(it.Offerings.Available().Compatible(i.Requirements), func(o *cloudprovider.Offering, _ int) string {
+				return o.CapacityType()
+			})
+		}))
+		if len(capacityTypes) > 0 {
+			i.Requirements.Add(scheduling.NewRequirement(v1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, capacityTypes...))
 		}
 
 		if foundPriceOverlay := lo.ContainsBy(instanceTypes, func(it *cloudprovider.InstanceType) bool { return it.IsPricingOverlayApplied() }); foundPriceOverlay {
@@ -118,6 +122,12 @@ func (i *NodeClaimTemplate) ToNodeClaim() *v1.NodeClaim {
 			})
 		}
 	}
+
+	// We'll assign any labels with known, concrete values at NodeClaim creation time. This includes any labels from the
+	// NodeClaimTemplate (since there's a single possible value), and any resolved values for custom labels in the
+	// NodeClaimTemplate's requirements. The latter **cannot** be instance type dependent (like well-known labels) since
+	// Karpenter can't reason about which label domains would belong to each instance type.
+	i.Labels = lo.Assign(i.Labels, i.resolveCustomLabelsFromRequirements())
 
 	nc := &v1.NodeClaim{
 		ObjectMeta: metav1.ObjectMeta{
