@@ -807,6 +807,215 @@ func getDaemonHostPortUsage(ctx context.Context, nodeClaimTemplates []*NodeClaim
 	return nctToOccupiedPorts
 }
 
+// ExistingNodeSnapshot holds pre-computed per-node data that is invariant across candidate evaluations.
+type ExistingNodeSnapshot struct {
+	StateNode       *state.StateNode
+	Taints          []corev1.Taint
+	Available       corev1.ResourceList
+	DaemonResources corev1.ResourceList
+	Requirements    scheduling.Requirements // Pre-computed from node labels + hostname
+	HostName        string
+}
+
+// SchedulerSnapshot holds all the pre-computed state from NewScheduler that is invariant
+// across candidate evaluations. This avoids recomputing nodeClaimTemplates, daemon overhead,
+// existing node data (label requirements, daemon pod compatibility), and domain groups
+// on every call.
+type SchedulerSnapshot struct {
+	NodeClaimTemplates      []*NodeClaimTemplate
+	DaemonOverhead          map[*NodeClaimTemplate]corev1.ResourceList
+	DaemonHostPortUsage     map[*NodeClaimTemplate]*scheduling.HostPortUsage
+	ExistingNodeSnapshots   []*ExistingNodeSnapshot
+	RemainingResources      map[string]corev1.ResourceList
+	DomainGroups            map[string]TopologyDomainGroup
+	ReservationManager      *ReservationManager
+	ToleratePreferNoSchedul bool
+	MinValuesPolicy         karpopts.MinValuesPolicy
+}
+
+// PrepareSchedulerSnapshot pre-computes all invariant scheduler state. Call once before
+// a candidate evaluation loop. This caches calculateExistingNodeClaims, getCompatibleDaemonPods,
+// NewLabelRequirements, getDaemonOverhead, getDaemonHostPortUsage, nodeClaimTemplates,
+// and buildDomainGroups — the primary CPU hotspots.
+func PrepareSchedulerSnapshot(
+	ctx context.Context,
+	kubeClient client.Client,
+	nodePools []*v1.NodePool,
+	cluster *state.Cluster,
+	stateNodes []*state.StateNode,
+	instanceTypes map[string][]*cloudprovider.InstanceType,
+	daemonSetPods []*corev1.Pod,
+	recorder events.Recorder,
+	opts ...Options,
+) *SchedulerSnapshot {
+	minValuesPolicy := option.Resolve(opts...).minValuesPolicy
+
+	toleratePreferNoSchedule := false
+	for _, np := range nodePools {
+		for _, taint := range np.Spec.Template.Spec.Taints {
+			if taint.Effect == corev1.TaintEffectPreferNoSchedule {
+				toleratePreferNoSchedule = true
+			}
+		}
+	}
+
+	templates := lo.FilterMap(nodePools, func(np *v1.NodePool, _ int) (*NodeClaimTemplate, bool) {
+		var err error
+		nct := NewNodeClaimTemplate(np)
+		nct.InstanceTypeOptions, _, err = filterInstanceTypesByRequirements(instanceTypes[np.Name], nct.Requirements, corev1.ResourceList{}, corev1.ResourceList{}, corev1.ResourceList{}, minValuesPolicy == karpopts.MinValuesPolicyBestEffort)
+		if len(nct.InstanceTypeOptions) == 0 {
+			if instanceTypeFilterErr, ok := lo.ErrorsAs[InstanceTypeFilterError](err); ok && instanceTypeFilterErr.minValuesIncompatibleErr != nil {
+				recorder.Publish(NoCompatibleInstanceTypes(np, true))
+				log.FromContext(ctx).WithValues("NodePool", klog.KObj(np)).Info("skipping, nodepool requirements filtered out all instance types", "minValuesIncompatibleErr", instanceTypeFilterErr.minValuesIncompatibleErr)
+			} else {
+				recorder.Publish(NoCompatibleInstanceTypes(np, false))
+				log.FromContext(ctx).WithValues("NodePool", klog.KObj(np)).Info("skipping, nodepool requirements filtered out all instance types")
+			}
+			return nil, false
+		}
+		return nct, true
+	})
+
+	daemonOverhead := getDaemonOverhead(ctx, templates, daemonSetPods)
+	daemonHostPortUsage := getDaemonHostPortUsage(ctx, templates, daemonSetPods)
+	domainGroups := buildDomainGroups(nodePools, instanceTypes)
+	reservationManager := NewReservationManager(instanceTypes)
+
+	// Pre-compute per-node data: daemon compatibility, label requirements, available resources
+	ignoreDRA := karpopts.FromContext(ctx).IgnoreDRARequests
+	nodeSnapshots := make([]*ExistingNodeSnapshot, 0, len(stateNodes))
+	for _, node := range stateNodes {
+		taints := node.Taints()
+		nodeLabels := node.Labels()
+
+		// Compute compatible daemon pods for this node (same logic as getCompatibleDaemonPods)
+		var daemons []*corev1.Pod
+		for _, p := range daemonSetPods {
+			if pod.HasDRARequirements(p) && ignoreDRA {
+				continue
+			}
+			if err := scheduling.Taints(taints).ToleratesPod(p); err != nil {
+				continue
+			}
+			if err := scheduling.NewLabelRequirements(nodeLabels).Compatible(scheduling.NewStrictPodRequirements(p)); err != nil {
+				continue
+			}
+			daemons = append(daemons, p)
+		}
+
+		daemonResources := resources.RequestsForPods(daemons...)
+		resources.SubtractFrom(daemonResources, node.DaemonSetRequests())
+		for k, v := range daemonResources {
+			if v.AsApproximateFloat64() < 0 {
+				v.Set(0)
+				daemonResources[k] = v
+			}
+		}
+
+		reqs := scheduling.NewLabelRequirements(nodeLabels)
+		reqs.Add(scheduling.NewRequirement(corev1.LabelHostname, corev1.NodeSelectorOpIn, node.HostName()))
+
+		nodeSnapshots = append(nodeSnapshots, &ExistingNodeSnapshot{
+			StateNode:       node,
+			Taints:          taints,
+			Available:       node.Available(),
+			DaemonResources: daemonResources,
+			Requirements:    reqs,
+			HostName:        node.HostName(),
+		})
+	}
+
+	remainingResources := lo.SliceToMap(nodePools, func(np *v1.NodePool) (string, corev1.ResourceList) {
+		return np.Name, corev1.ResourceList(np.Spec.Limits)
+	})
+
+	return &SchedulerSnapshot{
+		NodeClaimTemplates:      templates,
+		DaemonOverhead:          daemonOverhead,
+		DaemonHostPortUsage:     daemonHostPortUsage,
+		ExistingNodeSnapshots:   nodeSnapshots,
+		RemainingResources:      remainingResources,
+		DomainGroups:            domainGroups,
+		ReservationManager:      reservationManager,
+		ToleratePreferNoSchedul: toleratePreferNoSchedule,
+		MinValuesPolicy:         minValuesPolicy,
+	}
+}
+
+// NewSchedulerFromSnapshot creates a scheduler from pre-computed snapshot state.
+// Only topology construction and volume requirements are computed fresh.
+// ExistingNodes are built from cached per-node data (daemon resources, requirements)
+// without re-running getCompatibleDaemonPods or NewLabelRequirements.
+func NewSchedulerFromSnapshot(
+	ctx context.Context,
+	kubeClient client.Client,
+	cluster *state.Cluster,
+	snap *SchedulerSnapshot,
+	stateNodes []*state.StateNode,
+	topology *Topology,
+	recorder events.Recorder,
+	clk clock.Clock,
+	volumeReqsByPod map[types.UID]scheduling.Requirements,
+	opts ...Options,
+) *Scheduler {
+	s := &Scheduler{
+		uuid:                uuid.NewUUID(),
+		kubeClient:          kubeClient,
+		nodeClaimTemplates:  snap.NodeClaimTemplates,
+		topology:            topology,
+		cluster:             cluster,
+		daemonOverhead:      snap.DaemonOverhead,
+		daemonHostPortUsage: snap.DaemonHostPortUsage,
+		cachedPodData:       map[types.UID]*PodData{},
+		volumeReqsByPod:     volumeReqsByPod,
+		recorder:            recorder,
+		preferences:         &Preferences{ToleratePreferNoSchedule: snap.ToleratePreferNoSchedul},
+		remainingResources:  deepCopyRemainingResources(snap.RemainingResources),
+		clock:               clk,
+		reservationManager:  snap.ReservationManager,
+		reservedOfferingMode:    option.Resolve(opts...).reservedOfferingMode,
+		preferencePolicy:        option.Resolve(opts...).preferencePolicy,
+		minValuesPolicy:         snap.MinValuesPolicy,
+		numConcurrentReconciles: lo.Ternary(option.Resolve(opts...).numConcurrentReconciles > 0, option.Resolve(opts...).numConcurrentReconciles, 1),
+	}
+
+	// Build existing nodes index for fast lookup by name
+	stateNodeSet := make(map[string]struct{}, len(stateNodes))
+	for _, n := range stateNodes {
+		stateNodeSet[n.Name()] = struct{}{}
+	}
+
+	// Build ExistingNodes from cached snapshot data, skipping nodes not in stateNodes
+	for _, ns := range snap.ExistingNodeSnapshots {
+		if _, ok := stateNodeSet[ns.StateNode.Name()]; !ok {
+			continue
+		}
+		available := ns.Available.DeepCopy()
+		remainingResources := resources.Subtract(available, ns.DaemonResources.DeepCopy())
+		node := &ExistingNode{
+			StateNode:          ns.StateNode,
+			cachedAvailable:    available,
+			cachedTaints:       ns.Taints,
+			topology:           topology,
+			remainingResources: remainingResources,
+			requirements:       scheduling.NewRequirements(ns.Requirements.Values()...),
+		}
+		topology.Register(corev1.LabelHostname, ns.HostName)
+		s.existingNodes = append(s.existingNodes, node)
+		s.updateRemainingResources(ns.StateNode)
+	}
+	s.sortExistingNodes()
+	return s
+}
+
+func deepCopyRemainingResources(src map[string]corev1.ResourceList) map[string]corev1.ResourceList {
+	dst := make(map[string]corev1.ResourceList, len(src))
+	for k, v := range src {
+		dst[k] = v.DeepCopy()
+	}
+	return dst
+}
+
 // isDaemonPodCompatible determines if the daemon pod is compatible with the NodeClaimTemplate for daemon scheduling
 func isDaemonPodCompatible(nodeClaimTemplate *NodeClaimTemplate, pod *corev1.Pod) bool {
 	preferences := &Preferences{}

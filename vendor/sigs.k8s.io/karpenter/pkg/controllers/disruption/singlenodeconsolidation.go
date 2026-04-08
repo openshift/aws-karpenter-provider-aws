@@ -59,6 +59,14 @@ func (s *SingleNodeConsolidation) ComputeCommands(ctx context.Context, disruptio
 	}
 	candidates = s.SortCandidates(ctx, candidates)
 
+	// Pre-build shared simulation state once for all candidate evaluations.
+	// This avoids redundant DeepCopyNodes, API queries (pending pods, PDBs, NodePools,
+	// instance types, daemon sets), and cloud provider calls per candidate.
+	sharedState, err := PrepareSharedSimulationState(ctx, s.kubeClient, s.cluster, s.provisioner)
+	if err != nil {
+		return nil, fmt.Errorf("preparing shared simulation state, %w", err)
+	}
+
 	// Set a timeout
 	timeout := s.clock.Now().Add(SingleNodeConsolidationTimeoutDuration)
 	constrainedByBudgets := false
@@ -91,8 +99,8 @@ func (s *SingleNodeConsolidation) ComputeCommands(ctx context.Context, disruptio
 			continue
 		}
 
-		// compute a possible consolidation option
-		cmd, err := s.computeConsolidation(ctx, candidate)
+		// compute a possible consolidation option using pre-built shared state
+		cmd, err := s.computeConsolidationWithSharedState(ctx, sharedState, candidate)
 		if err != nil {
 			log.FromContext(ctx).Error(err, "failed computing consolidation")
 			continue

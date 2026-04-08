@@ -47,6 +47,126 @@ import (
 
 var errCandidateDeleting = fmt.Errorf("candidate is deleting")
 
+// SharedSimulationState holds pre-computed state for batch candidate evaluation.
+// Build once with PrepareSharedSimulationState, then call SimulateSchedulingWithSharedState per candidate.
+type SharedSimulationState struct {
+	deletingNodes    state.StateNodes
+	activeNodes      state.StateNodes
+	pendingPods      []*corev1.Pod
+	deletingNodePods []*corev1.Pod
+	pdbs             pdb.Limits
+	schedulerState   *provisioning.SchedulerSharedState
+	opts             []scheduling.Options
+}
+
+// PrepareSharedSimulationState pre-computes state shared across all candidate evaluations:
+// node snapshot, pending pods, PDB limits, deleting node pods, and scheduler shared state.
+func PrepareSharedSimulationState(ctx context.Context, kubeClient client.Client, cluster *state.Cluster, provisioner *provisioning.Provisioner,
+) (*SharedSimulationState, error) {
+	nodes := cluster.DeepCopyNodes()
+
+	pendingPods, err := provisioner.GetPendingPods(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("determining pending pods, %w", err)
+	}
+
+	pdbs, err := pdb.NewLimits(ctx, kubeClient)
+	if err != nil {
+		return nil, fmt.Errorf("tracking PodDisruptionBudgets, %w", err)
+	}
+
+	deletingNodes := nodes.Deleting()
+	deletingNodePods, err := deletingNodes.CurrentlyReschedulablePods(ctx, kubeClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pods from deleting nodes, %w", err)
+	}
+
+	var opts []scheduling.Options
+	if options.FromContext(ctx).PreferencePolicy == options.PreferencePolicyIgnore {
+		opts = append(opts, scheduling.IgnorePreferences)
+	}
+	opts = append(opts, scheduling.MinValuesPolicy(options.FromContext(ctx).MinValuesPolicy))
+
+	activeNodes := nodes.Active()
+	// Pass activeNodes to PrepareSchedulerState so it can pre-compute per-node data
+	// (daemon pod compatibility, label requirements, available resources) once for all nodes.
+	schedulerState, err := provisioner.PrepareSchedulerState(ctx, activeNodes, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("preparing scheduler state, %w", err)
+	}
+
+	return &SharedSimulationState{
+		deletingNodes:    deletingNodes,
+		activeNodes:      activeNodes,
+		pendingPods:      pendingPods,
+		deletingNodePods: deletingNodePods,
+		pdbs:             pdbs,
+		schedulerState:   schedulerState,
+		opts:             opts,
+	}, nil
+}
+
+// SimulateSchedulingWithSharedState runs scheduling simulation for the given candidates
+// using pre-computed shared state, avoiding redundant API calls and deep copies.
+//
+//nolint:gocyclo
+func SimulateSchedulingWithSharedState(ctx context.Context, kubeClient client.Client, cluster *state.Cluster, provisioner *provisioning.Provisioner,
+	shared *SharedSimulationState, candidates ...*Candidate,
+) (scheduling.Results, error) {
+	candidateNames := sets.NewString(lo.Map(candidates, func(t *Candidate, i int) string { return t.Name() })...)
+	stateNodes := lo.Filter(shared.activeNodes, func(n *state.StateNode, _ int) bool {
+		return !candidateNames.Has(n.Name())
+	})
+
+	if _, ok := lo.Find(shared.deletingNodes, func(n *state.StateNode) bool {
+		return candidateNames.Has(n.Name())
+	}); ok {
+		return scheduling.Results{}, errCandidateDeleting
+	}
+
+	// Build pod list: pending pods + candidate's reschedulable pods + deleting node pods
+	pods := make([]*corev1.Pod, 0, len(shared.pendingPods)+len(shared.deletingNodePods))
+	pods = append(pods, shared.pendingPods...)
+	for _, n := range candidates {
+		currentlyReschedulablePods := lo.Filter(n.reschedulablePods, func(p *corev1.Pod, _ int) bool {
+			return shared.pdbs.IsCurrentlyReschedulable(p)
+		})
+		pods = append(pods, currentlyReschedulablePods...)
+	}
+	pods = append(pods, shared.deletingNodePods...)
+
+	sched, err := provisioner.NewSchedulerFromState(
+		log.IntoContext(ctx, operatorlogging.NopLogger),
+		shared.schedulerState,
+		pods,
+		stateNodes,
+		shared.opts...,
+	)
+	if err != nil {
+		return scheduling.Results{}, fmt.Errorf("creating scheduler, %w", err)
+	}
+
+	deletingNodePodKeys := lo.SliceToMap(shared.deletingNodePods, func(p *corev1.Pod) (client.ObjectKey, interface{}) {
+		return client.ObjectKeyFromObject(p), nil
+	})
+
+	results, err := sched.Solve(log.IntoContext(ctx, operatorlogging.NopLogger), pods)
+	if err != nil {
+		return scheduling.Results{}, fmt.Errorf("scheduling pods, %w", err)
+	}
+	results = results.TruncateInstanceTypes(ctx, scheduling.MaxInstanceTypes)
+	for _, n := range results.ExistingNodes {
+		if !n.Initialized() {
+			for _, p := range n.Pods {
+				if _, ok := deletingNodePodKeys[client.ObjectKeyFromObject(p)]; !ok {
+					results.PodErrors[p] = NewUninitializedNodeError(n)
+				}
+			}
+		}
+	}
+	return results, nil
+}
+
 //nolint:gocyclo
 func SimulateScheduling(ctx context.Context, kubeClient client.Client, cluster *state.Cluster, provisioner *provisioning.Provisioner,
 	candidates ...*Candidate,

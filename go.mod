@@ -141,4 +141,4 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.1 // indirect
 )
 
-replace sigs.k8s.io/karpenter => github.com/openshift/kubernetes-sigs-karpenter v0.0.0-20260310165629-67e201b559d5
+replace sigs.k8s.io/karpenter => /home/marius/git/kubernetes-sigs-karpenter

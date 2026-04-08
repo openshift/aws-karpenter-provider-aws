@@ -306,6 +306,105 @@ func (p *Provisioner) NewScheduler(
 	return scheduler.NewScheduler(ctx, p.kubeClient, nodePools, p.cluster, stateNodes, topology, instanceTypes, daemonSetPods, p.recorder, p.clock, volumeReqs, opts...), nil
 }
 
+// SchedulerSharedState holds pre-computed state that can be reused across multiple scheduler instances.
+// This includes the deep SchedulerSnapshot which caches all invariant scheduler internals
+// (nodeClaimTemplates, daemon overhead, existing node data, domain groups).
+type SchedulerSharedState struct {
+	nodePools     []*v1.NodePool
+	instanceTypes map[string][]*cloudprovider.InstanceType
+	daemonSetPods []*corev1.Pod
+	snapshot      *scheduler.SchedulerSnapshot
+}
+
+// PrepareSchedulerState pre-computes shared state for creating multiple schedulers efficiently.
+// Call this once before a candidate evaluation loop, then use NewSchedulerFromState per candidate.
+// The stateNodes parameter provides the full set of active nodes for pre-computing per-node data
+// (daemon pod compatibility, label requirements, available resources).
+func (p *Provisioner) PrepareSchedulerState(ctx context.Context, stateNodes []*state.StateNode, opts ...scheduler.Options) (*SchedulerSharedState, error) {
+	nodePools, err := nodepoolutils.ListManaged(ctx, p.kubeClient, p.cloudProvider)
+	if err != nil {
+		return nil, fmt.Errorf("listing nodepools, %w", err)
+	}
+	nodePools = lo.Filter(nodePools, func(np *v1.NodePool, _ int) bool {
+		if nodepoolutils.IsStatic(np) {
+			return false
+		}
+		if !np.StatusConditions().IsTrue(status.ConditionReady) {
+			log.FromContext(ctx).WithValues("NodePool", klog.KObj(np)).Error(nil, "ignoring nodepool, not ready")
+			return false
+		}
+		return np.DeletionTimestamp.IsZero()
+	})
+	if len(nodePools) == 0 {
+		return nil, ErrNodePoolsNotFound
+	}
+	nodepoolutils.OrderByWeight(nodePools)
+
+	instanceTypes := map[string][]*cloudprovider.InstanceType{}
+	for _, np := range nodePools {
+		its, err := p.cloudProvider.GetInstanceTypes(ctx, np)
+		if err != nil {
+			if cloudprovider.IsUnevaluatedNodePoolError(err) {
+				log.FromContext(ctx).WithValues("NodePool", klog.KObj(np)).V(1).Info("skipping, awaiting nodeoverlay evaluation")
+				continue
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				return nil, fmt.Errorf("getting instance types, %w", err)
+			}
+			log.FromContext(ctx).WithValues("NodePool", klog.KObj(np)).Error(err, "skipping, unable to resolve instance types")
+			continue
+		}
+		if len(its) == 0 {
+			log.FromContext(ctx).WithValues("NodePool", klog.KObj(np)).Info("skipping, no resolved instance types found")
+			continue
+		}
+		instanceTypes[np.Name] = its
+	}
+
+	daemonSetPods, err := p.getDaemonSetPods(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting daemon pods, %w", err)
+	}
+
+	// Build the deep snapshot: pre-computes nodeClaimTemplates, daemon overhead,
+	// per-node daemon compatibility & label requirements, domain groups, etc.
+	snap := scheduler.PrepareSchedulerSnapshot(
+		ctx, p.kubeClient, nodePools, p.cluster, stateNodes,
+		instanceTypes, daemonSetPods, p.recorder, opts...,
+	)
+
+	return &SchedulerSharedState{
+		nodePools:     nodePools,
+		instanceTypes: instanceTypes,
+		daemonSetPods: daemonSetPods,
+		snapshot:      snap,
+	}, nil
+}
+
+// NewSchedulerFromState creates a scheduler using pre-computed shared state.
+// Uses the deep SchedulerSnapshot to avoid recomputing calculateExistingNodeClaims,
+// getCompatibleDaemonPods, NewLabelRequirements, daemon overhead, and domain groups.
+// Only topology construction and volume requirements are computed fresh per call.
+// v2-deep-cache: uses NewTopologyFromDomainGroups + NewSchedulerFromSnapshot
+func (p *Provisioner) NewSchedulerFromState(
+	ctx context.Context,
+	shared *SchedulerSharedState,
+	pods []*corev1.Pod,
+	stateNodes []*state.StateNode,
+	opts ...scheduler.Options,
+) (*scheduler.Scheduler, error) {
+	log.FromContext(ctx).V(1).Info("NewSchedulerFromState: using deep scheduler cache v2")
+	pods, volumeReqs, err := p.getVolumeTopologyRequirements(ctx, pods)
+	if err != nil {
+		return nil, fmt.Errorf("getting volume topology requirements, %w", err)
+	}
+	topology, err := scheduler.NewTopologyFromDomainGroups(ctx, p.kubeClient, p.cluster, stateNodes, shared.snapshot.DomainGroups, pods, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("tracking topology counts, %w", err)
+	}
+	return scheduler.NewSchedulerFromSnapshot(ctx, p.kubeClient, p.cluster, shared.snapshot, stateNodes, topology, p.recorder, p.clock, volumeReqs, opts...), nil
+}
+
 func (p *Provisioner) Schedule(ctx context.Context) (scheduler.Results, error) {
 	defer metrics.Measure(scheduler.DurationSeconds, map[string]string{scheduler.ControllerLabel: injection.GetControllerName(ctx)})()
 	start := time.Now()

@@ -102,6 +102,42 @@ func NewTopology(
 	return t, nil
 }
 
+// NewTopologyFromDomainGroups creates a Topology using pre-computed domain groups,
+// avoiding the cost of rebuilding them from NodePools and instance types.
+func NewTopologyFromDomainGroups(
+	ctx context.Context,
+	kubeClient client.Client,
+	cluster *state.Cluster,
+	stateNodes []*state.StateNode,
+	domainGroups map[string]TopologyDomainGroup,
+	pods []*corev1.Pod,
+	opts ...Options,
+) (*Topology, error) {
+	t := &Topology{
+		kubeClient:            kubeClient,
+		preferencePolicy:      option.Resolve(opts...).preferencePolicy,
+		cluster:               cluster,
+		stateNodes:            stateNodes,
+		domainGroups:          domainGroups,
+		topologyGroups:        map[uint64]*TopologyGroup{},
+		inverseTopologyGroups: map[uint64]*TopologyGroup{},
+		excludedPods:          sets.New[string](),
+	}
+
+	for _, p := range pods {
+		t.excludedPods.Insert(string(p.UID))
+	}
+
+	errs := t.updateInverseAffinities(ctx)
+	for i := range pods {
+		errs = multierr.Append(errs, t.Update(ctx, pods[i]))
+	}
+	if errs != nil {
+		return nil, errs
+	}
+	return t, nil
+}
+
 func buildDomainGroups(nodePools []*v1.NodePool, instanceTypes map[string][]*cloudprovider.InstanceType) map[string]TopologyDomainGroup {
 	nodePoolIndex := lo.SliceToMap(nodePools, func(np *v1.NodePool) (string, *v1.NodePool) {
 		return np.Name, np

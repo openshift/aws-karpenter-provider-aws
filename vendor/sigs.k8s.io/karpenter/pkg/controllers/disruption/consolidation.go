@@ -130,11 +130,25 @@ func (c *consolidation) sortCandidates(candidates []*Candidate) []*Candidate {
 	return candidates
 }
 
+// computeConsolidationWithSharedState computes a consolidation action using pre-built shared state.
+// This avoids redundant API calls and deep copies when evaluating multiple candidates in a loop.
+//
+//nolint:gocyclo
+func (c *consolidation) computeConsolidationWithSharedState(ctx context.Context, shared *SharedSimulationState, candidates ...*Candidate) (Command, error) {
+	results, err := SimulateSchedulingWithSharedState(ctx, c.kubeClient, c.cluster, c.provisioner, shared, candidates...)
+	if err != nil {
+		if errors.Is(err, errCandidateDeleting) {
+			return Command{}, nil
+		}
+		return Command{}, err
+	}
+	return c.evaluateConsolidationResults(ctx, results, candidates...)
+}
+
 // computeConsolidation computes a consolidation action to take
 //
 // nolint:gocyclo
 func (c *consolidation) computeConsolidation(ctx context.Context, candidates ...*Candidate) (Command, error) {
-	var err error
 	// Run scheduling simulation to compute consolidation option
 	results, err := SimulateScheduling(ctx, c.kubeClient, c.cluster, c.provisioner, candidates...)
 	if err != nil {
@@ -144,6 +158,14 @@ func (c *consolidation) computeConsolidation(ctx context.Context, candidates ...
 		}
 		return Command{}, err
 	}
+	return c.evaluateConsolidationResults(ctx, results, candidates...)
+}
+
+// evaluateConsolidationResults evaluates scheduling simulation results and returns a consolidation command.
+//
+//nolint:gocyclo
+func (c *consolidation) evaluateConsolidationResults(ctx context.Context, results pscheduling.Results, candidates ...*Candidate) (Command, error) {
+	var err error
 
 	// if not all of the pods were scheduled, we can't do anything
 	if !results.AllNonPendingPodsScheduled() {
