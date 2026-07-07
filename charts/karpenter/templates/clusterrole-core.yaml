@@ -30,7 +30,7 @@ metadata:
 rules:
   # Read
   - apiGroups: ["karpenter.sh"]
-    resources: ["nodepools", "nodepools/status", "nodeclaims", "nodeclaims/status", "nodeoverlays", "nodeoverlays/status"]
+    resources: ["nodepools", "nodepools/status", "nodeclaims", "nodeclaims/status", "nodeclaims/finalizers", "nodeoverlays", "nodeoverlays/status"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["autoscaling.x-k8s.io"]
     resources: ["capacitybuffers", "capacitybuffers/status"]
@@ -65,10 +65,10 @@ rules:
     verbs: ["get", "list", "watch"]
   # Write
   - apiGroups: ["karpenter.sh"]
-    resources: ["nodeclaims", "nodeclaims/status"]
+    resources: ["nodeclaims", "nodeclaims/status", "nodeclaims/finalizers"]
     verbs: ["create", "delete", "update", "patch"]
   - apiGroups: ["karpenter.sh"]
-    resources: ["nodepools", "nodepools/status", "nodeoverlays/status"]
+    resources: ["nodepools", "nodepools/status", "nodepools/finalizers", "nodeoverlays/status"]
     verbs: ["update", "patch"]
   - apiGroups: ["autoscaling.x-k8s.io"]
     resources: ["capacitybuffers/status"]
