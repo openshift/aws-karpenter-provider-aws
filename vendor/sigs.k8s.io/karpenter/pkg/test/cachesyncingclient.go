@@ -25,6 +25,7 @@ import (
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
@@ -49,7 +50,7 @@ func (c *CacheSyncingClient) Create(ctx context.Context, obj client.Object, opts
 		return err
 	}
 	_ = retry.Do(func() error {
-		if err := c.Client.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
 			return fmt.Errorf("getting object, %w", err)
 		}
 		return nil
@@ -62,7 +63,7 @@ func (c *CacheSyncingClient) Delete(ctx context.Context, obj client.Object, opts
 		return err
 	}
 	_ = retry.Do(func() error {
-		if err := c.Client.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
 			if errors.IsNotFound(err) {
 				return nil
 			}
@@ -106,10 +107,10 @@ func (c *CacheSyncingClient) DeleteAllOf(ctx context.Context, obj client.Object,
 
 	_ = retry.Do(func() error {
 		listOptions := []client.ListOption{client.Limit(1)}
-		if options.ListOptions.Namespace != "" {
-			listOptions = append(listOptions, client.InNamespace(options.ListOptions.Namespace))
+		if options.Namespace != "" {
+			listOptions = append(listOptions, client.InNamespace(options.Namespace))
 		}
-		if err := c.Client.List(ctx, metaList, listOptions...); err != nil {
+		if err := c.List(ctx, metaList, listOptions...); err != nil {
 			return fmt.Errorf("listing objects, %w", err)
 		}
 		if len(metaList.Items) != 0 {
@@ -132,6 +133,10 @@ type cacheSyncingStatusWriter struct {
 
 func (c *cacheSyncingStatusWriter) Create(_ context.Context, _ client.Object, _ client.Object, _ ...client.SubResourceCreateOption) error {
 	panic("create on cacheSyncingStatusWriter isn't supported")
+}
+
+func (c *cacheSyncingStatusWriter) Apply(_ context.Context, _ runtime.ApplyConfiguration, _ ...client.SubResourceApplyOption) error {
+	panic("apply on cacheSyncingStatusWriter isn't supported")
 }
 
 func (c *cacheSyncingStatusWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {

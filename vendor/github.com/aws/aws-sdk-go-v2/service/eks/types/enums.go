@@ -91,22 +91,29 @@ type AMITypes string
 
 // Enum values for AMITypes
 const (
-	AMITypesAl2X8664                AMITypes = "AL2_x86_64"
-	AMITypesAl2X8664Gpu             AMITypes = "AL2_x86_64_GPU"
-	AMITypesAl2Arm64                AMITypes = "AL2_ARM_64"
-	AMITypesCustom                  AMITypes = "CUSTOM"
-	AMITypesBottlerocketArm64       AMITypes = "BOTTLEROCKET_ARM_64"
-	AMITypesBottlerocketX8664       AMITypes = "BOTTLEROCKET_x86_64"
-	AMITypesBottlerocketArm64Nvidia AMITypes = "BOTTLEROCKET_ARM_64_NVIDIA"
-	AMITypesBottlerocketX8664Nvidia AMITypes = "BOTTLEROCKET_x86_64_NVIDIA"
-	AMITypesWindowsCore2019X8664    AMITypes = "WINDOWS_CORE_2019_x86_64"
-	AMITypesWindowsFull2019X8664    AMITypes = "WINDOWS_FULL_2019_x86_64"
-	AMITypesWindowsCore2022X8664    AMITypes = "WINDOWS_CORE_2022_x86_64"
-	AMITypesWindowsFull2022X8664    AMITypes = "WINDOWS_FULL_2022_x86_64"
-	AMITypesAl2023X8664Standard     AMITypes = "AL2023_x86_64_STANDARD"
-	AMITypesAl2023Arm64Standard     AMITypes = "AL2023_ARM_64_STANDARD"
-	AMITypesAl2023X8664Neuron       AMITypes = "AL2023_x86_64_NEURON"
-	AMITypesAl2023X8664Nvidia       AMITypes = "AL2023_x86_64_NVIDIA"
+	AMITypesAl2X8664                    AMITypes = "AL2_x86_64"
+	AMITypesAl2X8664Gpu                 AMITypes = "AL2_x86_64_GPU"
+	AMITypesAl2Arm64                    AMITypes = "AL2_ARM_64"
+	AMITypesCustom                      AMITypes = "CUSTOM"
+	AMITypesBottlerocketArm64           AMITypes = "BOTTLEROCKET_ARM_64"
+	AMITypesBottlerocketX8664           AMITypes = "BOTTLEROCKET_x86_64"
+	AMITypesBottlerocketArm64Fips       AMITypes = "BOTTLEROCKET_ARM_64_FIPS"
+	AMITypesBottlerocketX8664Fips       AMITypes = "BOTTLEROCKET_x86_64_FIPS"
+	AMITypesBottlerocketArm64Nvidia     AMITypes = "BOTTLEROCKET_ARM_64_NVIDIA"
+	AMITypesBottlerocketX8664Nvidia     AMITypes = "BOTTLEROCKET_x86_64_NVIDIA"
+	AMITypesBottlerocketArm64NvidiaFips AMITypes = "BOTTLEROCKET_ARM_64_NVIDIA_FIPS"
+	AMITypesBottlerocketX8664NvidiaFips AMITypes = "BOTTLEROCKET_x86_64_NVIDIA_FIPS"
+	AMITypesWindowsCore2019X8664        AMITypes = "WINDOWS_CORE_2019_x86_64"
+	AMITypesWindowsFull2019X8664        AMITypes = "WINDOWS_FULL_2019_x86_64"
+	AMITypesWindowsCore2022X8664        AMITypes = "WINDOWS_CORE_2022_x86_64"
+	AMITypesWindowsFull2022X8664        AMITypes = "WINDOWS_FULL_2022_x86_64"
+	AMITypesWindowsCore2025X8664        AMITypes = "WINDOWS_CORE_2025_x86_64"
+	AMITypesWindowsFull2025X8664        AMITypes = "WINDOWS_FULL_2025_x86_64"
+	AMITypesAl2023X8664Standard         AMITypes = "AL2023_x86_64_STANDARD"
+	AMITypesAl2023Arm64Standard         AMITypes = "AL2023_ARM_64_STANDARD"
+	AMITypesAl2023X8664Neuron           AMITypes = "AL2023_x86_64_NEURON"
+	AMITypesAl2023X8664Nvidia           AMITypes = "AL2023_x86_64_NVIDIA"
+	AMITypesAl2023Arm64Nvidia           AMITypes = "AL2023_ARM_64_NVIDIA"
 )
 
 // Values returns all known values for AMITypes. Note that this can be expanded in
@@ -121,16 +128,44 @@ func (AMITypes) Values() []AMITypes {
 		"CUSTOM",
 		"BOTTLEROCKET_ARM_64",
 		"BOTTLEROCKET_x86_64",
+		"BOTTLEROCKET_ARM_64_FIPS",
+		"BOTTLEROCKET_x86_64_FIPS",
 		"BOTTLEROCKET_ARM_64_NVIDIA",
 		"BOTTLEROCKET_x86_64_NVIDIA",
+		"BOTTLEROCKET_ARM_64_NVIDIA_FIPS",
+		"BOTTLEROCKET_x86_64_NVIDIA_FIPS",
 		"WINDOWS_CORE_2019_x86_64",
 		"WINDOWS_FULL_2019_x86_64",
 		"WINDOWS_CORE_2022_x86_64",
 		"WINDOWS_FULL_2022_x86_64",
+		"WINDOWS_CORE_2025_x86_64",
+		"WINDOWS_FULL_2025_x86_64",
 		"AL2023_x86_64_STANDARD",
 		"AL2023_ARM_64_STANDARD",
 		"AL2023_x86_64_NEURON",
 		"AL2023_x86_64_NVIDIA",
+		"AL2023_ARM_64_NVIDIA",
+	}
+}
+
+type ArgoCdRole string
+
+// Enum values for ArgoCdRole
+const (
+	ArgoCdRoleAdmin  ArgoCdRole = "ADMIN"
+	ArgoCdRoleEditor ArgoCdRole = "EDITOR"
+	ArgoCdRoleViewer ArgoCdRole = "VIEWER"
+)
+
+// Values returns all known values for ArgoCdRole. Note that this can be expanded
+// in the future, and so it is only as up to date as the client.
+//
+// The ordering of this slice is not guaranteed to be stable across updates.
+func (ArgoCdRole) Values() []ArgoCdRole {
+	return []ArgoCdRole{
+		"ADMIN",
+		"EDITOR",
+		"VIEWER",
 	}
 }
 
@@ -152,6 +187,93 @@ func (AuthenticationMode) Values() []AuthenticationMode {
 		"API",
 		"API_AND_CONFIG_MAP",
 		"CONFIG_MAP",
+	}
+}
+
+type CapabilityDeletePropagationPolicy string
+
+// Enum values for CapabilityDeletePropagationPolicy
+const (
+	CapabilityDeletePropagationPolicyRetain CapabilityDeletePropagationPolicy = "RETAIN"
+)
+
+// Values returns all known values for CapabilityDeletePropagationPolicy. Note
+// that this can be expanded in the future, and so it is only as up to date as the
+// client.
+//
+// The ordering of this slice is not guaranteed to be stable across updates.
+func (CapabilityDeletePropagationPolicy) Values() []CapabilityDeletePropagationPolicy {
+	return []CapabilityDeletePropagationPolicy{
+		"RETAIN",
+	}
+}
+
+type CapabilityIssueCode string
+
+// Enum values for CapabilityIssueCode
+const (
+	CapabilityIssueCodeAccessDenied       CapabilityIssueCode = "AccessDenied"
+	CapabilityIssueCodeClusterUnreachable CapabilityIssueCode = "ClusterUnreachable"
+)
+
+// Values returns all known values for CapabilityIssueCode. Note that this can be
+// expanded in the future, and so it is only as up to date as the client.
+//
+// The ordering of this slice is not guaranteed to be stable across updates.
+func (CapabilityIssueCode) Values() []CapabilityIssueCode {
+	return []CapabilityIssueCode{
+		"AccessDenied",
+		"ClusterUnreachable",
+	}
+}
+
+type CapabilityStatus string
+
+// Enum values for CapabilityStatus
+const (
+	CapabilityStatusCreating     CapabilityStatus = "CREATING"
+	CapabilityStatusCreateFailed CapabilityStatus = "CREATE_FAILED"
+	CapabilityStatusUpdating     CapabilityStatus = "UPDATING"
+	CapabilityStatusDeleting     CapabilityStatus = "DELETING"
+	CapabilityStatusDeleteFailed CapabilityStatus = "DELETE_FAILED"
+	CapabilityStatusActive       CapabilityStatus = "ACTIVE"
+	CapabilityStatusDegraded     CapabilityStatus = "DEGRADED"
+)
+
+// Values returns all known values for CapabilityStatus. Note that this can be
+// expanded in the future, and so it is only as up to date as the client.
+//
+// The ordering of this slice is not guaranteed to be stable across updates.
+func (CapabilityStatus) Values() []CapabilityStatus {
+	return []CapabilityStatus{
+		"CREATING",
+		"CREATE_FAILED",
+		"UPDATING",
+		"DELETING",
+		"DELETE_FAILED",
+		"ACTIVE",
+		"DEGRADED",
+	}
+}
+
+type CapabilityType string
+
+// Enum values for CapabilityType
+const (
+	CapabilityTypeAck    CapabilityType = "ACK"
+	CapabilityTypeKro    CapabilityType = "KRO"
+	CapabilityTypeArgocd CapabilityType = "ARGOCD"
+)
+
+// Values returns all known values for CapabilityType. Note that this can be
+// expanded in the future, and so it is only as up to date as the client.
+//
+// The ordering of this slice is not guaranteed to be stable across updates.
+func (CapabilityType) Values() []CapabilityType {
+	return []CapabilityType{
+		"ACK",
+		"KRO",
+		"ARGOCD",
 	}
 }
 
@@ -181,6 +303,7 @@ type Category string
 // Enum values for Category
 const (
 	CategoryUpgradeReadiness Category = "UPGRADE_READINESS"
+	CategoryMisconfiguration Category = "MISCONFIGURATION"
 )
 
 // Values returns all known values for Category. Note that this can be expanded in
@@ -190,6 +313,7 @@ const (
 func (Category) Values() []Category {
 	return []Category{
 		"UPGRADE_READINESS",
+		"MISCONFIGURATION",
 	}
 }
 
@@ -509,6 +633,27 @@ func (FargateProfileStatus) Values() []FargateProfileStatus {
 	}
 }
 
+type InsightsRefreshStatus string
+
+// Enum values for InsightsRefreshStatus
+const (
+	InsightsRefreshStatusInProgress InsightsRefreshStatus = "IN_PROGRESS"
+	InsightsRefreshStatusFailed     InsightsRefreshStatus = "FAILED"
+	InsightsRefreshStatusCompleted  InsightsRefreshStatus = "COMPLETED"
+)
+
+// Values returns all known values for InsightsRefreshStatus. Note that this can
+// be expanded in the future, and so it is only as up to date as the client.
+//
+// The ordering of this slice is not guaranteed to be stable across updates.
+func (InsightsRefreshStatus) Values() []InsightsRefreshStatus {
+	return []InsightsRefreshStatus{
+		"IN_PROGRESS",
+		"FAILED",
+		"COMPLETED",
+	}
+}
+
 type InsightStatusValue string
 
 // Enum values for InsightStatusValue
@@ -711,6 +856,52 @@ func (NodegroupUpdateStrategies) Values() []NodegroupUpdateStrategies {
 	}
 }
 
+type ProvisionedControlPlaneTier string
+
+// Enum values for ProvisionedControlPlaneTier
+const (
+	ProvisionedControlPlaneTierStandard ProvisionedControlPlaneTier = "standard"
+	ProvisionedControlPlaneTierTierXl   ProvisionedControlPlaneTier = "tier-xl"
+	ProvisionedControlPlaneTierTier2xl  ProvisionedControlPlaneTier = "tier-2xl"
+	ProvisionedControlPlaneTierTier4xl  ProvisionedControlPlaneTier = "tier-4xl"
+	ProvisionedControlPlaneTierTier8xl  ProvisionedControlPlaneTier = "tier-8xl"
+)
+
+// Values returns all known values for ProvisionedControlPlaneTier. Note that this
+// can be expanded in the future, and so it is only as up to date as the client.
+//
+// The ordering of this slice is not guaranteed to be stable across updates.
+func (ProvisionedControlPlaneTier) Values() []ProvisionedControlPlaneTier {
+	return []ProvisionedControlPlaneTier{
+		"standard",
+		"tier-xl",
+		"tier-2xl",
+		"tier-4xl",
+		"tier-8xl",
+	}
+}
+
+type RepairAction string
+
+// Enum values for RepairAction
+const (
+	RepairActionReplace  RepairAction = "Replace"
+	RepairActionReboot   RepairAction = "Reboot"
+	RepairActionNoAction RepairAction = "NoAction"
+)
+
+// Values returns all known values for RepairAction. Note that this can be
+// expanded in the future, and so it is only as up to date as the client.
+//
+// The ordering of this slice is not guaranteed to be stable across updates.
+func (RepairAction) Values() []RepairAction {
+	return []RepairAction{
+		"Replace",
+		"Reboot",
+		"NoAction",
+	}
+}
+
 type ResolveConflicts string
 
 // Enum values for ResolveConflicts
@@ -729,6 +920,25 @@ func (ResolveConflicts) Values() []ResolveConflicts {
 		"OVERWRITE",
 		"NONE",
 		"PRESERVE",
+	}
+}
+
+type SsoIdentityType string
+
+// Enum values for SsoIdentityType
+const (
+	SsoIdentityTypeSsoUser  SsoIdentityType = "SSO_USER"
+	SsoIdentityTypeSsoGroup SsoIdentityType = "SSO_GROUP"
+)
+
+// Values returns all known values for SsoIdentityType. Note that this can be
+// expanded in the future, and so it is only as up to date as the client.
+//
+// The ordering of this slice is not guaranteed to be stable across updates.
+func (SsoIdentityType) Values() []SsoIdentityType {
+	return []SsoIdentityType{
+		"SSO_USER",
+		"SSO_GROUP",
 	}
 }
 
@@ -776,41 +986,52 @@ type UpdateParamType string
 
 // Enum values for UpdateParamType
 const (
-	UpdateParamTypeVersion                  UpdateParamType = "Version"
-	UpdateParamTypePlatformVersion          UpdateParamType = "PlatformVersion"
-	UpdateParamTypeEndpointPrivateAccess    UpdateParamType = "EndpointPrivateAccess"
-	UpdateParamTypeEndpointPublicAccess     UpdateParamType = "EndpointPublicAccess"
-	UpdateParamTypeClusterLogging           UpdateParamType = "ClusterLogging"
-	UpdateParamTypeDesiredSize              UpdateParamType = "DesiredSize"
-	UpdateParamTypeLabelsToAdd              UpdateParamType = "LabelsToAdd"
-	UpdateParamTypeLabelsToRemove           UpdateParamType = "LabelsToRemove"
-	UpdateParamTypeTaintsToAdd              UpdateParamType = "TaintsToAdd"
-	UpdateParamTypeTaintsToRemove           UpdateParamType = "TaintsToRemove"
-	UpdateParamTypeMaxSize                  UpdateParamType = "MaxSize"
-	UpdateParamTypeMinSize                  UpdateParamType = "MinSize"
-	UpdateParamTypeReleaseVersion           UpdateParamType = "ReleaseVersion"
-	UpdateParamTypePublicAccessCidrs        UpdateParamType = "PublicAccessCidrs"
-	UpdateParamTypeLaunchTemplateName       UpdateParamType = "LaunchTemplateName"
-	UpdateParamTypeLaunchTemplateVersion    UpdateParamType = "LaunchTemplateVersion"
-	UpdateParamTypeIdentityProviderConfig   UpdateParamType = "IdentityProviderConfig"
-	UpdateParamTypeEncryptionConfig         UpdateParamType = "EncryptionConfig"
-	UpdateParamTypeAddonVersion             UpdateParamType = "AddonVersion"
-	UpdateParamTypeServiceAccountRoleArn    UpdateParamType = "ServiceAccountRoleArn"
-	UpdateParamTypeResolveConflicts         UpdateParamType = "ResolveConflicts"
-	UpdateParamTypeMaxUnavailable           UpdateParamType = "MaxUnavailable"
-	UpdateParamTypeMaxUnavailablePercentage UpdateParamType = "MaxUnavailablePercentage"
-	UpdateParamTypeNodeRepairEnabled        UpdateParamType = "NodeRepairEnabled"
-	UpdateParamTypeUpdateStrategy           UpdateParamType = "UpdateStrategy"
-	UpdateParamTypeConfigurationValues      UpdateParamType = "ConfigurationValues"
-	UpdateParamTypeSecurityGroups           UpdateParamType = "SecurityGroups"
-	UpdateParamTypeSubnets                  UpdateParamType = "Subnets"
-	UpdateParamTypeAuthenticationMode       UpdateParamType = "AuthenticationMode"
-	UpdateParamTypePodIdentityAssociations  UpdateParamType = "PodIdentityAssociations"
-	UpdateParamTypeUpgradePolicy            UpdateParamType = "UpgradePolicy"
-	UpdateParamTypeZonalShiftConfig         UpdateParamType = "ZonalShiftConfig"
-	UpdateParamTypeComputeConfig            UpdateParamType = "ComputeConfig"
-	UpdateParamTypeStorageConfig            UpdateParamType = "StorageConfig"
-	UpdateParamTypeKubernetesNetworkConfig  UpdateParamType = "KubernetesNetworkConfig"
+	UpdateParamTypeVersion                          UpdateParamType = "Version"
+	UpdateParamTypePlatformVersion                  UpdateParamType = "PlatformVersion"
+	UpdateParamTypeEndpointPrivateAccess            UpdateParamType = "EndpointPrivateAccess"
+	UpdateParamTypeEndpointPublicAccess             UpdateParamType = "EndpointPublicAccess"
+	UpdateParamTypeClusterLogging                   UpdateParamType = "ClusterLogging"
+	UpdateParamTypeDesiredSize                      UpdateParamType = "DesiredSize"
+	UpdateParamTypeLabelsToAdd                      UpdateParamType = "LabelsToAdd"
+	UpdateParamTypeLabelsToRemove                   UpdateParamType = "LabelsToRemove"
+	UpdateParamTypeTaintsToAdd                      UpdateParamType = "TaintsToAdd"
+	UpdateParamTypeTaintsToRemove                   UpdateParamType = "TaintsToRemove"
+	UpdateParamTypeMaxSize                          UpdateParamType = "MaxSize"
+	UpdateParamTypeMinSize                          UpdateParamType = "MinSize"
+	UpdateParamTypeReleaseVersion                   UpdateParamType = "ReleaseVersion"
+	UpdateParamTypePublicAccessCidrs                UpdateParamType = "PublicAccessCidrs"
+	UpdateParamTypeLaunchTemplateName               UpdateParamType = "LaunchTemplateName"
+	UpdateParamTypeLaunchTemplateVersion            UpdateParamType = "LaunchTemplateVersion"
+	UpdateParamTypeIdentityProviderConfig           UpdateParamType = "IdentityProviderConfig"
+	UpdateParamTypeEncryptionConfig                 UpdateParamType = "EncryptionConfig"
+	UpdateParamTypeAddonVersion                     UpdateParamType = "AddonVersion"
+	UpdateParamTypeServiceAccountRoleArn            UpdateParamType = "ServiceAccountRoleArn"
+	UpdateParamTypeResolveConflicts                 UpdateParamType = "ResolveConflicts"
+	UpdateParamTypeMaxUnavailable                   UpdateParamType = "MaxUnavailable"
+	UpdateParamTypeMaxUnavailablePercentage         UpdateParamType = "MaxUnavailablePercentage"
+	UpdateParamTypeNodeRepairEnabled                UpdateParamType = "NodeRepairEnabled"
+	UpdateParamTypeUpdateStrategy                   UpdateParamType = "UpdateStrategy"
+	UpdateParamTypeConfigurationValues              UpdateParamType = "ConfigurationValues"
+	UpdateParamTypeSecurityGroups                   UpdateParamType = "SecurityGroups"
+	UpdateParamTypeSubnets                          UpdateParamType = "Subnets"
+	UpdateParamTypeAuthenticationMode               UpdateParamType = "AuthenticationMode"
+	UpdateParamTypePodIdentityAssociations          UpdateParamType = "PodIdentityAssociations"
+	UpdateParamTypeUpgradePolicy                    UpdateParamType = "UpgradePolicy"
+	UpdateParamTypeZonalShiftConfig                 UpdateParamType = "ZonalShiftConfig"
+	UpdateParamTypeComputeConfig                    UpdateParamType = "ComputeConfig"
+	UpdateParamTypeStorageConfig                    UpdateParamType = "StorageConfig"
+	UpdateParamTypeKubernetesNetworkConfig          UpdateParamType = "KubernetesNetworkConfig"
+	UpdateParamTypeRemoteNetworkConfig              UpdateParamType = "RemoteNetworkConfig"
+	UpdateParamTypeDeletionProtection               UpdateParamType = "DeletionProtection"
+	UpdateParamTypeNodeRepairConfig                 UpdateParamType = "NodeRepairConfig"
+	UpdateParamTypeVendedLogs                       UpdateParamType = "VendedLogs"
+	UpdateParamTypeUpdatedTier                      UpdateParamType = "UpdatedTier"
+	UpdateParamTypePreviousTier                     UpdateParamType = "PreviousTier"
+	UpdateParamTypeWarmPoolEnabled                  UpdateParamType = "WarmPoolEnabled"
+	UpdateParamTypeWarmPoolMaxGroupPreparedCapacity UpdateParamType = "WarmPoolMaxGroupPreparedCapacity"
+	UpdateParamTypeWarmPoolMinSize                  UpdateParamType = "WarmPoolMinSize"
+	UpdateParamTypeWarmPoolState                    UpdateParamType = "WarmPoolState"
+	UpdateParamTypeWarmPoolReuseOnScaleIn           UpdateParamType = "WarmPoolReuseOnScaleIn"
 )
 
 // Values returns all known values for UpdateParamType. Note that this can be
@@ -854,6 +1075,17 @@ func (UpdateParamType) Values() []UpdateParamType {
 		"ComputeConfig",
 		"StorageConfig",
 		"KubernetesNetworkConfig",
+		"RemoteNetworkConfig",
+		"DeletionProtection",
+		"NodeRepairConfig",
+		"VendedLogs",
+		"UpdatedTier",
+		"PreviousTier",
+		"WarmPoolEnabled",
+		"WarmPoolMaxGroupPreparedCapacity",
+		"WarmPoolMinSize",
+		"WarmPoolState",
+		"WarmPoolReuseOnScaleIn",
 	}
 }
 
@@ -897,6 +1129,10 @@ const (
 	UpdateTypeUpgradePolicyUpdate                UpdateType = "UpgradePolicyUpdate"
 	UpdateTypeZonalShiftConfigUpdate             UpdateType = "ZonalShiftConfigUpdate"
 	UpdateTypeAutoModeUpdate                     UpdateType = "AutoModeUpdate"
+	UpdateTypeRemoteNetworkConfigUpdate          UpdateType = "RemoteNetworkConfigUpdate"
+	UpdateTypeDeletionProtectionUpdate           UpdateType = "DeletionProtectionUpdate"
+	UpdateTypeControlPlaneScalingConfigUpdate    UpdateType = "ControlPlaneScalingConfigUpdate"
+	UpdateTypeVendedLogsUpdate                   UpdateType = "VendedLogsUpdate"
 )
 
 // Values returns all known values for UpdateType. Note that this can be expanded
@@ -918,6 +1154,10 @@ func (UpdateType) Values() []UpdateType {
 		"UpgradePolicyUpdate",
 		"ZonalShiftConfigUpdate",
 		"AutoModeUpdate",
+		"RemoteNetworkConfigUpdate",
+		"DeletionProtectionUpdate",
+		"ControlPlaneScalingConfigUpdate",
+		"VendedLogsUpdate",
 	}
 }
 
@@ -939,5 +1179,26 @@ func (VersionStatus) Values() []VersionStatus {
 		"UNSUPPORTED",
 		"STANDARD_SUPPORT",
 		"EXTENDED_SUPPORT",
+	}
+}
+
+type WarmPoolState string
+
+// Enum values for WarmPoolState
+const (
+	WarmPoolStateStopped    WarmPoolState = "STOPPED"
+	WarmPoolStateRunning    WarmPoolState = "RUNNING"
+	WarmPoolStateHibernated WarmPoolState = "HIBERNATED"
+)
+
+// Values returns all known values for WarmPoolState. Note that this can be
+// expanded in the future, and so it is only as up to date as the client.
+//
+// The ordering of this slice is not guaranteed to be stable across updates.
+func (WarmPoolState) Values() []WarmPoolState {
+	return []WarmPoolState{
+		"STOPPED",
+		"RUNNING",
+		"HIBERNATED",
 	}
 }

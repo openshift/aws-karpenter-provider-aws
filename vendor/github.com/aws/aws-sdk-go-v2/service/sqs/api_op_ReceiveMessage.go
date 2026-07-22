@@ -112,7 +112,7 @@ type ReceiveMessageInput struct {
 	//   calls the SendMessageaction.
 	//
 	//   - MessageGroupId – Returns the value provided by the producer that calls the SendMessage
-	//   action. Messages with the same MessageGroupId are returned in sequence.
+	//   action.
 	//
 	//   - SequenceNumber – Returns the value provided by Amazon SQS.
 	//
@@ -181,7 +181,7 @@ type ReceiveMessageInput struct {
 	//   calls the SendMessageaction.
 	//
 	//   - MessageGroupId – Returns the value provided by the producer that calls the SendMessage
-	//   action. Messages with the same MessageGroupId are returned in sequence.
+	//   action.
 	//
 	//   - SequenceNumber – Returns the value provided by Amazon SQS.
 	//
@@ -227,7 +227,7 @@ type ReceiveMessageInput struct {
 	//   - While messages with a particular MessageGroupId are invisible, no more
 	//   messages belonging to the same MessageGroupId are returned until the
 	//   visibility timeout expires. You can still receive messages with another
-	//   MessageGroupId as long as it is also visible.
+	//   MessageGroupId from your FIFO queue as long as they are visible.
 	//
 	//   - If a caller of ReceiveMessage can't track the ReceiveRequestAttemptId , no
 	//   retries work until the original visibility timeout expires. As a result, delays
@@ -342,7 +342,7 @@ func (c *Client) addOperationReceiveMessageMiddlewares(stack *middleware.Stack, 
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
+	if err = addRetry(stack, options, c); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -369,10 +369,10 @@ func (c *Client) addOperationReceiveMessageMiddlewares(stack *middleware.Stack, 
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
 		return err
 	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
+	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpReceiveMessageValidationMiddleware(stack); err != nil {
@@ -396,16 +396,13 @@ func (c *Client) addOperationReceiveMessageMiddlewares(stack *middleware.Stack, 
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeEnd(stack); err != nil {
+	if err = addInterceptAttempt(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil

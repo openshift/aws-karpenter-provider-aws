@@ -23,16 +23,15 @@ import (
 	"log"
 	"reflect"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
-
-	"k8s.io/utils/clock/testing"
 
 	opmetrics "github.com/awslabs/operatorpkg/metrics"
 	"github.com/awslabs/operatorpkg/singleton"
 	"github.com/awslabs/operatorpkg/status"
-	. "github.com/onsi/ginkgo/v2" //nolint:revive,stylecheck
-	. "github.com/onsi/gomega"    //nolint:revive,stylecheck
+	. "github.com/onsi/ginkgo/v2" //nolint:revive
+	. "github.com/onsi/gomega"    //nolint:revive
 	"github.com/prometheus/client_golang/prometheus"
 	prometheusmodel "github.com/prometheus/client_model/go"
 	"github.com/samber/lo"
@@ -40,6 +39,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	resourcev1 "k8s.io/api/resource/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -48,6 +48,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -55,6 +56,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/apis/v1alpha1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/lifecycle"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning"
@@ -64,7 +66,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/metrics"
 	pscheduling "sigs.k8s.io/karpenter/pkg/scheduling"
 	"sigs.k8s.io/karpenter/pkg/test"
-	"sigs.k8s.io/karpenter/pkg/test/v1alpha1"
+	testv1alpha1 "sigs.k8s.io/karpenter/pkg/test/v1alpha1"
 )
 
 const (
@@ -123,29 +125,18 @@ func ExpectScheduled(ctx context.Context, c client.Client, pod *corev1.Pod) *cor
 	return ExpectNodeExists(ctx, c, p.Spec.NodeName)
 }
 
+func ExpectPodsScheduled(ctx context.Context, c client.Client, pods ...*corev1.Pod) {
+	GinkgoHelper()
+	for _, p := range pods {
+		ExpectScheduled(ctx, c, p)
+	}
+}
+
 func ExpectNotScheduled(ctx context.Context, c client.Client, pod *corev1.Pod) *corev1.Pod {
 	GinkgoHelper()
 	p := ExpectPodExists(ctx, c, pod.Name, pod.Namespace)
 	Eventually(p.Spec.NodeName).Should(BeEmpty(), fmt.Sprintf("expected %s/%s to not be scheduled", pod.Namespace, pod.Name))
 	return p
-}
-
-// ExpectToWait continually polls the wait group to see if there
-// is a timer waiting, incrementing the clock if not.
-func ExpectToWait(fakeClock *testing.FakeClock, wg *sync.WaitGroup) {
-	wg.Add(1)
-	Expect(fakeClock.HasWaiters()).To(BeFalse())
-	go func() {
-		defer GinkgoRecover()
-		defer wg.Done()
-		Eventually(func() bool { return fakeClock.HasWaiters() }).
-			// Caution: if another go routine takes longer than this timeout to
-			// wait on the clock, we will deadlock until the test suite timeout
-			WithTimeout(10 * time.Second).
-			WithPolling(10 * time.Millisecond).
-			Should(BeTrue())
-		fakeClock.Step(45 * time.Second)
-	}()
 }
 
 func ExpectApplied(ctx context.Context, c client.Client, objects ...client.Object) {
@@ -188,6 +179,20 @@ func ExpectDeleted(ctx context.Context, c client.Client, objects ...client.Objec
 		}
 		ExpectNotFound(ctx, c, object)
 	}
+}
+
+func ExpectReconciled(ctx context.Context, reconciler reconcile.Reconciler, request reconcile.Request) reconcile.Result {
+	GinkgoHelper()
+	result, err := reconciler.Reconcile(ctx, request)
+	Expect(err).ToNot(HaveOccurred())
+	return result
+}
+
+func ExpectReconciledFailed(ctx context.Context, reconciler reconcile.Reconciler, request reconcile.Request) reconcile.Result {
+	GinkgoHelper()
+	result, err := reconciler.Reconcile(ctx, request)
+	Expect(err).To(HaveOccurred())
+	return result
 }
 
 func ExpectSingletonReconciled(ctx context.Context, reconciler singleton.Reconciler) reconcile.Result {
@@ -251,8 +256,10 @@ func ExpectCleanedUp(ctx context.Context, c client.Client) {
 		&corev1.PersistentVolume{},
 		&storagev1.StorageClass{},
 		&v1.NodePool{},
-		&v1alpha1.TestNodeClass{},
+		&testv1alpha1.TestNodeClass{},
 		&v1.NodeClaim{},
+		&v1alpha1.NodeOverlay{},
+		&resourcev1.ResourceClaim{},
 	} {
 		for _, namespace := range namespaces.Items {
 			wg.Add(1)
@@ -260,8 +267,12 @@ func ExpectCleanedUp(ctx context.Context, c client.Client) {
 				GinkgoHelper()
 				defer wg.Done()
 				defer GinkgoRecover()
-				Expect(c.DeleteAllOf(ctx, object, client.InNamespace(namespace),
-					&client.DeleteAllOfOptions{DeleteOptions: client.DeleteOptions{GracePeriodSeconds: lo.ToPtr(int64(0))}})).ToNot(HaveOccurred())
+				err := c.DeleteAllOf(ctx, object, client.InNamespace(namespace),
+					&client.DeleteAllOfOptions{DeleteOptions: client.DeleteOptions{GracePeriodSeconds: lo.ToPtr(int64(0))}})
+				// Fail open for CRDs that don't exist on this k8s version (e.g. ResourceClaim on < 1.34)
+				if err != nil && !meta.IsNoMatchError(err) {
+					Expect(err).ToNot(HaveOccurred())
+				}
 			}(object, namespace.Name)
 		}
 	}
@@ -299,7 +310,15 @@ func ExpectProvisioned(ctx context.Context, c client.Client, cluster *state.Clus
 	for pod, binding := range bindings {
 		// Only bind the pods that are passed through
 		if podKeys.Has(client.ObjectKeyFromObject(pod).String()) {
-			ExpectManualBinding(ctx, c, pod, binding.Node)
+			// We have to manually bind the pod to the node when using a fakeClient by setting the value for pod.Spec.NodeName
+			if strings.Contains(reflect.TypeOf(c).String(), "fake") {
+				pod.Spec.NodeName = binding.Node.Name
+				err := c.Update(ctx, pod)
+				Expect(err).ToNot(HaveOccurred())
+				ExpectExists(ctx, c, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: binding.Node.Name, Namespace: binding.Node.Namespace}})
+			} else {
+				ExpectManualBinding(ctx, c, pod, binding.Node)
+			}
 			Expect(cluster.UpdatePod(ctx, pod)).To(Succeed()) // track pod bindings
 		}
 	}
@@ -351,6 +370,16 @@ func ExpectProvisionedNoBinding(ctx context.Context, c client.Client, cluster *s
 	return bindings
 }
 
+func ExpectProvisionedResults(ctx context.Context, c client.Client, cluster *state.Cluster, cloudProvider cloudprovider.CloudProvider, provisioner *provisioning.Provisioner, pods ...*corev1.Pod) scheduling.Results {
+	GinkgoHelper()
+	// Persist objects
+	for _, pod := range pods {
+		ExpectApplied(ctx, c, pod)
+	}
+	results, _ := provisioner.Schedule(ctx)
+	return results
+}
+
 func ExpectNodeClaimDeployedNoNode(ctx context.Context, c client.Client, cloudProvider cloudprovider.CloudProvider, nc *v1.NodeClaim) (*v1.NodeClaim, error) {
 	GinkgoHelper()
 
@@ -381,6 +410,7 @@ func ExpectNodeClaimDeployed(ctx context.Context, c client.Client, cloudProvider
 	node := test.NodeClaimLinkedNode(nc)
 	node.Spec.Taints = lo.Reject(node.Spec.Taints, func(t corev1.Taint, _ int) bool { return t.MatchTaint(&v1.UnregisteredNoExecuteTaint) })
 	node.Labels = lo.Assign(node.Labels, map[string]string{v1.NodeRegisteredLabelKey: "true"})
+	nc.Status.NodeName = node.Name
 	ExpectApplied(ctx, c, nc, node)
 	return nc, node, nil
 }
@@ -415,20 +445,20 @@ func ExpectNodeClaimsCascadeDeletion(ctx context.Context, c client.Client, nodeC
 	}
 }
 
-func ExpectMakeNodeClaimsInitialized(ctx context.Context, c client.Client, nodeClaims ...*v1.NodeClaim) {
+func ExpectMakeNodeClaimsInitialized(ctx context.Context, c client.Client, clk clock.Clock, nodeClaims ...*v1.NodeClaim) {
 	GinkgoHelper()
 	for i := range nodeClaims {
 		nodeClaims[i] = ExpectExists(ctx, c, nodeClaims[i])
-		nodeClaims[i].StatusConditions().SetTrue(v1.ConditionTypeLaunched)
-		nodeClaims[i].StatusConditions().SetTrue(v1.ConditionTypeRegistered)
-		nodeClaims[i].StatusConditions().SetTrue(v1.ConditionTypeInitialized)
+		nodeClaims[i].StatusConditions(status.WithClock(clk)).SetTrue(v1.ConditionTypeLaunched)
+		nodeClaims[i].StatusConditions(status.WithClock(clk)).SetTrue(v1.ConditionTypeRegistered)
+		nodeClaims[i].StatusConditions(status.WithClock(clk)).SetTrue(v1.ConditionTypeInitialized)
 		ExpectApplied(ctx, c, nodeClaims[i])
 	}
 }
 
-func ExpectMakeNodesInitialized(ctx context.Context, c client.Client, nodes ...*corev1.Node) {
+func ExpectMakeNodesInitialized(ctx context.Context, c client.Client, clk clock.Clock, nodes ...*corev1.Node) {
 	GinkgoHelper()
-	ExpectMakeNodesReady(ctx, c, nodes...)
+	ExpectMakeNodesReady(ctx, c, clk, nodes...)
 
 	for i := range nodes {
 		nodes[i].Spec.Taints = lo.Reject(nodes[i].Spec.Taints, func(t corev1.Taint, _ int) bool { return t.MatchTaint(&v1.UnregisteredNoExecuteTaint) })
@@ -438,7 +468,7 @@ func ExpectMakeNodesInitialized(ctx context.Context, c client.Client, nodes ...*
 	}
 }
 
-func ExpectMakeNodesNotReady(ctx context.Context, c client.Client, nodes ...*corev1.Node) {
+func ExpectMakeNodesNotReady(ctx context.Context, c client.Client, clk clock.Clock, nodes ...*corev1.Node) {
 	for i := range nodes {
 		nodes[i] = ExpectExists(ctx, c, nodes[i])
 		nodes[i].Status.Phase = corev1.NodeRunning
@@ -446,8 +476,8 @@ func ExpectMakeNodesNotReady(ctx context.Context, c client.Client, nodes ...*cor
 			{
 				Type:               corev1.NodeReady,
 				Status:             corev1.ConditionFalse,
-				LastHeartbeatTime:  metav1.Now(),
-				LastTransitionTime: metav1.Now(),
+				LastHeartbeatTime:  metav1.NewTime(clk.Now()),
+				LastTransitionTime: metav1.NewTime(clk.Now()),
 				Reason:             "NotReady",
 			},
 		}
@@ -458,7 +488,7 @@ func ExpectMakeNodesNotReady(ctx context.Context, c client.Client, nodes ...*cor
 	}
 }
 
-func ExpectMakeNodesReady(ctx context.Context, c client.Client, nodes ...*corev1.Node) {
+func ExpectMakeNodesReady(ctx context.Context, c client.Client, clk clock.Clock, nodes ...*corev1.Node) {
 	for i := range nodes {
 		nodes[i] = ExpectExists(ctx, c, nodes[i])
 		nodes[i].Status.Phase = corev1.NodeRunning
@@ -466,8 +496,8 @@ func ExpectMakeNodesReady(ctx context.Context, c client.Client, nodes ...*corev1
 			{
 				Type:               corev1.NodeReady,
 				Status:             corev1.ConditionTrue,
-				LastHeartbeatTime:  metav1.Now(),
-				LastTransitionTime: metav1.Now(),
+				LastHeartbeatTime:  metav1.NewTime(clk.Now()),
+				LastTransitionTime: metav1.NewTime(clk.Now()),
 				Reason:             "KubeletReady",
 			},
 		}
@@ -659,13 +689,12 @@ func ExpectNodeClaims(ctx context.Context, c client.Client) []*v1.NodeClaim {
 func ExpectStateNodeExists(cluster *state.Cluster, node *corev1.Node) *state.StateNode {
 	GinkgoHelper()
 	var ret *state.StateNode
-	cluster.ForEachNode(func(n *state.StateNode) bool {
-		if n.Node.Name != node.Name {
-			return true
+	for n := range cluster.Nodes() {
+		if n.Node.Name == node.Name {
+			ret = n.DeepCopy()
+			break
 		}
-		ret = n.DeepCopy()
-		return false
-	})
+	}
 	Expect(ret).ToNot(BeNil())
 	return ret
 }
@@ -673,22 +702,21 @@ func ExpectStateNodeExists(cluster *state.Cluster, node *corev1.Node) *state.Sta
 func ExpectStateNodeExistsForNodeClaim(cluster *state.Cluster, nodeClaim *v1.NodeClaim) *state.StateNode {
 	GinkgoHelper()
 	var ret *state.StateNode
-	cluster.ForEachNode(func(n *state.StateNode) bool {
-		if n.NodeClaim.Status.ProviderID != nodeClaim.Status.ProviderID {
-			return true
+	for n := range cluster.Nodes() {
+		if n.NodeClaim.Status.ProviderID == nodeClaim.Status.ProviderID {
+			ret = n.DeepCopy()
+			break
 		}
-		ret = n.DeepCopy()
-		return false
-	})
+	}
 	Expect(ret).ToNot(BeNil())
 	return ret
 }
 
-func ExpectMakeNodesAndNodeClaimsInitializedAndStateUpdated(ctx context.Context, c client.Client, nodeStateController *informer.NodeController, nodeClaimStateController *informer.NodeClaimController, nodes []*corev1.Node, nodeClaims []*v1.NodeClaim) {
+func ExpectMakeNodesAndNodeClaimsInitializedAndStateUpdated(ctx context.Context, c client.Client, clk clock.Clock, nodeStateController *informer.NodeController, nodeClaimStateController *informer.NodeClaimController, nodes []*corev1.Node, nodeClaims []*v1.NodeClaim) {
 	GinkgoHelper()
 
-	ExpectMakeNodesInitialized(ctx, c, nodes...)
-	ExpectMakeNodeClaimsInitialized(ctx, c, nodeClaims...)
+	ExpectMakeNodesInitialized(ctx, c, clk, nodes...)
+	ExpectMakeNodeClaimsInitialized(ctx, c, clk, nodeClaims...)
 
 	// Inform cluster state about node and nodeclaim readiness
 	for _, n := range nodes {
@@ -733,4 +761,26 @@ func ConsistentlyExpectNotTerminating(ctx context.Context, c client.Client, objs
 			g.Expect(obj.GetDeletionTimestamp().IsZero()).To(BeTrue())
 		}
 	}, time.Second).Should(Succeed())
+}
+
+func ExpectParallelized(fs ...func()) {
+	wg := sync.WaitGroup{}
+	wg.Add(len(fs))
+	for _, f := range fs {
+		go func() {
+			defer GinkgoRecover()
+			defer wg.Done()
+			f()
+		}()
+	}
+	wg.Wait()
+}
+
+func ExpectStateNodePoolCount(cluster *state.Cluster, npName string, r, d, pd int) {
+	GinkgoHelper()
+
+	running, deleting, pendingdisruption := cluster.NodePoolState.GetNodeCount(npName)
+	Expect(running).To(Equal(r))
+	Expect(deleting).To(Equal(d))
+	Expect(pendingdisruption).To(Equal(pd))
 }

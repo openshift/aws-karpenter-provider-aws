@@ -31,17 +31,17 @@ const Never = "Never"
 // marshaling to YAML and JSON. It uses the value "Never" to signify
 // that the duration is disabled and sets the inner duration as nil
 type NillableDuration struct {
-	*time.Duration
+	*time.Duration //nolint:kubeapilinter
 
 	// Raw is used to ensure we remarshal the NillableDuration in the same format it was specified.
 	// This ensures tools like Flux and ArgoCD don't mistakenly detect drift due to our conversion webhooks.
-	Raw []byte `hash:"ignore"`
+	Raw []byte `hash:"ignore"` //nolint:kubeapilinter
 }
 
 func MustParseNillableDuration(val string) NillableDuration {
 	nd := NillableDuration{}
 	// Use %q instead of %s to ensure that we unmarshal the value as a string and not an int
-	lo.Must0(json.Unmarshal([]byte(fmt.Sprintf("%q", val)), &nd))
+	lo.Must0(json.Unmarshal(fmt.Appendf(nil, "%q", val), &nd))
 	return nd
 }
 
@@ -70,18 +70,18 @@ func (d NillableDuration) MarshalJSON() ([]byte, error) {
 		return d.Raw, nil
 	}
 	if d.Duration != nil {
-		return json.Marshal(d.Duration.String())
+		return json.Marshal(d.String())
 	}
 	return json.Marshal(Never)
 }
 
 // ToUnstructured implements the value.UnstructuredConverter interface.
-func (d NillableDuration) ToUnstructured() interface{} {
+func (d NillableDuration) ToUnstructured() any {
 	if d.Raw != nil {
 		return d.Raw
 	}
 	if d.Duration != nil {
-		return d.Duration.String()
+		return d.String()
 	}
 	return Never
 }

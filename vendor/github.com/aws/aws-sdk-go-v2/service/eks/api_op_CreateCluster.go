@@ -32,7 +32,9 @@ import (
 // You can use the endpointPublicAccess and endpointPrivateAccess parameters to
 // enable or disable public and private access to your cluster's Kubernetes API
 // server endpoint. By default, public access is enabled, and private access is
-// disabled. For more information, see [Amazon EKS Cluster Endpoint Access Control]in the Amazon EKS User Guide .
+// disabled. The endpoint domain name and IP address family depends on the value of
+// the ipFamily for the cluster. For more information, see [Amazon EKS Cluster Endpoint Access Control] in the Amazon EKS User
+// Guide .
 //
 // You can use the logging parameter to enable or disable exporting the Kubernetes
 // control plane logs for your cluster to CloudWatch Logs. By default, cluster
@@ -105,7 +107,7 @@ type CreateClusterInput struct {
 	// If you set this value to False when creating a cluster, the default networking
 	// add-ons will not be installed.
 	//
-	// The default networking addons include vpc-cni, coredns, and kube-proxy.
+	// The default networking add-ons include vpc-cni , coredns , and kube-proxy .
 	//
 	// Use this option when you plan to install third-party alternative add-ons or
 	// self-manage the default networking add-ons.
@@ -119,6 +121,15 @@ type CreateClusterInput struct {
 	// EKS Auto Mode cluster. If the compute capability is enabled, EKS Auto Mode will
 	// create and delete EC2 Managed Instances in your Amazon Web Services account
 	ComputeConfig *types.ComputeConfigRequest
+
+	// The control plane scaling tier configuration. For more information, see EKS
+	// Provisioned Control Plane in the Amazon EKS User Guide.
+	ControlPlaneScalingConfig *types.ControlPlaneScalingConfig
+
+	// Indicates whether to enable deletion protection for the cluster. When enabled,
+	// the cluster cannot be deleted unless deletion protection is first disabled. This
+	// helps prevent accidental cluster deletion. Default value is false .
+	DeletionProtection *bool
 
 	// The encryption configuration for the cluster.
 	EncryptionConfig []types.EncryptionConfig
@@ -145,8 +156,8 @@ type CreateClusterInput struct {
 	// [Local clusters for Amazon EKS on Amazon Web Services Outposts]: https://docs.aws.amazon.com/eks/latest/userguide/eks-outposts-local-cluster-overview.html
 	OutpostConfig *types.OutpostConfigRequest
 
-	// The configuration in the cluster for EKS Hybrid Nodes. You can't change or
-	// update this configuration after the cluster is created.
+	// The configuration in the cluster for EKS Hybrid Nodes. You can add, change, or
+	// remove this configuration after the cluster is created.
 	RemoteNetworkConfig *types.RemoteNetworkConfigRequest
 
 	// Enable or disable the block storage capability of EKS Auto Mode when creating
@@ -236,7 +247,7 @@ func (c *Client) addOperationCreateClusterMiddlewares(stack *middleware.Stack, o
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
+	if err = addRetry(stack, options, c); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -260,10 +271,10 @@ func (c *Client) addOperationCreateClusterMiddlewares(stack *middleware.Stack, o
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
 		return err
 	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
+	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addIdempotencyToken_opCreateClusterMiddleware(stack, options); err != nil {
@@ -290,16 +301,13 @@ func (c *Client) addOperationCreateClusterMiddlewares(stack *middleware.Stack, o
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeEnd(stack); err != nil {
+	if err = addInterceptAttempt(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil

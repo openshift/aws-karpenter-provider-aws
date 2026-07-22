@@ -13,7 +13,17 @@ import (
 
 // Returns a list of all insights checked for against the specified cluster. You
 // can filter which insights are returned by category, associated Kubernetes
-// version, and status.
+// version, and status. The default filter lists all categories and every status.
+//
+// The following lists the available categories:
+//
+//   - UPGRADE_READINESS : Amazon EKS identifies issues that could impact your
+//     ability to upgrade to new versions of Kubernetes. These are called upgrade
+//     insights.
+//
+//   - MISCONFIGURATION : Amazon EKS identifies misconfiguration in your EKS Hybrid
+//     Nodes setup that could impair functionality of your cluster or workloads. These
+//     are called configuration insights.
 func (c *Client) ListInsights(ctx context.Context, params *ListInsightsInput, optFns ...func(*Options)) (*ListInsightsOutput, error) {
 	if params == nil {
 		params = &ListInsightsInput{}
@@ -110,7 +120,7 @@ func (c *Client) addOperationListInsightsMiddlewares(stack *middleware.Stack, op
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
+	if err = addRetry(stack, options, c); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -134,10 +144,10 @@ func (c *Client) addOperationListInsightsMiddlewares(stack *middleware.Stack, op
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
 		return err
 	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
+	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpListInsightsValidationMiddleware(stack); err != nil {
@@ -161,16 +171,13 @@ func (c *Client) addOperationListInsightsMiddlewares(stack *middleware.Stack, op
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeEnd(stack); err != nil {
+	if err = addInterceptAttempt(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil

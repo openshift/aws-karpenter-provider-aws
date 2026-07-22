@@ -21,7 +21,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/awslabs/operatorpkg/status"
+	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
+	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -40,16 +43,19 @@ const (
 
 // Drift is a nodeclaim sub-controller that adds or removes status conditions on drifted nodeclaims
 type Drift struct {
-	cloudProvider cloudprovider.CloudProvider
+	clock                          clock.Clock
+	cloudProvider                  cloudprovider.CloudProvider
+	instanceTypeNotFoundCheckCache *cache.Cache
 }
 
 func (d *Drift) Reconcile(ctx context.Context, nodePool *v1.NodePool, nodeClaim *v1.NodeClaim) (reconcile.Result, error) {
+	clockOpt := status.WithClock(d.clock)
 	hasDriftedCondition := nodeClaim.StatusConditions().Get(v1.ConditionTypeDrifted) != nil
 
 	// From here there are three scenarios to handle:
 	// 1. If NodeClaim is not launched, remove the drift status condition
 	if !nodeClaim.StatusConditions().Get(v1.ConditionTypeLaunched).IsTrue() {
-		_ = nodeClaim.StatusConditions().Clear(v1.ConditionTypeDrifted)
+		_ = nodeClaim.StatusConditions(clockOpt).Clear(v1.ConditionTypeDrifted)
 		if hasDriftedCondition {
 			log.FromContext(ctx).V(1).Info("removing drift status condition, isn't launched")
 		}
@@ -62,13 +68,13 @@ func (d *Drift) Reconcile(ctx context.Context, nodePool *v1.NodePool, nodeClaim 
 	// 2. Otherwise, if the NodeClaim isn't drifted, but has the status condition, remove it.
 	if driftedReason == "" {
 		if hasDriftedCondition {
-			_ = nodeClaim.StatusConditions().Clear(v1.ConditionTypeDrifted)
+			_ = nodeClaim.StatusConditions(clockOpt).Clear(v1.ConditionTypeDrifted)
 			log.FromContext(ctx).V(1).Info("removing drifted status condition, not drifted")
 		}
 		return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 	// 3. Finally, if the NodeClaim is drifted, but doesn't have status condition, add it.
-	nodeClaim.StatusConditions().SetTrueWithReason(v1.ConditionTypeDrifted, string(driftedReason), string(driftedReason))
+	nodeClaim.StatusConditions(clockOpt).SetTrueWithReason(v1.ConditionTypeDrifted, string(driftedReason), string(driftedReason))
 	if !hasDriftedCondition {
 		log.FromContext(ctx).V(1).WithValues("reason", string(driftedReason)).Info("marking drifted")
 	}
@@ -84,13 +90,20 @@ func (d *Drift) isDrifted(ctx context.Context, nodePool *v1.NodePool, nodeClaim 
 	}); reason != "" {
 		return reason, nil
 	}
-	// Include instance type checking separate from the other two to reduce the amount of times we grab the instance types.
-	its, err := d.cloudProvider.GetInstanceTypes(ctx, nodePool)
-	if err != nil {
-		return "", err
-	}
-	if reason := instanceTypeNotFound(its, nodeClaim); reason != "" {
-		return reason, nil
+	// To reduce the amount of GetInstanceTypes() calls that we make per-NodeClaim, only check this for a NodeClaim once every 30m and don't start checking it until 1h after creation
+	// It's alright to be more delayed with instance type drift since this is a cloudprovider-generated set of options rather than a user-defined field
+	if _, ok := d.instanceTypeNotFoundCheckCache.Get(string(nodeClaim.UID)); !ok && d.clock.Since(nodeClaim.CreationTimestamp.Time) > time.Hour {
+		// Include instance type checking separate from the other two to reduce the amount of times we grab the instance types.
+		its, err := d.cloudProvider.GetInstanceTypes(ctx, nodePool)
+		if err != nil {
+			return "", err
+		}
+		if reason := instanceTypeNotFound(its, nodeClaim); reason != "" {
+			return reason, nil
+		}
+		// Only add a cache entry once we've validated that an instance type exists. We only cache a successful check rather
+		// that the result to ensure we respond quickly to transient abnormalities in the GetInstanceTypes response.
+		d.instanceTypeNotFoundCheckCache.SetDefault(string(nodeClaim.UID), nil)
 	}
 	// Then check if it's drifted from the cloud provider side.
 	driftedReason, err := d.cloudProvider.IsDrifted(ctx, nodeClaim)
@@ -115,16 +128,29 @@ func instanceTypeNotFound(its []*cloudprovider.InstanceType, nodeClaim *v1.NodeC
 	it, ok := lo.Find(its, func(it *cloudprovider.InstanceType) bool {
 		return it.Name == nodeClaim.Labels[corev1.LabelInstanceTypeStable]
 	})
-	// Offerings should in most cases only have zone and capacity type. This likely shouldn't differ
-	// across cloud providers.
-	if !ok || !it.Offerings.HasCompatible(scheduling.NewLabelRequirements(nodeClaim.Labels)) {
+	if !ok {
+		return InstanceTypeNotFound
+	}
+	reqs := scheduling.NewLabelRequirements(nodeClaim.Labels)
+	// The reserved capacity type is special because a NodeClaim can be demoted from reserved to on-demand after creation.
+	// For this reason, when evaluating drift due to unavailable offerings, we should check both reserved and on-demand for
+	// reserved nodeclaims. This ensures we don't drift a nodeclaim whoes label hasn't been updated yet. If the NodePool
+	// isn't compatible with on-demand, this will be caught in subsequent iterations by requirements drift. For a similar
+	// reason we don't compare against the reservation ID and leave that to the provider to implement.
+	if nodeClaim.Labels[v1.CapacityTypeLabelKey] == v1.CapacityTypeReserved {
+		reqs[v1.CapacityTypeLabelKey] = scheduling.NewRequirement(v1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, v1.CapacityTypeReserved, v1.CapacityTypeOnDemand)
+		for label := range cloudprovider.ReservedCapacityLabels {
+			delete(reqs, label)
+		}
+	}
+	if !it.Offerings.HasCompatible(reqs) {
 		return InstanceTypeNotFound
 	}
 	return ""
 }
 
 // Eligible fields for drift are described in the docs
-// https://karpenter.sh/docs/concepts/deprovisioning/#drift
+// https://karpenter.sh/docs/concepts/disruption/#drift
 func areStaticFieldsDrifted(nodePool *v1.NodePool, nodeClaim *v1.NodeClaim) cloudprovider.DriftReason {
 	nodePoolHash, foundNodePoolHash := nodePool.Annotations[v1.NodePoolHashAnnotationKey]
 	nodePoolHashVersion, foundNodePoolHashVersion := nodePool.Annotations[v1.NodePoolHashVersionAnnotationKey]

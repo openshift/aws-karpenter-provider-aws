@@ -61,12 +61,16 @@ type CreateAddonInput struct {
 	// DescribeAddonConfiguration .
 	ConfigurationValues *string
 
-	// An array of Pod Identity Assocations to be created. Each EKS Pod Identity
-	// association maps a Kubernetes service account to an IAM Role.
+	// The namespace configuration for the addon. If specified, this will override the
+	// default namespace for the addon.
+	NamespaceConfig *types.AddonNamespaceConfigRequest
+
+	// An array of EKS Pod Identity associations to be created. Each association maps
+	// a Kubernetes service account to an IAM role.
 	//
-	// For more information, see [Attach an IAM Role to an Amazon EKS add-on using Pod Identity] in the Amazon EKS User Guide.
+	// For more information, see [Attach an IAM Role to an Amazon EKS add-on using EKS Pod Identity] in the Amazon EKS User Guide.
 	//
-	// [Attach an IAM Role to an Amazon EKS add-on using Pod Identity]: https://docs.aws.amazon.com/eks/latest/userguide/add-ons-iam.html
+	// [Attach an IAM Role to an Amazon EKS add-on using EKS Pod Identity]: https://docs.aws.amazon.com/eks/latest/userguide/add-ons-iam.html
 	PodIdentityAssociations []types.AddonPodIdentityAssociations
 
 	// How to resolve field value conflicts for an Amazon EKS add-on. Conflicts are
@@ -161,7 +165,7 @@ func (c *Client) addOperationCreateAddonMiddlewares(stack *middleware.Stack, opt
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
+	if err = addRetry(stack, options, c); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -185,10 +189,10 @@ func (c *Client) addOperationCreateAddonMiddlewares(stack *middleware.Stack, opt
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
 		return err
 	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
+	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addIdempotencyToken_opCreateAddonMiddleware(stack, options); err != nil {
@@ -215,16 +219,13 @@ func (c *Client) addOperationCreateAddonMiddlewares(stack *middleware.Stack, opt
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeEnd(stack); err != nil {
+	if err = addInterceptAttempt(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil

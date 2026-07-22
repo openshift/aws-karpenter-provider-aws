@@ -19,8 +19,9 @@ package test
 import (
 	"fmt"
 
-	"github.com/imdario/mergo"
 	"github.com/samber/lo"
+
+	"github.com/imdario/mergo"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -58,7 +59,7 @@ func StatefulSet(overrides ...StatefulSetOptions) *appsv1.StatefulSet {
 			Replicas: lo.ToPtr(options.Replicas),
 			Selector: &metav1.LabelSelector{MatchLabels: options.PodOptions.Labels},
 			Template: v1.PodTemplateSpec{
-				ObjectMeta: ObjectMeta(options.PodOptions.ObjectMeta),
+				ObjectMeta: pod.ObjectMeta,
 				Spec:       pod.Spec,
 			},
 		},
