@@ -18,9 +18,11 @@ package test
 
 import (
 	"fmt"
+	"maps"
+
+	"github.com/samber/lo"
 
 	"github.com/imdario/mergo"
-	"github.com/samber/lo"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -125,9 +127,7 @@ func WithLabels(labels map[string]string) DeploymentOptionModifier {
 		if opts.PodOptions.Labels == nil {
 			opts.PodOptions.Labels = make(map[string]string)
 		}
-		for k, v := range labels {
-			opts.PodOptions.Labels[k] = v
-		}
+		maps.Copy(opts.PodOptions.Labels, labels)
 	}
 }
 
@@ -137,9 +137,7 @@ func WithAnnotations(annotations map[string]string) DeploymentOptionModifier {
 		if opts.PodOptions.Annotations == nil {
 			opts.PodOptions.Annotations = make(map[string]string)
 		}
-		for k, v := range annotations {
-			opts.PodOptions.Annotations[k] = v
-		}
+		maps.Copy(opts.PodOptions.Annotations, annotations)
 	}
 }
 
@@ -257,9 +255,7 @@ func WithNodeSelector(nodeSelector map[string]string) DeploymentOptionModifier {
 		if opts.PodOptions.NodeSelector == nil {
 			opts.PodOptions.NodeSelector = make(map[string]string)
 		}
-		for k, v := range nodeSelector {
-			opts.PodOptions.NodeSelector[k] = v
-		}
+		maps.Copy(opts.PodOptions.NodeSelector, nodeSelector)
 	}
 }
 

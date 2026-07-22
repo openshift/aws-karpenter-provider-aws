@@ -3,7 +3,7 @@ CLUSTER_NAME ?= $(shell kubectl config view --minify -o jsonpath='{.clusters[].n
 # TODO(maxcao13): We don't maintain tags like upstream does, so we need to manually update a canonical version here.
 # Every time we do a rebase, we should update this variable to match upstream. If you have upstream as a remote repo, you can find the latest tag by:
 # git describe --tags --abbrev=0 --match "v*" --candidates=1
-OPENSHIFT_AWS_KARPENTER_VERSION = 1.9.0
+OPENSHIFT_AWS_KARPENTER_VERSION = 1.13.0
 
 ## Inject the app version into operator.Version
 LDFLAGS ?= -ldflags=-X=sigs.k8s.io/karpenter/pkg/operator.Version=${OPENSHIFT_AWS_KARPENTER_VERSION}
@@ -18,6 +18,7 @@ KARPENTER_IAM_ROLE_ARN ?= arn:aws:iam::${AWS_ACCOUNT_ID}:role/${CLUSTER_NAME}-ka
 HELM_OPTS ?= --set serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn=${KARPENTER_IAM_ROLE_ARN} \
       		--set settings.clusterName=${CLUSTER_NAME} \
 			--set settings.interruptionQueue=${CLUSTER_NAME} \
+			--set settings.enableZonalShift=${ENABLE_ZONAL_SHIFT}\
 			--set controller.resources.requests.cpu=1 \
 			--set controller.resources.requests.memory=1Gi \
 			--set controller.resources.limits.cpu=1 \
@@ -65,6 +66,7 @@ run: ## Run Karpenter controller binary against your local cluster with latest C
 		DISABLE_LEADER_ELECTION=true \
 		CLUSTER_NAME=${CLUSTER_NAME} \
 		INTERRUPTION_QUEUE=${CLUSTER_NAME} \
+		ENABLE_ZONAL_SHIFT=true \
 		FEATURE_GATES="SpotToSpotConsolidation=true,NodeOverlay=true,StaticCapacity=true" \
 		LOG_LEVEL="debug" \
 		go run ./cmd/controller/main.go
@@ -73,6 +75,7 @@ test: ## Run tests
 	go test ./pkg/... \
 		-cover -coverprofile=coverage.out -outputdir=. -coverpkg=./... \
 		--ginkgo.focus="${FOCUS}" \
+		--ginkgo.skip="${SKIP}" \
 		--ginkgo.randomize-all \
 		--ginkgo.vv
 
@@ -80,6 +83,7 @@ deflake: ## Run randomized, racing tests until the test fails to catch flakes
 	ginkgo \
 		--race \
 		--focus="${FOCUS}" \
+		--skip="${SKIP}" \
 		--randomize-all \
 		--until-it-fails \
 		-v \
@@ -92,11 +96,12 @@ e2etests: ## Run the e2e suite against your local cluster
 		go test \
 		-p 1 \
 		-count 1 \
-		-timeout 3.25h \
+		-timeout 12h \
 		-v \
 		./suites/$(shell echo $(TEST_SUITE) | tr A-Z a-z)/... \
 		--ginkgo.focus="${FOCUS}" \
-		--ginkgo.timeout=3h \
+		--ginkgo.skip="${SKIP}" \
+		--ginkgo.timeout=3h20m \
 		--ginkgo.grace-period=3m \
 		--ginkgo.vv
 
@@ -104,10 +109,11 @@ upstream-e2etests: tidy download
 	CLUSTER_NAME=${CLUSTER_NAME} envsubst < $(shell pwd)/test/pkg/environment/aws/default_ec2nodeclass.yaml > ${TMPFILE}
 	cd $(KARPENTER_CORE_DIR) && go test \
 		-count 1 \
-		-timeout 3.25h \
+		-timeout 12h \
 		-v \
 		./test/suites/regression/... \
 		--ginkgo.focus="${FOCUS}" \
+		--ginkgo.skip="${SKIP}" \
 		--ginkgo.timeout=3h \
 		--ginkgo.grace-period=5m \
 		--ginkgo.vv \
@@ -117,6 +123,7 @@ upstream-e2etests: tidy download
 e2etests-deflake: ## Run the e2e suite against your local cluster
 	cd test && CLUSTER_NAME=${CLUSTER_NAME} ginkgo \
 		--focus="${FOCUS}" \
+		--skip="${SKIP}" \
 		--timeout=3h \
 		--grace-period=3m \
 		--until-it-fails \
