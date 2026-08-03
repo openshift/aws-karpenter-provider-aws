@@ -67,7 +67,7 @@ var _ = BeforeSuite(func() {
 	awsEnv = test.NewEnvironment(ctx, env)
 
 	cloudProvider := cloudprovider.New(awsEnv.InstanceTypesProvider, awsEnv.InstanceProvider, events.NewRecorder(&record.FakeRecorder{}),
-		env.Client, awsEnv.AMIProvider, awsEnv.SecurityGroupProvider, awsEnv.CapacityReservationProvider, awsEnv.PlacementGroupProvider, awsEnv.InstanceTypeStore, lo.ToPtr(""))
+		env.Client, awsEnv.AMIProvider, awsEnv.SecurityGroupProvider, awsEnv.CapacityReservationProvider, awsEnv.InstanceTypeStore)
 	controller = expiration.NewController(awsEnv.Clock, env.Client, cloudProvider, awsEnv.CapacityReservationProvider)
 })
 
@@ -125,36 +125,22 @@ var _ = Describe("Capacity Reservation Expiration Controller", func() {
 		Expect(ncs[0].Name).To(Equal("cr-active"))
 	})
 	It("should not delete nodeclaims associated with standard capacity reservations within the capacity block expiration window", func() {
-		crs := []ec2types.CapacityReservation{
-			makeCapacityReservation(
-				"cr-default",
-				withEndTime(awsEnv.Clock.Now().Add(time.Minute*39)),
-			),
-			makeCapacityReservation(
-				"cr-default-interruptible",
-				withEndTime(awsEnv.Clock.Now().Add(time.Minute*39)),
-				withInterruptible(true),
-			),
-		}
 		awsEnv.EC2API.DescribeCapacityReservationsOutput.Set(&ec2.DescribeCapacityReservationsOutput{
-			CapacityReservations: crs,
+			CapacityReservations: []ec2types.CapacityReservation{
+				makeCapacityReservation("cr-default", withEndTime(awsEnv.Clock.Now().Add(time.Minute*39))),
+			},
 		})
-		ncs := lo.Map(crs, func(cr ec2types.CapacityReservation, _ int) *karpv1.NodeClaim {
-			return coretest.NodeClaim(karpv1.NodeClaim{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: *cr.CapacityReservationId,
-					Labels: map[string]string{
-						v1.LabelCapacityReservationID: *cr.CapacityReservationId,
-					},
+		nc := coretest.NodeClaim(karpv1.NodeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					v1.LabelCapacityReservationID: "cr-default",
 				},
-			})
+			},
 		})
-		for _, nc := range ncs {
-			ExpectApplied(ctx, env.Client, nc)
-		}
+		ExpectApplied(ctx, env.Client, nc)
 		ExpectSingletonReconciled(ctx, controller)
-		ncs = ExpectNodeClaims(ctx, env.Client)
-		Expect(ncs).To(HaveLen(2))
+		ncs := ExpectNodeClaims(ctx, env.Client)
+		Expect(ncs).To(HaveLen(1))
 	})
 })
 
@@ -172,12 +158,6 @@ func withEndTime(t time.Time) mockCapacityReservationOpts {
 	}
 }
 
-func withInterruptible(interruptible bool) mockCapacityReservationOpts {
-	return func(cr *ec2types.CapacityReservation) {
-		cr.Interruptible = lo.ToPtr(interruptible)
-	}
-}
-
 func makeCapacityReservation(id string, opts ...mockCapacityReservationOpts) ec2types.CapacityReservation {
 	cr := ec2types.CapacityReservation{
 		AvailabilityZone:       lo.ToPtr("test-zone-1a"),
@@ -188,7 +168,6 @@ func makeCapacityReservation(id string, opts ...mockCapacityReservationOpts) ec2
 		AvailableInstanceCount: lo.ToPtr[int32](1),
 		State:                  ec2types.CapacityReservationStateActive,
 		ReservationType:        ec2types.CapacityReservationTypeDefault,
-		Interruptible:          lo.ToPtr(false),
 	}
 	lo.Must0(mergo.Merge(&cr, option.Resolve(opts...), mergo.WithOverride))
 	return cr

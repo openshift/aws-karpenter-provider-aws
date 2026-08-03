@@ -44,8 +44,6 @@ type LaunchTemplate struct {
 	InstanceTypes         []*cloudprovider.InstanceType
 	ImageID               string
 	CapacityReservationID string
-	// Optional to constrains fleet overrides to a single AZ.
-	Zone string
 }
 
 type LaunchMode int
@@ -109,7 +107,6 @@ func (b *CreateLaunchTemplateInputBuilder) Build(ctx context.Context) *ec2.Creat
 		LaunchTemplateName: lo.ToPtr(LaunchTemplateName(b.options)),
 		LaunchTemplateData: &ec2types.RequestLaunchTemplateData{
 			BlockDeviceMappings: blockDeviceMappings(b.options.BlockDeviceMappings),
-			CpuOptions:          cpuOptions(b.options.CPUOptions),
 			IamInstanceProfile: &ec2types.LaunchTemplateIamInstanceProfileSpecificationRequest{
 				Name: lo.ToPtr(b.options.InstanceProfile),
 			},
@@ -136,7 +133,9 @@ func (b *CreateLaunchTemplateInputBuilder) Build(ctx context.Context) *ec2.Creat
 			},
 			NetworkInterfaces: networkInterfaces,
 			TagSpecifications: launchTemplateDataTags,
-			Placement:         b.buildPlacement(),
+			Placement: &ec2types.LaunchTemplatePlacementRequest{
+				Tenancy: ec2types.Tenancy(b.options.Tenancy),
+			},
 		},
 		TagSpecifications: []ec2types.TagSpecification{
 			{
@@ -162,31 +161,11 @@ func (b *CreateLaunchTemplateInputBuilder) Build(ctx context.Context) *ec2.Creat
 				nil,
 			),
 		}
-		lt.LaunchTemplateData.InstanceMarketOptions =
-			lo.If(
-				b.options.CapacityReservationType == v1.CapacityReservationTypeCapacityBlock,
-				&ec2types.LaunchTemplateInstanceMarketOptionsRequest{
-					MarketType: ec2types.MarketTypeCapacityBlock,
-				},
-			).ElseIf(
-				b.options.CapacityReservationInterruptible,
-				&ec2types.LaunchTemplateInstanceMarketOptionsRequest{
-					MarketType: ec2types.MarketTypeInterruptibleCapacityReservation,
-				},
-			).Else(nil)
+		if b.options.CapacityReservationType == v1.CapacityReservationTypeCapacityBlock {
+			lt.LaunchTemplateData.InstanceMarketOptions = &ec2types.LaunchTemplateInstanceMarketOptionsRequest{
+				MarketType: ec2types.MarketTypeCapacityBlock,
+			}
+		}
 	}
 	return lt
-}
-
-func (b *CreateLaunchTemplateInputBuilder) buildPlacement() *ec2types.LaunchTemplatePlacementRequest {
-	placement := &ec2types.LaunchTemplatePlacementRequest{
-		Tenancy: ec2types.Tenancy(b.options.Tenancy),
-	}
-	if b.options.PlacementGroupID != "" {
-		placement.GroupId = lo.ToPtr(b.options.PlacementGroupID)
-	}
-	if b.options.PlacementGroupPartition != 0 {
-		placement.PartitionNumber = lo.ToPtr(b.options.PlacementGroupPartition)
-	}
-	return placement
 }

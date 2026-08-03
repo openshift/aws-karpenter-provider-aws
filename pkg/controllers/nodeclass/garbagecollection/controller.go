@@ -32,7 +32,6 @@ import (
 	nodeclaimutils "sigs.k8s.io/karpenter/pkg/utils/nodeclaim"
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
-	"github.com/aws/karpenter-provider-aws/pkg/operator/options"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instanceprofile"
 )
 
@@ -112,8 +111,7 @@ func (c *Controller) cleanupInactiveProfiles(ctx context.Context) error {
 		return err
 	}
 
-	clusterPathPrefix := instanceprofile.FormatPath("karpenter", c.region, options.FromContext(ctx).ClusterName)
-	profiles, err := c.instanceProfileProvider.ListProfiles(ctx, clusterPathPrefix)
+	profiles, err := c.instanceProfileProvider.ListClusterProfiles(ctx)
 	if err != nil {
 		return fmt.Errorf("listing instance profiles, %w", err)
 	}
