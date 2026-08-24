@@ -556,6 +556,9 @@ func pods(ctx context.Context, info ec2types.InstanceTypeInfo, amiFamily amifami
 	switch {
 	case maxPods != nil:
 		count = int64(lo.FromPtr(maxPods))
+	case isOpenShiftAMIFamily(amiFamily):
+		// OCPBUGS-85085: Minimally invasive overwrite of default max-pods in OpenShift to 250
+		count = 250
 	case amiFamily.FeatureFlags().SupportsENILimitedPodDensity:
 		count = ENILimitedPods(ctx, info, options.FromContext(ctx).ReservedENIs).Value()
 	default:
@@ -566,6 +569,13 @@ func pods(ctx context.Context, info ec2types.InstanceTypeInfo, amiFamily amifami
 		count = lo.Min([]int64{int64(lo.FromPtr(podsPerCore)) * int64(lo.FromPtr(info.VCpuInfo.DefaultVCpus)), count})
 	}
 	return resources.Quantity(fmt.Sprint(count))
+}
+
+// isOpenShiftAMIFamily returns true if the AMIFamily is Custom, which is the only
+// AMIFamily OpenShift provisions nodes with.
+func isOpenShiftAMIFamily(amiFamily amifamily.AMIFamily) bool {
+	_, ok := amiFamily.(*amifamily.Custom)
+	return ok
 }
 
 func lowerKabobCase(s string) string {
