@@ -1,0 +1,105 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Docs: https://docs.coderabbit.ai/getting-started/configure-coderabbit
+
+language: en-US
+early_access: false
+
+reviews:
+  profile: "chill"
+  high_level_summary: false
+  poem: false
+  request_changes_workflow: false
+  collapse_walkthrough: true
+
+  path_filters:
+    - "!vendor/**"
+    - "!**/vendor/**"
+    - "!**/zz_generated*"
+    - "!go.sum"
+    # Upstream-only files not used in our CI
+    - "!.github/**"
+    - "!renovate.json"
+
+  path_instructions:
+    - path: "pkg/controllers/**/*.go"
+      instructions: |
+        Review for idempotent reconciliation, proper error handling, and
+        correct status subresource updates. AWS provider controllers manage
+        EC2 instances, interruptions, and capacity reservations — verify
+        AWS API calls are cached appropriately and handle rate limiting.
+
+    - path: "pkg/apis/v1/*.go"
+      instructions: |
+        Review EC2NodeClass API types for backward compatibility, correct
+        kubebuilder validation markers (CEL expressions), proper JSON tags,
+        and deepcopy compliance. API changes require regenerating code with
+        make codegen.
+
+    - path: "pkg/providers/**/*.go"
+      instructions: |
+        Review AWS provider implementations for correct caching behavior,
+        AWS SDK error handling, and rate limit awareness. Instance type,
+        pricing, and AMI providers must handle eventual consistency and
+        regional variations. Verify security group and subnet discovery
+        respects user-defined selectors.
+
+    - path: "pkg/providers/amifamily/**/*.go"
+      instructions: |
+        Review AMI family implementations for correct user data generation,
+        AMI selection logic, and SSM parameter queries. Each family (AL2,
+        Bottlerocket, Ubuntu, Windows, RHEL) has distinct bootstrap
+        requirements. Verify base64 encoding of user data.
+
+    - path: "pkg/cloudprovider/**/*.go"
+      instructions: |
+        This is the CloudProvider interface implementation for AWS. Changes
+        here affect core Karpenter integration. Verify NodeClaim creation,
+        instance drift detection, and instance termination handle AWS-
+        specific lifecycle correctly.
+
+    - path: "test/**/*.go"
+      instructions: |
+        Review E2E tests for proper cleanup of AWS resources (instances,
+        launch templates, security groups). Verify tests use unique
+        resource names to avoid conflicts. Check for deterministic waits
+        rather than sleep statements.
+
+    - path: "charts/**/*.yaml"
+      instructions: |
+        Helm chart changes are generally upstream-only. If modifying
+        downstream, verify CRD manifests match generated output from
+        kubebuilder markers, check RBAC least privilege, and ensure
+        security contexts are appropriate.
+
+    - path: "**/{Dockerfile,Dockerfile.*,Containerfile*}"
+      instructions: |
+        Check for multi-stage builds, no secrets or credentials, and
+        minimal image size. openshift/Containerfile.rhel is downstream-
+        only (OpenShift RHEL-based image).
+
+    - path: "hack/**"
+      instructions: |
+        These scripts support development workflows. Check for correct
+        error handling (set -e), shellcheck compliance, and that scripts
+        match what developers expect based on documentation.
+
+  tools:
+    gitleaks:
+      enabled: true
+    golangci-lint:
+      enabled: true
+    hadolint:
+      enabled: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "**/AGENTS.md"
+      - "**/CONTRIBUTING_OPENSHIFT.md"
+  learnings:
+    scope: auto
+  issues:
+    scope: auto
+  pull_requests:
+    scope: auto
