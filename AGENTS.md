@@ -12,6 +12,19 @@ This provider implements AWS-specific logic: EC2 instance selection, AMI resolut
 
 The Karpenter controller from this repo is deployed and managed by the [karpenter-operator](https://github.com/openshift/karpenter-operator).
 
+### HyperShift Integration
+
+On HyperShift, the `OpenshiftEC2NodeClass` CRD from [openshift/karpenter-operator](https://github.com/openshift/karpenter-operator) is a wrapper over the `EC2NodeClass` CRD that gets shipped from this repository. The karpenter-operator deploys both the `OpenshiftEC2NodeClass` and `EC2NodeClass` to the hosted cluster.
+
+The `OpenshiftEC2NodeClass` extends (not replaces) the upstream `EC2NodeClass` by preserving all standard AWS configuration fields (subnet selectors, security group selectors, instance profiles, block device mappings, etc.) while adding OpenShift-specific capabilities:
+
+- **Version Resolution**: Resolves OpenShift semantic versions (e.g., "4.20.1") through the Cincinnati API and tracks them in status as fully qualified release images. When `spec.version` is unset, nodes inherit the HostedControlPlane's release image.
+- **Kubelet Configuration**: Injects node-level kubelet settings through MachineConfig for OpenShift-specific node customization.
+- **Version Compatibility**: Validates version skew constraints via the `SupportedVersionSkew` condition (nodes cannot exceed control plane version, with n-3 minor version tolerance for 4.y releases).
+- **HyperShift Token Integration**: Links token secrets to HyperShift NodePool instances via the `hypershift.openshift.io/nodePool` annotation, critical for multi-pool HostedCluster deployments.
+
+The `Ready` condition is computed atomically by the EC2 node class controller, combining upstream `EC2NodeClass` readiness signals with the OpenShift-specific `VersionResolved` condition status.
+
 ### Single Binary
 
 This repo produces one main binary:
@@ -28,7 +41,7 @@ This repo produces one main binary:
 
 ## Repository Structure
 
-```
+```text
 cmd/
   controller/           # Main controller binary entry point
 pkg/
@@ -42,7 +55,7 @@ pkg/
     capacityreservation/ # On-demand capacity reservation tracking
     arczonalshift/      # AWS ARC zonal shift awareness
   providers/
-    amifamily/          # AMI selection logic for AL2, Bottlerocket, Ubuntu, Windows, RHEL
+    amifamily/          # AMI selection logic for AL2, Bottlerocket, Ubuntu, Windows, Custom
     instance/           # EC2 instance provisioning, termination, launch template creation
     instancetype/       # EC2 instance type discovery and offerings cache
     pricing/            # EC2 on-demand and spot pricing data
@@ -85,6 +98,16 @@ These files exist only in the downstream fork:
 Everything else. In particular: the core provider logic in `pkg/`, the controllers, the EC2NodeClass API, the AMI family implementations, the pricing and instance type providers, the Helm charts, and the `.github/` workflows (which are not used in our CI but are kept for upstream compatibility).
 
 Avoid modifying upstream files unless necessary. Downstream-only patches increase the maintenance burden during rebase cycles. Instead, contribute features and fixes upstream where possible.
+
+### Key Carry Patches
+
+The downstream fork maintains several categories of carry patches that are re-applied during each rebase:
+
+1. **UserData Drift Detection** (commit [882c076](https://github.com/openshift/aws-karpenter-provider-aws/commit/882c076), PR [#21](https://github.com/openshift/aws-karpenter-provider-aws/pull/21)): The karpenter-operator passes a rotating token to the EC2NodeClass userData field as part of the Ignition payload. This token changes frequently, causing the hash to change and triggering drift unintentionally. This patch modifies the hash calculation to extract and use only the `TargetConfigVersionHash` HTTP header value from the Ignition config (instead of hashing the entire userData field with its rotating token). The hash is unique and acts as a trigger for drift rollout, similar to its usage in HyperShift's NodePool API. If the userData is not a valid Ignition config, this special handling is bypassed and the raw userData is hashed normally.
+
+2. **Version Injection** (commit [f636c63](https://github.com/openshift/aws-karpenter-provider-aws/commit/f636c63), PR [#25](https://github.com/openshift/aws-karpenter-provider-aws/pull/25)): OpenShift doesn't maintain git tags like upstream does, so the build cannot use `git describe --tags` to determine the version. This patch adds a manually-maintained `OPENSHIFT_AWS_KARPENTER_VERSION` variable in the Makefile that overrides the version injected into `sigs.k8s.io/karpenter/pkg/operator.Version` at build time. This version must be manually updated during each rebase cycle to match the upstream release being rebased onto.
+
+3. **Vendor Directory Handling** (commit [7ac760c](https://github.com/openshift/aws-karpenter-provider-aws/commit/7ac760c)): The downstream build process requires a vendored `vendor/` directory for reproducible builds in the OpenShift CI environment. Upstream does not vendor dependencies. This patch fixes the `.gitignore` to only ignore `go.work` and `go.work.sum` at the repository root (changing patterns from `go.work` to `/go.work`), preventing vendored dependencies that include files with the same name from being incorrectly ignored. When updating dependencies, run `go mod tidy && go mod vendor` and commit vendor changes in a separate commit.
 
 ### Rebase Cycle
 
@@ -147,7 +170,7 @@ The `amifamily` package contains implementations for each supported OS:
 - **Bottlerocket** — Container-optimized OS
 - **Ubuntu** — Canonical Ubuntu images
 - **Windows** — Windows Server variants
-- **RHEL** — Red Hat Enterprise Linux (OpenShift-specific)
+- **Custom** — OpenShift-specific AMI family for RHEL-based nodes
 
 Each family provides:
 - AMI selection logic
@@ -183,7 +206,7 @@ Each family provides:
 
 Stop and consult a human before:
 
-- **Modifying EC2NodeClass API types** (`pkg/apis/v1/`) — API changes have compatibility implications and may require coordinated changes in the operator repo and documentation
+- **Modifying EC2NodeClass API types** (`pkg/apis/v1/`) — API changes have compatibility implications and may require coordinated changes in the karpenter-operator repo, hypershift repo, and official Red Hat documentation
 - **Changing IAM permissions** — The controller runs with IAM permissions defined by the karpenter-operator. Adding new AWS API calls may require IAM policy updates.
 - **Adding or removing AMI families** — AMI family changes affect the product surface area and may require documentation updates
 - **Modifying interruption handling** — Changes to the interruption controller can affect workload availability during spot interruptions

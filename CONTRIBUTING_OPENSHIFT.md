@@ -31,12 +31,12 @@ Every change should be closely scrutinized for bugs. Our software is complex wit
 
 This is a downstream fork. All non-upstream commits must use one of the following prefixes to ensure changes are not lost during the next upstream rebase:
 
-- `UPSTREAM: <carry>: ` -- A change that should be kept (carried) indefinitely, or as long as it makes sense to do so
-- `UPSTREAM: <drop>: ` -- A change that should be discarded during the next rebase cycle
-- `UPSTREAM: 1234: ` -- A change carried until the rebase includes upstream PR #1234
+- `UPSTREAM: <carry>:` -- A change that should be kept (carried) indefinitely, or as long as it makes sense to do so
+- `UPSTREAM: <drop>:` -- A change that should be discarded during the next rebase cycle
+- `UPSTREAM: 1234:` -- A change carried until the rebase includes upstream PR #1234
 
 Examples:
-```
+```text
 UPSTREAM: <carry>: Add OpenShift-specific RHEL AMI family support
 UPSTREAM: <drop>: Pin AWS SDK version until upstream compatibility fix
 UPSTREAM: 5678: Backport fix for EC2NodeClass validation race
@@ -51,7 +51,7 @@ New feature work should be directed to the [upstream Karpenter AWS provider proj
 ## PR Title Convention
 
 PR titles should be prefixed with a Jira ticket reference:
-```
+```text
 AUTOSCALE-123: Fix the whatsit in the thingamajig
 OCPBUGS-456: Correct nil pointer in instance provider shutdown
 NO-JIRA: Update Go module dependencies
@@ -106,7 +106,7 @@ PRs should include tests to verify correctness and prevent future regressions:
 ## Verified Label
 
 Use `/verified` to indicate changes have been verified. Examples:
-```
+```text
 /verified
 /verified by e2e-aws-ovn
 /verified by unit tests
