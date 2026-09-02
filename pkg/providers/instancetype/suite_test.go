@@ -1624,6 +1624,43 @@ var _ = Describe("InstanceTypeProvider", func() {
 				}
 			}
 		})
+		It("should default max pods to 250 for Custom AMI family", func() {
+			// OCPBUGS-85085: OpenShift is the only real-world consumer of the Custom AMI
+			// family in this fork, and its nodes always report a kubelet max-pods of 250,
+			// regardless of instance type. Unlike other AMI families, Custom must not fall
+			// back to the AWS ENI-based pod density formula.
+			nodeClass.Spec.AMIFamily = lo.ToPtr(v1.AMIFamilyCustom)
+			nodeClass.Spec.Kubelet = &v1.KubeletConfiguration{}
+			instanceInfo, err := awsEnv.EC2API.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{})
+			Expect(err).To(BeNil())
+
+			// Choose two very different instance types to ensure we always default to 250 max pods.
+			for _, instanceType := range []string{"t3.large", "m6idn.32xlarge"} {
+				info, ok := lo.Find(instanceInfo.InstanceTypes, func(info ec2types.InstanceTypeInfo) bool {
+					return info.InstanceType == ec2types.InstanceType(instanceType)
+				})
+				Expect(ok).To(Equal(true))
+
+				it := instancetype.NewInstanceType(ctx,
+					info,
+					fake.DefaultRegion,
+					nil,
+					nil,
+					nodeClass.Spec.BlockDeviceMappings,
+					nodeClass.Spec.InstanceStorePolicy,
+					nil,
+					nodeClass.Spec.Kubelet.MaxPods,
+					nodeClass.Spec.Kubelet.PodsPerCore,
+					nodeClass.Spec.Kubelet.KubeReserved,
+					nodeClass.Spec.Kubelet.SystemReserved,
+					nodeClass.Spec.Kubelet.EvictionHard,
+					nodeClass.Spec.Kubelet.EvictionSoft,
+					nodeClass.AMIFamily(),
+					nil,
+				)
+				Expect(it.Capacity.Pods().Value()).To(BeNumerically("==", 250))
+			}
+		})
 		It("should set max-pods to user-defined value if specified", func() {
 			instanceInfo, err := awsEnv.EC2API.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{})
 			Expect(err).To(BeNil())
@@ -1770,7 +1807,8 @@ var _ = Describe("InstanceTypeProvider", func() {
 			Entry("windows2019 (latest)", "windows2019@latest", v1.AMIFamilyWindows2019, 110, "1465Mi"),  // 11 * 110 + 255
 			Entry("windows2022 (latest)", "windows2022@latest", v1.AMIFamilyWindows2022, 110, "1465Mi"),  // 11 * 110 + 255
 			Entry("windows2025 (latest)", "windows2025@latest", v1.AMIFamilyWindows2025, 110, "1465Mi"),  // 11 * 110 + 255
-			Entry("custom", fake.ImageID(), v1.AMIFamilyCustom, 24, "640Mi"),                             // 11 * 35 + 255
+			// OCPBUGS-85085: OpenShift default is pods=250, memory overhead is still based on ENI-limited pods as UsesENILimitedMemoryOverhead defaults to true
+			Entry("custom", fake.ImageID(), v1.AMIFamilyCustom, 250, "640Mi"),
 		)
 		It("should reserve ENIs when aws.reservedENIs is set and not go below 0 ENIs in max-pods calculation", func() {
 			ctx = options.ToContext(ctx, test.Options(test.OptionsFields{
