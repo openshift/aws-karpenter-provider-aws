@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
-	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
@@ -18,15 +17,9 @@ import (
 //
 //   - assessing
 //
-//   - scheduled
-//
 //   - active and there is no commitment duration or the commitment duration has
-//     elapsed.
-//
-//   - active during the commitment duration, if you provide a cancellation quote
-//     ID and accept the cancellation charges. Use
-//     CreateCapacityReservationCancellationQuote to generate a quote. The Capacity
-//     Reservation transitions to cancelling while charges are applied.
+//     elapsed. You can't cancel a future-dated Capacity Reservation during the
+//     commitment duration.
 //
 // You can't modify or cancel a Capacity Block. For more information, see [Capacity Blocks for ML].
 //
@@ -62,22 +55,11 @@ type CancelCapacityReservationInput struct {
 	// This member is required.
 	CapacityReservationId *string
 
-	// Specifies the cancellation charge type to apply when cancelling a future-dated
-	// Capacity Reservation during its commitment duration. Possible values include
-	// commitment-wind-down , which continues billing for the remaining commitment
-	// duration without delivering capacity.
-	ApplyCancellationCharges types.ApplyCancellationCharges
-
 	// Checks whether you have the required permissions for the action, without
 	// actually making the request, and provides an error response. If you have the
 	// required permissions, the error response is DryRunOperation . Otherwise, it is
 	// UnauthorizedOperation .
 	DryRun *bool
-
-	// The ID of the cancellation quote to use for the cancellation. You can generate
-	// a cancellation quote by using the CreateCapacityReservationCancellationQuote
-	// action. The cancellation quote must be in an active state.
-	QuoteId *string
 
 	noSmithyDocumentSerde
 }
@@ -127,7 +109,7 @@ func (c *Client) addOperationCancelCapacityReservationMiddlewares(stack *middlew
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options, c); err != nil {
+	if err = addRetry(stack, options); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -149,6 +131,9 @@ func (c *Client) addOperationCancelCapacityReservationMiddlewares(stack *middlew
 		return err
 	}
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {

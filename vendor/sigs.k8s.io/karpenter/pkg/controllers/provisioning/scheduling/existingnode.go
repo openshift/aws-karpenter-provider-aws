@@ -91,41 +91,14 @@ func (n *ExistingNode) CanAdd(pod *v1.Pod, podData *PodData, volumes scheduling.
 	}
 	// avoid creating our temp set of requirements until after we've ensured that at least
 	// the pod is compatible
-	baseRequirements := scheduling.NewRequirements(n.requirements.Values()...)
-	baseRequirements.Add(podData.Requirements.Values()...)
-
-	// Build the list of volume requirement alternatives to try.
-	volumeAlternatives := podData.VolumeRequirements
-	if len(volumeAlternatives) == 0 {
-		volumeAlternatives = []scheduling.Requirements{nil}
-	}
-
-	// Try each volume topology alternative. The selected constraints affect topology checks.
-	var lastErr error
-	for _, volReqs := range volumeAlternatives {
-		reqs, err := n.tryVolumeAlternative(pod, podData, baseRequirements, volReqs)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		return reqs, nil
-	}
-	return nil, lastErr
-}
-
-// tryVolumeAlternative attempts to add a pod with a specific set of volume requirements,
-// checking topology compatibility against the existing node.
-func (n *ExistingNode) tryVolumeAlternative(pod *v1.Pod, podData *PodData, baseRequirements scheduling.Requirements, volReqs scheduling.Requirements) (scheduling.Requirements, error) {
-	nodeRequirements := scheduling.NewRequirements(baseRequirements.Values()...)
+	nodeRequirements := scheduling.NewRequirements(n.requirements.Values()...)
+	nodeRequirements.Add(podData.Requirements.Values()...)
 
 	// Add volume requirements to nodeRequirements ONLY (not to pod's affinity).
-	// This ensures the existing node satisfies the selected volume topology constraints,
+	// This ensures existing node must be in the correct zone for volumes,
 	// while TSC counting uses pod's original affinity.
-	if volReqs != nil {
-		if err := nodeRequirements.Compatible(volReqs); err != nil {
-			return nil, fmt.Errorf("incompatible volume requirements, %w", err)
-		}
-		nodeRequirements.Add(volReqs.Values()...)
+	if err := addVolumeRequirements(nodeRequirements, podData.VolumeRequirements); err != nil {
+		return nil, err
 	}
 
 	// Check Topology Requirements

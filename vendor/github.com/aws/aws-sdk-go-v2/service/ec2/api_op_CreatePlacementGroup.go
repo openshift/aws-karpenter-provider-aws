@@ -56,9 +56,6 @@ type CreatePlacementGroupInput struct {
 	// Reserved for future use.
 	LinkedGroupId *string
 
-	// Reserved for internal use.
-	Operator *types.OperatorRequest
-
 	// The number of partitions. Valid only when Strategy is set to partition .
 	PartitionCount *int32
 
@@ -123,7 +120,7 @@ func (c *Client) addOperationCreatePlacementGroupMiddlewares(stack *middleware.S
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options, c); err != nil {
+	if err = addRetry(stack, options); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -145,6 +142,9 @@ func (c *Client) addOperationCreatePlacementGroupMiddlewares(stack *middleware.S
 		return err
 	}
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {

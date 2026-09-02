@@ -26,7 +26,12 @@ func ChannelDispatcher[T any](stream <-chan T, count, channelBufferCap int, stra
 
 		var i uint64
 
-		for msg := range stream {
+		for {
+			msg, ok := <-stream
+			if !ok {
+				return
+			}
+
 			destination := strategy(msg, i, roChildren) % count
 			children[destination] <- msg
 
@@ -102,8 +107,8 @@ func DispatchingStrategyRandom[T any](msg T, index uint64, channels []<-chan T) 
 func DispatchingStrategyWeightedRandom[T any](weights []int) DispatchingStrategy[T] {
 	seq := []int{}
 
-	for i, weight := range weights {
-		for j := 0; j < weight; j++ {
+	for i := 0; i < len(weights); i++ {
+		for j := 0; j < weights[i]; j++ {
 			seq = append(seq, i)
 		}
 	}
@@ -138,22 +143,22 @@ func DispatchingStrategyFirst[T any](msg T, index uint64, channels []<-chan T) i
 // DispatchingStrategyLeast distributes messages in the emptiest channel.
 // Play: https://go.dev/play/p/ypy0jrRcEe7
 func DispatchingStrategyLeast[T any](msg T, index uint64, channels []<-chan T) int {
-	_, i := MinIndexBy(channels, func(a, b <-chan T) bool {
-		return len(a) < len(b)
-	})
+	seq := Range(len(channels))
 
-	return i
+	return MinBy(seq, func(item, mIn int) bool {
+		return len(channels[item]) < len(channels[mIn])
+	})
 }
 
 // DispatchingStrategyMost distributes messages in the fullest channel.
 // If the channel capacity is exceeded, the next channel will be selected and so on.
 // Play: https://go.dev/play/p/erHHone7rF9
 func DispatchingStrategyMost[T any](msg T, index uint64, channels []<-chan T) int {
-	_, i := MaxIndexBy(channels, func(a, b <-chan T) bool {
-		return len(a) > len(b) && channelIsNotFull(a)
-	})
+	seq := Range(len(channels))
 
-	return i
+	return MaxBy(seq, func(item, mAx int) bool {
+		return len(channels[item]) > len(channels[mAx]) && channelIsNotFull(channels[item])
+	})
 }
 
 // SliceToChannel returns a read-only channel of collection elements.
@@ -208,9 +213,10 @@ func Generator[T any](bufferSize int, generator func(yield func(T))) <-chan T {
 // Play: https://go.dev/play/p/gPQ-6xmcKQI
 func Buffer[T any](ch <-chan T, size int) (collection []T, length int, readTime time.Duration, ok bool) {
 	buffer := make([]T, 0, size)
+	index := 0
 	now := time.Now()
 
-	for index := 0; index < size; index++ {
+	for ; index < size; index++ {
 		item, ok := <-ch
 		if !ok {
 			return buffer, index, time.Since(now), false
@@ -219,7 +225,14 @@ func Buffer[T any](ch <-chan T, size int) (collection []T, length int, readTime 
 		buffer = append(buffer, item)
 	}
 
-	return buffer, size, time.Since(now), true
+	return buffer, index, time.Since(now), true
+}
+
+// Batch creates a slice of n elements from a channel. Returns the slice and the slice length.
+//
+// Deprecated: Use [Buffer] instead.
+func Batch[T any](ch <-chan T, size int) (collection []T, length int, readTime time.Duration, ok bool) {
+	return Buffer(ch, size)
 }
 
 // BufferWithContext creates a slice of n elements from a channel, with context. Returns the slice and the slice length.
@@ -254,6 +267,13 @@ func BufferWithTimeout[T any](ch <-chan T, size int, timeout time.Duration) (col
 	return BufferWithContext(ctx, ch, size)
 }
 
+// BatchWithTimeout creates a slice of n elements from a channel, with timeout. Returns the slice and the slice length.
+//
+// Deprecated: Use [BufferWithTimeout] instead.
+func BatchWithTimeout[T any](ch <-chan T, size int, timeout time.Duration) (collection []T, length int, readTime time.Duration, ok bool) {
+	return BufferWithTimeout(ch, size, timeout)
+}
+
 // FanIn collects messages from multiple input channels into a single buffered channel.
 // Output messages have no priority. When all upstream channels reach EOF, downstream channel closes.
 // Play: https://go.dev/play/p/FH8Wq-T04Jb
@@ -278,6 +298,14 @@ func FanIn[T any](channelBufferCap int, upstreams ...<-chan T) <-chan T {
 		close(out)
 	}()
 	return out
+}
+
+// ChannelMerge collects messages from multiple input channels into a single buffered channel.
+// Output messages have no priority. When all upstream channels reach EOF, downstream channel closes.
+//
+// Deprecated: Use [FanIn] instead.
+func ChannelMerge[T any](channelBufferCap int, upstreams ...<-chan T) <-chan T {
+	return FanIn(channelBufferCap, upstreams...)
 }
 
 // FanOut broadcasts all the upstream messages to multiple downstream channels.

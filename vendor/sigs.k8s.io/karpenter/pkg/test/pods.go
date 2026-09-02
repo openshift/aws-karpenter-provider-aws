@@ -237,7 +237,7 @@ func UnschedulablePod(options ...PodOptions) *v1.Pod {
 // UnschedulablePods returns slice of configurable length of identical test pods with a pending scheduling status condition
 func UnschedulablePods(options PodOptions, num int) []*v1.Pod {
 	var pods []*v1.Pod
-	for range num {
+	for i := 0; i < num; i++ {
 		pods = append(pods, UnschedulablePod(options))
 	}
 	return pods
@@ -397,9 +397,6 @@ func MakeTopologySpreadPodOptions(key string) PodOptions {
 				LabelSelector: &metav1.LabelSelector{
 					MatchLabels: RandomLabels(),
 				},
-				// TODO(maxcao13): without this, scheduler will consider all nodes in the cluster, which may have AWS zones like us-east-1a (topology.kubernetes.io/zone)
-				// Kubernetes will be unable to schedule the test pods onto those pods in order to fulfill the tsc maxSkew in the Performance test.
-				NodeTaintsPolicy: lo.ToPtr(v1.NodeInclusionPolicyHonor),
 			},
 		},
 		ResourceRequirements: v1.ResourceRequirements{
