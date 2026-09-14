@@ -21,7 +21,6 @@ import (
 	"github.com/samber/lo"
 
 	"github.com/aws/karpenter-provider-aws/pkg/controllers/interruption/messages"
-	"github.com/aws/karpenter-provider-aws/pkg/controllers/interruption/messages/capacityreservationinterruption"
 	"github.com/aws/karpenter-provider-aws/pkg/controllers/interruption/messages/noop"
 	"github.com/aws/karpenter-provider-aws/pkg/controllers/interruption/messages/rebalancerecommendation"
 	"github.com/aws/karpenter-provider-aws/pkg/controllers/interruption/messages/scheduledchange"
@@ -57,7 +56,6 @@ var (
 		spotinterruption.Parser{},
 		scheduledchange.Parser{},
 		rebalancerecommendation.Parser{},
-		capacityreservationinterruption.Parser{},
 	}
 )
 
