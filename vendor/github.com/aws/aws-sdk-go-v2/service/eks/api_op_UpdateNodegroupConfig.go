@@ -67,11 +67,6 @@ type UpdateNodegroupConfigInput struct {
 	// The node group update configuration.
 	UpdateConfig *types.NodegroupUpdateConfig
 
-	// The warm pool configuration to apply to the node group. You can use this to add
-	// a warm pool to an existing node group or modify the settings of an existing warm
-	// pool.
-	WarmPoolConfig *types.WarmPoolConfig
-
 	noSmithyDocumentSerde
 }
 
@@ -120,7 +115,7 @@ func (c *Client) addOperationUpdateNodegroupConfigMiddlewares(stack *middleware.
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options, c); err != nil {
+	if err = addRetry(stack, options); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -142,6 +137,9 @@ func (c *Client) addOperationUpdateNodegroupConfigMiddlewares(stack *middleware.
 		return err
 	}
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {

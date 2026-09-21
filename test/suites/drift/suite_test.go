@@ -213,11 +213,6 @@ var _ = Describe("Drift", Ordered, func() {
 			g.Expect(testSecurityGroup).ToNot(BeNil())
 		}).Should(Succeed())
 
-		// Clean up the temporary security group we created for these tests
-		DeferCleanup(func() {
-			env.ExpectSecurityGroupDeleted(testSecurityGroup.GroupId)
-		})
-
 		By("creating a new provider with the new securitygroup")
 		awsIDs := lo.FilterMap(securitygroups, func(sg aws.SecurityGroup, _ int) (string, bool) {
 			if awssdk.ToString(sg.GroupId) != awssdk.ToString(testSecurityGroup.GroupId) {
@@ -308,11 +303,6 @@ var _ = Describe("Drift", Ordered, func() {
 			Kubelet: &v1.KubeletConfiguration{
 				EvictionSoft:            map[string]string{"memory.available": "5%"},
 				EvictionSoftGracePeriod: map[string]metav1.Duration{"memory.available": {Duration: time.Minute}},
-			},
-		}),
-		Entry("NetworkInterfaces", v1.EC2NodeClassSpec{
-			NetworkInterfaces: []*v1.NetworkInterface{
-				{NetworkCardIndex: 0, DeviceIndex: 0, InterfaceType: v1.InterfaceTypeInterface},
 			},
 		}),
 	)
@@ -477,7 +467,7 @@ var _ = Describe("Drift", Ordered, func() {
 		env.EventuallyExpectHealthyPodCount(selector, numPods)
 		nodeClaim := env.EventuallyExpectCreatedNodeClaimCount("==", 1)[0]
 		nodeClass = env.ExpectExists(nodeClass).(*v1.EC2NodeClass)
-		expectedHash := nodeClass.Hash(lo.ToPtr(env.ExpectCABundle()))
+		expectedHash := nodeClass.Hash()
 
 		By(fmt.Sprintf("expect nodeclass %s and nodeclaim %s to contain %s and %s annotations", nodeClass.Name, nodeClaim.Name, v1.AnnotationEC2NodeClassHash, v1.AnnotationEC2NodeClassHashVersion))
 		Eventually(func(g Gomega) {
@@ -507,7 +497,7 @@ var _ = Describe("Drift", Ordered, func() {
 
 		// The nodeclaim will need to be updated first, as the hash controller will only be triggered on changes to the nodeclass
 		env.ExpectUpdated(nodeClaim, nodeClass)
-		expectedHash = nodeClass.Hash(lo.ToPtr(env.ExpectCABundle()))
+		expectedHash = nodeClass.Hash()
 
 		// Expect all nodeclaims not to be drifted and contain an updated `nodepool-hash` and `nodepool-hash-version` annotation
 		Eventually(func(g Gomega) {

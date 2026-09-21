@@ -201,11 +201,6 @@ type CreateNodegroupInput struct {
 	// [Customizing managed nodes with launch templates]: https://docs.aws.amazon.com/eks/latest/userguide/launch-templates.html
 	Version *string
 
-	// The warm pool configuration for the node group. Warm pools maintain
-	// pre-initialized EC2 instances that can quickly join your cluster during
-	// scale-out events, improving application scaling performance and reducing costs.
-	WarmPoolConfig *types.WarmPoolConfig
-
 	noSmithyDocumentSerde
 }
 
@@ -254,7 +249,7 @@ func (c *Client) addOperationCreateNodegroupMiddlewares(stack *middleware.Stack,
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options, c); err != nil {
+	if err = addRetry(stack, options); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -276,6 +271,9 @@ func (c *Client) addOperationCreateNodegroupMiddlewares(stack *middleware.Stack,
 		return err
 	}
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {

@@ -65,12 +65,6 @@ type ModifyVpnConnectionOptionsInput struct {
 	// Default: ::/0
 	RemoteIpv6NetworkCidr *string
 
-	// The desired bandwidth specification for the VPN connection. standard supports
-	// up to 1.25 Gbps per tunnel, while large supports up to 5 Gbps per tunnel. Large
-	// bandwidth is only available for VPN connections attached to a transit gateway or
-	// to Cloud WAN. The default value is standard .
-	TunnelBandwidth types.VpnTunnelBandwidth
-
 	noSmithyDocumentSerde
 }
 
@@ -119,7 +113,7 @@ func (c *Client) addOperationModifyVpnConnectionOptionsMiddlewares(stack *middle
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options, c); err != nil {
+	if err = addRetry(stack, options); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -141,6 +135,9 @@ func (c *Client) addOperationModifyVpnConnectionOptionsMiddlewares(stack *middle
 		return err
 	}
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {

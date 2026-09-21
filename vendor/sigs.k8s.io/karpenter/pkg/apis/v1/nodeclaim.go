@@ -25,25 +25,24 @@ import (
 
 // NodeClaimSpec describes the desired state of the NodeClaim
 type NodeClaimSpec struct {
-	// taints will be applied to the NodeClaim's node.
+	//nolint:kubeapilinter
+	// Taints will be applied to the NodeClaim's node.
 	// +optional
-	// +listType=atomic
 	Taints []v1.Taint `json:"taints,omitempty"`
-	// startupTaints are taints that are applied to nodes upon startup which are expected to be removed automatically
+	//nolint:kubeapilinter
+	// StartupTaints are taints that are applied to nodes upon startup which are expected to be removed automatically
 	// within a short period of time, typically by a DaemonSet that tolerates the taint. These are commonly used by
 	// daemonsets to allow initialization and enforce startup ordering.  StartupTaints are ignored for provisioning
 	// purposes in that pods are not required to tolerate a StartupTaint in order to have nodes provisioned for them.
 	// +optional
-	// +listType=atomic
 	StartupTaints []v1.Taint `json:"startupTaints,omitempty"`
+	//nolint:kubeapilinter
 	// Requirements are layered with GetLabels and applied to every node.
 	// +kubebuilder:validation:XValidation:message="requirements with operator 'In' must have a value defined",rule="self.all(x, x.operator == 'In' ? x.values.size() != 0 : true)"
 	// +kubebuilder:validation:XValidation:message="requirements operator 'Gt', 'Lt', 'Gte', or 'Lte' must have a single positive integer value",rule="self.all(x, (x.operator == 'Gt' || x.operator == 'Lt' || x.operator == 'Gte' || x.operator == 'Lte') ? (x.values.size() == 1 && int(x.values[0]) >= 0) : true)"
 	// +kubebuilder:validation:XValidation:message="requirements with 'minValues' must have at least that many values specified in the 'values' field",rule="self.all(x, (x.operator == 'In' && has(x.minValues)) ? x.values.size() >= x.minValues : true)"
 	// +kubebuilder:validation:MaxItems:=100
 	// +required
-	// +listType=atomic
-	//nolint:kubeapilinter
 	Requirements []NodeSelectorRequirementWithMinValues `json:"requirements" hash:"ignore"`
 	//nolint:kubeapilinter
 	// Resources models the resource requirements for the NodeClaim to launch

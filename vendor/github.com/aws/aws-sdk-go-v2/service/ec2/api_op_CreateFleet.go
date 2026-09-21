@@ -83,12 +83,6 @@ type CreateFleetInput struct {
 	// [EC2 Fleet health checks]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/manage-ec2-fleet.html#ec2-fleet-health-checks
 	ReplaceUnhealthyInstances *bool
 
-	// Defines EC2 Fleet preferences for utilizing reserved capacity when
-	// DefaultTargetCapacityType is set to reserved-capacity .
-	//
-	// Supported only for fleets of type instant .
-	ReservedCapacityOptions *types.ReservedCapacityOptionsRequest
-
 	// Describes the configuration of Spot Instances in an EC2 Fleet.
 	SpotOptions *types.SpotOptionsRequest
 
@@ -197,7 +191,7 @@ func (c *Client) addOperationCreateFleetMiddlewares(stack *middleware.Stack, opt
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options, c); err != nil {
+	if err = addRetry(stack, options); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -219,6 +213,9 @@ func (c *Client) addOperationCreateFleetMiddlewares(stack *middleware.Stack, opt
 		return err
 	}
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {
