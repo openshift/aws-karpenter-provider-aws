@@ -55,22 +55,12 @@ type Provider interface {
 // relative ordering that is still more accurate than our previous pricing model.  In the event that a pricing update
 // fails, the previous pricing information is retained and used which may be the static initial pricing data if pricing
 // updates never succeed.
-type ProviderOption func(*DefaultProvider)
-
-// WithSkipRegionCheck disables the region-based skip for GovCloud check.
-// This is used by the codegen script which calls the Pricing API from us-east-1 to fetch
-// pricing for all regions including GovCloud.
-func WithSkipRegionCheck() ProviderOption {
-	return func(p *DefaultProvider) { p.skipRegionCheck = true }
-}
-
 type DefaultProvider struct {
-	ec2             sdk.EC2API
-	pricing         sdk.PricingAPI
-	region          string
-	isolatedVPC     bool
-	skipRegionCheck bool
-	cm              *pretty.ChangeMonitor
+	ec2         sdk.EC2API
+	pricing     sdk.PricingAPI
+	region      string
+	isolatedVPC bool
+	cm          *pretty.ChangeMonitor
 
 	muOnDemand     sync.RWMutex
 	onDemandPrices map[ec2types.InstanceType]float64
@@ -127,16 +117,13 @@ func NewAPI(cfg aws.Config) *pricing.Client {
 	return pricing.NewFromConfig(pricingCfg)
 }
 
-func NewDefaultProvider(pricing sdk.PricingAPI, ec2Api sdk.EC2API, region string, isolatedVPC bool, opts ...ProviderOption) *DefaultProvider {
+func NewDefaultProvider(pricing sdk.PricingAPI, ec2Api sdk.EC2API, region string, isolatedVPC bool) *DefaultProvider {
 	p := &DefaultProvider{
 		region:      region,
 		ec2:         ec2Api,
 		pricing:     pricing,
 		cm:          pretty.NewChangeMonitor(),
 		isolatedVPC: isolatedVPC,
-	}
-	for _, opt := range opts {
-		opt(p)
 	}
 	// sets the pricing data from the static default state for the provider
 	p.Reset()
@@ -197,7 +184,7 @@ func (p *DefaultProvider) UpdateOnDemandPricing(ctx context.Context) error {
 		return nil
 	}
 
-	if !p.skipRegionCheck && strings.HasPrefix(p.region, "us-gov") {
+	if strings.HasPrefix(p.region, "us-gov") {
 		if p.cm.HasChanged("on-demand-prices", nil) {
 			log.FromContext(ctx).V(1).Info("pricing APIs aren't available in AWS GovCloud regions, on-demand pricing information will not be updated")
 		}

@@ -17,7 +17,6 @@ package options
 import (
 	"fmt"
 	"net/url"
-	"time"
 
 	"github.com/awslabs/operatorpkg/serrors"
 	"go.uber.org/multierr"
@@ -29,23 +28,7 @@ func (o *Options) Validate() error {
 		o.validateVMMemoryOverheadPercent(),
 		o.validateReservedENIs(),
 		o.validateRequiredFields(),
-		o.validateAMIRefreshInterval(),
-		o.validateSubnetRefreshInterval(),
 	)
-}
-
-func (o *Options) validateAMIRefreshInterval() error {
-	if o.AMIRefreshInterval < time.Minute {
-		return fmt.Errorf("ami-refresh-interval must be at least 1m")
-	}
-	return nil
-}
-
-func (o *Options) validateSubnetRefreshInterval() error {
-	if o.SubnetRefreshInterval < time.Minute {
-		return fmt.Errorf("subnet-refresh-interval must be at least 1m")
-	}
-	return nil
 }
 
 func (o *Options) validateEndpoint() error {

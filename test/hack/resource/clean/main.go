@@ -67,7 +67,6 @@ func main() {
 	// prevent deletion
 	resourceTypes := []resourcetypes.Type{
 		resourcetypes.NewInstance(ec2Client),
-		resourcetypes.NewCapacityReservation(ec2Client),
 		resourcetypes.NewVPCEndpoint(ec2Client),
 		resourcetypes.NewENI(ec2Client),
 		resourcetypes.NewSecurityGroup(ec2Client),
