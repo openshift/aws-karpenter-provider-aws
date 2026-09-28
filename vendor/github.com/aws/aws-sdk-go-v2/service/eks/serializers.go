@@ -1358,13 +1358,6 @@ func awsRestjson1_serializeOpDocumentCreateNodegroupInput(v *CreateNodegroupInpu
 		ok.String(*v.Version)
 	}
 
-	if v.WarmPoolConfig != nil {
-		ok := object.Key("warmPoolConfig")
-		if err := awsRestjson1_serializeDocumentWarmPoolConfig(v.WarmPoolConfig, ok); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
@@ -1467,11 +1460,6 @@ func awsRestjson1_serializeOpDocumentCreatePodIdentityAssociationInput(v *Create
 	if v.Namespace != nil {
 		ok := object.Key("namespace")
 		ok.String(*v.Namespace)
-	}
-
-	if v.Policy != nil {
-		ok := object.Key("policy")
-		ok.String(*v.Policy)
 	}
 
 	if v.RoleArn != nil {
@@ -5968,13 +5956,6 @@ func awsRestjson1_serializeOpDocumentUpdateNodegroupConfigInput(v *UpdateNodegro
 		}
 	}
 
-	if v.WarmPoolConfig != nil {
-		ok := object.Key("warmPoolConfig")
-		if err := awsRestjson1_serializeDocumentWarmPoolConfig(v.WarmPoolConfig, ok); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
@@ -6206,11 +6187,6 @@ func awsRestjson1_serializeOpDocumentUpdatePodIdentityAssociationInput(v *Update
 	if v.DisableSessionTags != nil {
 		ok := object.Key("disableSessionTags")
 		ok.Boolean(*v.DisableSessionTags)
-	}
-
-	if v.Policy != nil {
-		ok := object.Key("policy")
-		ok.String(*v.Policy)
 	}
 
 	if v.RoleArn != nil {
@@ -7360,38 +7336,6 @@ func awsRestjson1_serializeDocumentVpcConfigRequest(v *types.VpcConfigRequest, v
 		if err := awsRestjson1_serializeDocumentStringList(v.SubnetIds, ok); err != nil {
 			return err
 		}
-	}
-
-	return nil
-}
-
-func awsRestjson1_serializeDocumentWarmPoolConfig(v *types.WarmPoolConfig, value smithyjson.Value) error {
-	object := value.Object()
-	defer object.Close()
-
-	if v.Enabled != nil {
-		ok := object.Key("enabled")
-		ok.Boolean(*v.Enabled)
-	}
-
-	if v.MaxGroupPreparedCapacity != nil {
-		ok := object.Key("maxGroupPreparedCapacity")
-		ok.Integer(*v.MaxGroupPreparedCapacity)
-	}
-
-	if v.MinSize != nil {
-		ok := object.Key("minSize")
-		ok.Integer(*v.MinSize)
-	}
-
-	if len(v.PoolState) > 0 {
-		ok := object.Key("poolState")
-		ok.String(string(v.PoolState))
-	}
-
-	if v.ReuseOnScaleIn != nil {
-		ok := object.Key("reuseOnScaleIn")
-		ok.Boolean(*v.ReuseOnScaleIn)
 	}
 
 	return nil

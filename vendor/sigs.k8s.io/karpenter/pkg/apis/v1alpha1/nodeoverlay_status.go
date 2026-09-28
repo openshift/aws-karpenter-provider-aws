@@ -28,18 +28,16 @@ const (
 
 // NodeOverlayStatus defines the observed state of NodeOverlay
 type NodeOverlayStatus struct {
+	//nolint:kubeapilinter
 	// Conditions contains signals for health and readiness
 	// +optional
-	// +listType=map
-	// +listMapKey=type
-	//nolint:kubeapilinter
-	Conditions []status.Condition `json:"conditions,omitempty"`
+	Conditions []status.Condition `json:"conditions,omitempty"` //nolint:kubeapilinter
 }
 
-func (in *NodeOverlay) StatusConditions(opts ...status.ForOption) status.ConditionSet {
+func (in *NodeOverlay) StatusConditions() status.ConditionSet {
 	return status.NewReadyConditions(
 		ConditionTypeValidationSucceeded,
-	).For(in, opts...)
+	).For(in)
 }
 
 func (in *NodeOverlay) GetConditions() []status.Condition {

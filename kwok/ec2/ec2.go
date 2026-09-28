@@ -29,6 +29,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
+	"github.com/docker/docker/pkg/namesgenerator"
 	"github.com/samber/lo"
 	"go.uber.org/multierr"
 	corev1 "k8s.io/api/core/v1"
@@ -42,7 +43,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/karpenter/kwok/apis/v1alpha1"
-	kwokutils "sigs.k8s.io/karpenter/kwok/utils"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -222,8 +222,7 @@ func (c *Client) backupInstances(ctx context.Context) error {
 			}
 		}
 		stored := cm.DeepCopy()
-		//nolint:gosec
-		cm.Data = map[string]string{"instances": string(removeNullFields(lo.Must(json.Marshal(lo.Slice(instances, i*500, (i+1)*500)))))}
+		cm.Data = map[string]string{"instances": string(removeNullFields(lo.Must(json.Marshal(lo.Slice(instances, i*500, (i+1)*500)))))} //nolint:gosec // G117 false positive: kwok is a test-only simulation and ClientToken here is not a secret
 		if !equality.Semantic.DeepEqual(cm, stored) {
 			if err := c.kubeClient.Patch(ctx, cm, client.MergeFrom(stored)); err != nil {
 				errs[i] = fmt.Errorf("patching configmap %q, %w", cm.Name, err)
@@ -907,13 +906,11 @@ func (c *Client) toNode(ctx context.Context, instance ec2types.Instance) *corev1
 		nil,
 		nil,
 		nil,
-		nil,
 		// TODO: Eventually support different AMIFamilies from userData
 		"al2023",
 		nil,
 	)
-	nodeName := fmt.Sprintf("kwok-%s-%d", kwokutils.RandomName(), rand.Uint32()) //nolint:gosec
-
+	nodeName := fmt.Sprintf("%s-%d", strings.ReplaceAll(namesgenerator.GetRandomName(0), "_", "-"), rand.Uint32()) //nolint:gosec
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nodeName,

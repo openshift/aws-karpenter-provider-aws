@@ -97,15 +97,6 @@ type AllocateIpamPoolCidrInput struct {
 	// A preview of the next available CIDR in a pool.
 	PreviewNextCidr *bool
 
-	// The key/value combination of a tag assigned to the resource. Use the tag key in
-	// the filter name and the tag value as the filter value. For example, to find all
-	// resources that have a tag with the key Owner and the value TeamA , specify
-	// tag:Owner for the filter name and TeamA for the filter value.
-	//
-	// If you specify tags, the request is authorized against the allocation resource
-	// in addition to the pool resource.
-	TagSpecifications []types.TagSpecification
-
 	noSmithyDocumentSerde
 }
 
@@ -154,7 +145,7 @@ func (c *Client) addOperationAllocateIpamPoolCidrMiddlewares(stack *middleware.S
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options, c); err != nil {
+	if err = addRetry(stack, options); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -176,6 +167,9 @@ func (c *Client) addOperationAllocateIpamPoolCidrMiddlewares(stack *middleware.S
 		return err
 	}
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {

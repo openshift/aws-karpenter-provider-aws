@@ -20,7 +20,6 @@ import (
 	"context"
 	"log"
 	"strings"
-	"time"
 
 	"github.com/awslabs/operatorpkg/option"
 	"github.com/samber/lo"
@@ -32,7 +31,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	clocktesting "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -45,7 +43,6 @@ type Environment struct {
 	envtest.Environment
 
 	Client              client.Client
-	Clock               *clocktesting.FakeClock
 	KubernetesInterface kubernetes.Interface
 	Version             *version.Version
 	Done                chan struct{}
@@ -142,7 +139,7 @@ func NewEnvironment(options ...option.Function[EnvironmentOptions]) *Environment
 	opts := option.Resolve(options...)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	version := version.MustParseSemantic(strings.ReplaceAll(env.WithDefaultString("K8S_VERSION", "1.36.x"), ".x", ".0"))
+	version := version.MustParseSemantic(strings.ReplaceAll(env.WithDefaultString("K8S_VERSION", "1.35.x"), ".x", ".0"))
 	environment := envtest.Environment{Scheme: scheme.Scheme, CRDs: opts.crds}
 	if version.Minor() >= 21 && version.Minor() < 32 {
 		// PodAffinityNamespaceSelector is used for label selectors in pod affinities.  If the feature-gate is turned off,
@@ -192,7 +189,6 @@ func NewEnvironment(options ...option.Function[EnvironmentOptions]) *Environment
 	return &Environment{
 		Environment:         environment,
 		Client:              c,
-		Clock:               clocktesting.NewFakeClock(time.Now()),
 		KubernetesInterface: kubernetes.NewForConfigOrDie(environment.Config),
 		Version:             version,
 		Done:                make(chan struct{}),

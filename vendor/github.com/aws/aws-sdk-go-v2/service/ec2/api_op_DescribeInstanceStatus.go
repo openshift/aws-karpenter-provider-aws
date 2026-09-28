@@ -131,11 +131,6 @@ type DescribeInstanceStatusInput struct {
 	// Default: false
 	IncludeAllInstances *bool
 
-	// Indicates whether to include managed resources in the output. If this parameter
-	// is set to true , the output includes resources that are managed by Amazon Web
-	// Services services, even if managed resource visibility is set to hidden.
-	IncludeManagedResources *bool
-
 	// The instance IDs.
 	//
 	// Default: Describes all your instances.
@@ -209,7 +204,7 @@ func (c *Client) addOperationDescribeInstanceStatusMiddlewares(stack *middleware
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options, c); err != nil {
+	if err = addRetry(stack, options); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -231,6 +226,9 @@ func (c *Client) addOperationDescribeInstanceStatusMiddlewares(stack *middleware
 		return err
 	}
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {
