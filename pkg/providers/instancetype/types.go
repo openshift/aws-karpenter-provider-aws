@@ -142,14 +142,25 @@ func NewInstanceType(
 	capacityReservations []v1.CapacityReservation,
 ) *cloudprovider.InstanceType {
 	amiFamily := amifamily.GetAMIFamily(amiFamilyType, &amifamily.Options{})
+
+	// OpenShift uses custom system-reserved defaults, check the comments for more details.
+	var kubeReservedResourceList, systemReservedResourceList corev1.ResourceList
+	if isOpenShiftAMIFamily(amiFamily) {
+		kubeReservedResourceList = openShiftKubeReservedResources(kubeReserved)
+		systemReservedResourceList = openShiftSystemReservedResources(memory(ctx, info), info, systemReserved)
+	} else {
+		kubeReservedResourceList = kubeReservedResources(cpu(info), lo.Ternary(amiFamily.FeatureFlags().UsesENILimitedMemoryOverhead,
+			ENILimitedPods(ctx, info, 0, networkInterfaces), pods(ctx, info, amiFamily, maxPods, podsPerCore, networkInterfaces)), kubeReserved)
+		systemReservedResourceList = systemReservedResources(systemReserved)
+	}
+
 	it := &cloudprovider.InstanceType{
 		Name:         string(info.InstanceType),
 		Requirements: computeRequirements(info, region, offeringZones, subnetZoneInfo, amiFamily, capacityReservations),
 		Capacity:     computeCapacity(ctx, info, amiFamily, blockDeviceMappings, instanceStorePolicy, networkInterfaces, maxPods, podsPerCore),
 		Overhead: &cloudprovider.InstanceTypeOverhead{
-			KubeReserved: kubeReservedResources(cpu(info), lo.Ternary(amiFamily.FeatureFlags().UsesENILimitedMemoryOverhead,
-				ENILimitedPods(ctx, info, 0, networkInterfaces), pods(ctx, info, amiFamily, maxPods, podsPerCore, networkInterfaces)), kubeReserved),
-			SystemReserved:    systemReservedResources(systemReserved),
+			KubeReserved:      kubeReservedResourceList,
+			SystemReserved:    systemReservedResourceList,
 			EvictionThreshold: evictionThreshold(memory(ctx, info), ephemeralStorage(info, amiFamily, blockDeviceMappings, instanceStorePolicy), evictionHard),
 		},
 	}
@@ -591,13 +602,6 @@ func pods(ctx context.Context, info ec2types.InstanceTypeInfo, amiFamily amifami
 		count = lo.Min([]int64{int64(lo.FromPtr(podsPerCore)) * int64(lo.FromPtr(info.VCpuInfo.DefaultVCpus)), count})
 	}
 	return resources.Quantity(fmt.Sprint(count))
-}
-
-// isOpenShiftAMIFamily returns true if the AMIFamily is Custom, which is the only
-// AMIFamily OpenShift provisions nodes with.
-func isOpenShiftAMIFamily(amiFamily amifamily.AMIFamily) bool {
-	_, ok := amiFamily.(*amifamily.Custom)
-	return ok
 }
 
 func lowerKabobCase(s string) string {
