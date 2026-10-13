@@ -87,7 +87,7 @@ func (c *EndpointCache) deleteRandomKey() bool {
 	atomic.AddInt64(&c.size, -1)
 	found := false
 
-	c.endpoints.Range(func(key, value any) bool {
+	c.endpoints.Range(func(key, value interface{}) bool {
 		found = true
 		c.endpoints.Delete(key)
 

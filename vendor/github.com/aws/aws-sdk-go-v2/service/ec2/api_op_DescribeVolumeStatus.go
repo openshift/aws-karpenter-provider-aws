@@ -108,11 +108,6 @@ type DescribeVolumeStatusInput struct {
 	//   insufficient-data ).
 	Filters []types.Filter
 
-	// Indicates whether to include managed resources in the output. If this parameter
-	// is set to true , the output includes resources that are managed by Amazon Web
-	// Services services, even if managed resource visibility is set to hidden.
-	IncludeManagedResources *bool
-
 	// The maximum number of items to return for this request. To get the next page of
 	// items, make another request with the token returned in the output. For more
 	// information, see [Pagination].
@@ -181,7 +176,7 @@ func (c *Client) addOperationDescribeVolumeStatusMiddlewares(stack *middleware.S
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options, c); err != nil {
+	if err = addRetry(stack, options); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -203,6 +198,9 @@ func (c *Client) addOperationDescribeVolumeStatusMiddlewares(stack *middleware.S
 		return err
 	}
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {

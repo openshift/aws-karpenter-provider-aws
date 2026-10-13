@@ -127,10 +127,6 @@ type CreateOpenIDConnectProviderInput struct {
 	// For more information about obtaining the OIDC provider thumbprint, see [Obtaining the thumbprint for an OpenID Connect provider] in the
 	// IAM user Guide.
 	//
-	// If your OIDC provider's discovery endpoint and JWKS endpoint ( jwks_uri ) use
-	// different certificates or hosts, include the thumbprints for both endpoints in
-	// this list.
-	//
 	// [Obtaining the thumbprint for an OpenID Connect provider]: https://docs.aws.amazon.com/IAM/latest/UserGuide/identity-providers-oidc-obtain-thumbprint.html
 	ThumbprintList []string
 
@@ -195,7 +191,7 @@ func (c *Client) addOperationCreateOpenIDConnectProviderMiddlewares(stack *middl
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options, c); err != nil {
+	if err = addRetry(stack, options); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -217,6 +213,9 @@ func (c *Client) addOperationCreateOpenIDConnectProviderMiddlewares(stack *middl
 		return err
 	}
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {
