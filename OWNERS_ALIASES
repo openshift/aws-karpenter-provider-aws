@@ -4,14 +4,14 @@ aliases:
   karpenter-approvers:
   - elmiko
   - enxebre
-  - jkyros
+  - LucasAndFlores
   - joelsmith
   - maxcao13
   - muraee
+  - linkvt
   karpenter-reviewers:
   - elmiko
-  - enxebre
-  - jkyros
+  - LucasAndFlores
   - joelsmith
   - maxcao13
-  - muraee
+  - linkvt
