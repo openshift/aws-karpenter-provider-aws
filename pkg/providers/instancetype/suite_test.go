@@ -1139,6 +1139,83 @@ var _ = Describe("InstanceTypeProvider", func() {
 				Expect(it.Overhead.SystemReserved.Memory().String()).To(Equal("20Gi"))
 				Expect(it.Overhead.SystemReserved.StorageEphemeral().String()).To(Equal("10Gi"))
 			})
+			DescribeTable("should use OpenShift static system-reserved for Custom AMI shapes",
+				func(vCPUs int32, memoryMiB int64, vmMemoryOverhead float64) {
+					testCtx := options.ToContext(ctx, test.Options(test.OptionsFields{
+						VMMemoryOverheadPercent: lo.ToPtr(vmMemoryOverhead),
+					}))
+					nodeClass.Spec.AMIFamily = lo.ToPtr(v1.AMIFamilyCustom)
+					nodeClass.Spec.Kubelet = &v1.KubeletConfiguration{}
+					it := instancetype.NewInstanceType(testCtx,
+						ec2types.InstanceTypeInfo{
+							InstanceType: "m6i.synthetic",
+							ProcessorInfo: &ec2types.ProcessorInfo{
+								SupportedArchitectures: []ec2types.ArchitectureType{"x86_64"},
+							},
+							VCpuInfo: &ec2types.VCpuInfo{
+								DefaultCores: aws.Int32(vCPUs / 2),
+								DefaultVCpus: aws.Int32(vCPUs),
+							},
+							MemoryInfo:  &ec2types.MemoryInfo{SizeInMiB: aws.Int64(memoryMiB)},
+							NetworkInfo: &ec2types.NetworkInfo{},
+						},
+						fake.DefaultRegion,
+						nil,
+						nil,
+						nodeClass.Spec.BlockDeviceMappings,
+						nodeClass.Spec.InstanceStorePolicy,
+						nodeClass.Spec.Kubelet.MaxPods,
+						nodeClass.Spec.Kubelet.PodsPerCore,
+						nodeClass.Spec.Kubelet.KubeReserved,
+						nodeClass.Spec.Kubelet.SystemReserved,
+						nodeClass.Spec.Kubelet.EvictionHard,
+						nodeClass.Spec.Kubelet.EvictionSoft,
+						nodeClass.AMIFamily(),
+						nil,
+					)
+					Expect(it.Overhead.SystemReserved.Cpu().String()).To(Equal("500m"))
+					Expect(it.Overhead.SystemReserved.Memory().String()).To(Equal("1Gi"))
+					Expect(it.Overhead.SystemReserved.StorageEphemeral().String()).To(Equal("1Gi"))
+					Expect(it.Overhead.KubeReserved).To(BeEmpty())
+				},
+				Entry("m5.xlarge", int32(4), int64(16*1024), 0.075),
+				Entry("m6i.2xlarge", int32(8), int64(32*1024), 0.075),
+				Entry("large CPU and memory shape", int32(96), int64(384*1024), 0.075),
+				Entry("8Gi memory without VM overhead", int32(8), int64(8*1024), 0.0),
+			)
+			It("should let user-specified system-reserved values override OpenShift's static defaults for Custom AMI family", func() {
+				nodeClass.Spec.AMIFamily = lo.ToPtr(v1.AMIFamilyCustom)
+				nodeClass.Spec.Kubelet = &v1.KubeletConfiguration{
+					KubeReserved: map[string]string{
+						string(corev1.ResourceCPU): "500m",
+					},
+					SystemReserved: map[string]string{
+						string(corev1.ResourceCPU):    "2",
+						string(corev1.ResourceMemory): "20Gi",
+					},
+				}
+				it := instancetype.NewInstanceType(ctx,
+					info,
+					fake.DefaultRegion,
+					nil,
+					nil,
+					nodeClass.Spec.BlockDeviceMappings,
+					nodeClass.Spec.InstanceStorePolicy,
+					nodeClass.Spec.Kubelet.MaxPods,
+					nodeClass.Spec.Kubelet.PodsPerCore,
+					nodeClass.Spec.Kubelet.KubeReserved,
+					nodeClass.Spec.Kubelet.SystemReserved,
+					nodeClass.Spec.Kubelet.EvictionHard,
+					nodeClass.Spec.Kubelet.EvictionSoft,
+					nodeClass.AMIFamily(),
+					nil,
+				)
+				Expect(it.Overhead.KubeReserved.Cpu().String()).To(Equal("500m"))
+				Expect(it.Overhead.SystemReserved.Cpu().String()).To(Equal("2"))
+				Expect(it.Overhead.SystemReserved.Memory().String()).To(Equal("20Gi"))
+				// Untouched by the override, still defaulted from OpenShift's static reservations.
+				Expect(it.Overhead.SystemReserved.StorageEphemeral().String()).To(Equal("1Gi"))
+			})
 		})
 		Context("Kube Reserved Resources", func() {
 			It("should use defaults when no kubelet is specified", func() {
@@ -1648,7 +1725,6 @@ var _ = Describe("InstanceTypeProvider", func() {
 					nil,
 					nodeClass.Spec.BlockDeviceMappings,
 					nodeClass.Spec.InstanceStorePolicy,
-					nil,
 					nodeClass.Spec.Kubelet.MaxPods,
 					nodeClass.Spec.Kubelet.PodsPerCore,
 					nodeClass.Spec.Kubelet.KubeReserved,
@@ -1732,7 +1808,8 @@ var _ = Describe("InstanceTypeProvider", func() {
 			Entry("windows2019 (latest)", "windows2019@latest", v1.AMIFamilyWindows2019, 10, "365Mi"),    // 11 * 10 + 255
 			Entry("windows2022 (latest)", "windows2022@latest", v1.AMIFamilyWindows2022, 10, "365Mi"),    // 11 * 10 + 255
 			Entry("windows2025 (latest)", "windows2025@latest", v1.AMIFamilyWindows2025, 10, "365Mi"),    // 11 * 10 + 255
-			Entry("custom", fake.ImageID(), v1.AMIFamilyCustom, 10, "640Mi"),                             // 11 * 35 + 255
+			// OCPBUGS-85090: OpenShift doesn't support kube-reserved at all, so Custom reports zero instead.
+			Entry("custom", fake.ImageID(), v1.AMIFamilyCustom, 10, "0"),
 		)
 		It("should override max-pods value", func() {
 			instanceInfo, err := awsEnv.EC2API.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{})
@@ -1807,8 +1884,9 @@ var _ = Describe("InstanceTypeProvider", func() {
 			Entry("windows2019 (latest)", "windows2019@latest", v1.AMIFamilyWindows2019, 110, "1465Mi"),  // 11 * 110 + 255
 			Entry("windows2022 (latest)", "windows2022@latest", v1.AMIFamilyWindows2022, 110, "1465Mi"),  // 11 * 110 + 255
 			Entry("windows2025 (latest)", "windows2025@latest", v1.AMIFamilyWindows2025, 110, "1465Mi"),  // 11 * 110 + 255
-			// OCPBUGS-85085: OpenShift default is pods=250, memory overhead is still based on ENI-limited pods as UsesENILimitedMemoryOverhead defaults to true
-			Entry("custom", fake.ImageID(), v1.AMIFamilyCustom, 250, "640Mi"),
+			// OCPBUGS-85085: OpenShift default is pods=250.
+			// OCPBUGS-85090: OpenShift doesn't support kube-reserved at all, so Custom reports zero instead.
+			Entry("custom", fake.ImageID(), v1.AMIFamilyCustom, 250, "0"),
 		)
 		It("should reserve ENIs when aws.reservedENIs is set and not go below 0 ENIs in max-pods calculation", func() {
 			ctx = options.ToContext(ctx, test.Options(test.OptionsFields{
