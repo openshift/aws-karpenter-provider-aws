@@ -37,7 +37,6 @@ const (
 	SubnetDrift              cloudprovider.DriftReason = "SubnetDrift"
 	SecurityGroupDrift       cloudprovider.DriftReason = "SecurityGroupDrift"
 	CapacityReservationDrift cloudprovider.DriftReason = "CapacityReservationDrift"
-	PlacementGroupDrift      cloudprovider.DriftReason = "PlacementGroupDrift"
 	NodeClassDrift           cloudprovider.DriftReason = "NodeClassDrift"
 )
 
@@ -65,16 +64,11 @@ func (c *CloudProvider) isNodeClassDrifted(ctx context.Context, nodeClaim *karpv
 	if err != nil {
 		return "", fmt.Errorf("calculating subnet drift, %w", err)
 	}
-	capacityReservationsDrifted, err := c.isCapacityReservationDrifted(ctx, nodeClaim.Status.ProviderID, instance, nodeClass)
-	if err != nil {
-		return "", fmt.Errorf("calculating capacity reservation drift, %w", err)
-	}
-	placementGroupDrifted := c.isPlacementGroupDrifted(ctx, nodeClaim, nodeClass)
+	capacityReservationsDrifted := c.isCapacityReservationDrifted(instance, nodeClass)
 	drifted := lo.FindOrElse([]cloudprovider.DriftReason{
 		securitygroupDrifted,
 		subnetDrifted,
 		capacityReservationsDrifted,
-		placementGroupDrifted,
 	}, "", func(i cloudprovider.DriftReason) bool {
 		return string(i) != ""
 	})
@@ -140,40 +134,14 @@ func (c *CloudProvider) areSecurityGroupsDrifted(ec2Instance *instance.Instance,
 }
 
 // Checks if capacity reservations are drifted, by comparing the capacity reservations persisted to the NodeClass to
-// the instance's capacity reservation. When stale instance information isn't useful enough to determine drift, we
-// skip the cache and fallback to the EC2 API.
+// the instance's capacity reservation.
 // NOTE: We handle drift dynamically for capacity reservations rather than relying on the offerings inducing drift since
 // a reserved instance may fall back to on-demand. Relying on offerings could result in drift occurring before fallback
 // would cancel it out.
-func (c *CloudProvider) isCapacityReservationDrifted(ctx context.Context, providerID string, i *instance.Instance, nodeClass *v1.EC2NodeClass) (cloudprovider.DriftReason, error) {
-	if i.CapacityReservationDetails == nil {
-		return "", nil
-	}
+func (c *CloudProvider) isCapacityReservationDrifted(instance *instance.Instance, nodeClass *v1.EC2NodeClass) cloudprovider.DriftReason {
 	capacityReservationIDs := sets.New(lo.Map(nodeClass.Status.CapacityReservations, func(cr v1.CapacityReservation, _ int) string { return cr.ID })...)
-	if capacityReservationIDs.Has(i.CapacityReservationDetails.ID) {
-		return "", nil
-	}
-	// skip the instance type cache to get up-to-date instance info
-	i, err := c.getInstance(ctx, providerID, instance.SkipCache)
-	if err != nil {
-		return "", err
-	}
-	if i.CapacityReservationDetails != nil && !capacityReservationIDs.Has(i.CapacityReservationDetails.ID) {
-		return CapacityReservationDrift, nil
-	}
-	return "", nil
-}
-
-// isPlacementGroupDrifted checks if the node's placement group ID label no longer matches the EC2NodeClass's
-// resolved placement group. This covers scenarios where placementGroupSelector was added, removed, or changed.
-func (c *CloudProvider) isPlacementGroupDrifted(ctx context.Context, nodeClaim *karpv1.NodeClaim, nodeClass *v1.EC2NodeClass) cloudprovider.DriftReason {
-	nodeClaimPGID := nodeClaim.Labels[v1.LabelPlacementGroupID]
-	var nodeClassPGID string
-	if pg, _ := c.placementGroupProvider.Get(ctx, nodeClass); pg != nil {
-		nodeClassPGID = pg.ID
-	}
-	if nodeClaimPGID != nodeClassPGID {
-		return PlacementGroupDrift
+	if instance.CapacityReservationID != nil && !capacityReservationIDs.Has(*instance.CapacityReservationID) {
+		return CapacityReservationDrift
 	}
 	return ""
 }
@@ -194,13 +162,13 @@ func (c *CloudProvider) areStaticFieldsDrifted(nodeClaim *karpv1.NodeClaim, node
 	return lo.Ternary(nodeClassHash != nodeClaimHash, NodeClassDrift, "")
 }
 
-func (c *CloudProvider) getInstance(ctx context.Context, providerID string, options ...instance.Options) (*instance.Instance, error) {
+func (c *CloudProvider) getInstance(ctx context.Context, providerID string) (*instance.Instance, error) {
 	// Get InstanceID to fetch from EC2
 	instanceID, err := utils.ParseInstanceID(providerID)
 	if err != nil {
 		return nil, err
 	}
-	instance, err := c.instanceProvider.Get(ctx, instanceID, options...)
+	instance, err := c.instanceProvider.Get(ctx, instanceID)
 	if err != nil {
 		return nil, fmt.Errorf("getting instance, %w", err)
 	}

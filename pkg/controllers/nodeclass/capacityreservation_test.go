@@ -41,10 +41,6 @@ var capacityBlockTags = map[string]string{
 	"reservation-type": "capacity-block",
 }
 
-var interruptibleTags = map[string]string{
-	"reservation-interruptible": "true",
-}
-
 var _ = Describe("NodeClass Capacity Reservation Reconciler", func() {
 	BeforeEach(func() {
 		awsEnv.EC2API.DescribeCapacityReservationsOutput.Set(&ec2.DescribeCapacityReservationsOutput{
@@ -58,7 +54,6 @@ var _ = Describe("NodeClass Capacity Reservation Reconciler", func() {
 					AvailableInstanceCount: lo.ToPtr[int32](10),
 					State:                  ec2types.CapacityReservationStateActive,
 					ReservationType:        ec2types.CapacityReservationTypeDefault,
-					Interruptible:          lo.ToPtr(false),
 				},
 				{
 					AvailabilityZone:       lo.ToPtr("test-zone-1a"),
@@ -70,7 +65,6 @@ var _ = Describe("NodeClass Capacity Reservation Reconciler", func() {
 					Tags:                   utils.EC2MergeTags(discoveryTags),
 					State:                  ec2types.CapacityReservationStateActive,
 					ReservationType:        ec2types.CapacityReservationTypeDefault,
-					Interruptible:          lo.ToPtr(false),
 				},
 				{
 					AvailabilityZone:       lo.ToPtr("test-zone-1a"),
@@ -83,7 +77,6 @@ var _ = Describe("NodeClass Capacity Reservation Reconciler", func() {
 					State:                  ec2types.CapacityReservationStateActive,
 					ReservationType:        ec2types.CapacityReservationTypeCapacityBlock,
 					EndDate:                lo.ToPtr(awsEnv.Clock.Now().Add(time.Hour * 24)),
-					Interruptible:          lo.ToPtr(false),
 				},
 				{
 					AvailabilityZone:       lo.ToPtr("test-zone-1b"),
@@ -94,7 +87,6 @@ var _ = Describe("NodeClass Capacity Reservation Reconciler", func() {
 					AvailableInstanceCount: lo.ToPtr[int32](15),
 					State:                  ec2types.CapacityReservationStateActive,
 					ReservationType:        ec2types.CapacityReservationTypeDefault,
-					Interruptible:          lo.ToPtr(false),
 				},
 				{
 					AvailabilityZone:       lo.ToPtr("test-zone-1b"),
@@ -106,7 +98,6 @@ var _ = Describe("NodeClass Capacity Reservation Reconciler", func() {
 					Tags:                   utils.EC2MergeTags(discoveryTags),
 					State:                  ec2types.CapacityReservationStateActive,
 					ReservationType:        ec2types.CapacityReservationTypeDefault,
-					Interruptible:          lo.ToPtr(false),
 				},
 				{
 					AvailabilityZone:       lo.ToPtr("test-zone-1a"),
@@ -117,46 +108,9 @@ var _ = Describe("NodeClass Capacity Reservation Reconciler", func() {
 					AvailableInstanceCount: lo.ToPtr[int32](5),
 					State:                  ec2types.CapacityReservationStateActive,
 					ReservationType:        ec2types.CapacityReservationTypeDefault,
-					Interruptible:          lo.ToPtr(false),
-				},
-				{
-					AvailabilityZone:       lo.ToPtr("test-zone-1a"),
-					InstanceType:           lo.ToPtr("m5.large"),
-					OwnerId:                lo.ToPtr(selfOwnerID),
-					InstanceMatchCriteria:  ec2types.InstanceMatchCriteriaOpen,
-					CapacityReservationId:  lo.ToPtr("cr-i-m5.large-1a-1"),
-					AvailableInstanceCount: lo.ToPtr[int32](10),
-					Tags:                   utils.EC2MergeTags(interruptibleTags),
-					State:                  ec2types.CapacityReservationStateActive,
-					ReservationType:        ec2types.CapacityReservationTypeDefault,
-					Interruptible:          lo.ToPtr(true),
-				},
-				{
-					AvailabilityZone:       lo.ToPtr("test-zone-1a"),
-					InstanceType:           lo.ToPtr("m5.large"),
-					OwnerId:                lo.ToPtr(selfOwnerID),
-					InstanceMatchCriteria:  ec2types.InstanceMatchCriteriaTargeted,
-					CapacityReservationId:  lo.ToPtr("cr-nil-interruptible"),
-					AvailableInstanceCount: lo.ToPtr[int32](5),
-					State:                  ec2types.CapacityReservationStateActive,
-					ReservationType:        ec2types.CapacityReservationTypeDefault,
-					// Interruptible intentionally omitted (nil) — this is the default
-					// for standard ODCRs and capacity blocks returned by the EC2 API
 				},
 			},
 		})
-	})
-	It("should handle capacity reservations with nil Interruptible field", func() {
-		nodeClass.Spec.CapacityReservationSelectorTerms = append(nodeClass.Spec.CapacityReservationSelectorTerms, v1.CapacityReservationSelectorTerm{
-			ID: "cr-nil-interruptible",
-		})
-		ExpectApplied(ctx, env.Client, nodeClass)
-		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
-		nodeClass = ExpectExists(ctx, env.Client, nodeClass)
-		Expect(nodeClass.StatusConditions().Get(v1.ConditionTypeCapacityReservationsReady).IsTrue()).To(BeTrue())
-		Expect(nodeClass.Status.CapacityReservations).To(HaveLen(1))
-		Expect(nodeClass.Status.CapacityReservations[0].ID).To(Equal("cr-nil-interruptible"))
-		Expect(nodeClass.Status.CapacityReservations[0].Interruptible).To(BeFalse())
 	})
 	It("should resolve capacity reservations by ID", func() {
 		const targetID = "cr-m5.large-1a-1"
@@ -214,13 +168,9 @@ var _ = Describe("NodeClass Capacity Reservation Reconciler", func() {
 		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
 		nodeClass = ExpectExists(ctx, env.Client, nodeClass)
 		Expect(nodeClass.StatusConditions().Get(v1.ConditionTypeCapacityReservationsReady).IsTrue()).To(BeTrue())
-		Expect(nodeClass.Status.CapacityReservations).To(HaveLen(2))
-		Expect(lo.Map(nodeClass.Status.CapacityReservations, func(cr v1.CapacityReservation, _ int) string {
-			return cr.ID
-		})).To(ContainElements("cr-m5.large-1a-3", "cr-i-m5.large-1a-1"))
-		for _, cr := range nodeClass.Status.CapacityReservations {
-			Expect(cr.InstanceMatchCriteria).To(Equal("open"))
-		}
+		Expect(nodeClass.Status.CapacityReservations).To(HaveLen(1))
+		Expect(nodeClass.Status.CapacityReservations[0].ID).To(Equal("cr-m5.large-1a-3"))
+		Expect(nodeClass.Status.CapacityReservations[0].InstanceMatchCriteria).To(Equal("open"))
 	})
 	It("should resolve capacity reservations by instance match criteria 'targeted'", func() {
 		nodeClass.Spec.CapacityReservationSelectorTerms = append(nodeClass.Spec.CapacityReservationSelectorTerms, v1.CapacityReservationSelectorTerm{
@@ -230,10 +180,10 @@ var _ = Describe("NodeClass Capacity Reservation Reconciler", func() {
 		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
 		nodeClass = ExpectExists(ctx, env.Client, nodeClass)
 		Expect(nodeClass.StatusConditions().Get(v1.ConditionTypeCapacityReservationsReady).IsTrue()).To(BeTrue())
-		Expect(nodeClass.Status.CapacityReservations).To(HaveLen(6))
+		Expect(nodeClass.Status.CapacityReservations).To(HaveLen(5))
 		Expect(lo.Map(nodeClass.Status.CapacityReservations, func(cr v1.CapacityReservation, _ int) string {
 			return cr.ID
-		})).To(ContainElements("cr-m5.large-1a-1", "cr-m5.large-1a-2", "cr-p5.48xlarge-1a", "cr-m5.large-1b-1", "cr-m5.large-1b-2", "cr-nil-interruptible"))
+		})).To(ContainElements("cr-m5.large-1a-1", "cr-m5.large-1a-2", "cr-p5.48xlarge-1a", "cr-m5.large-1b-1", "cr-m5.large-1b-2"))
 		for _, cr := range nodeClass.Status.CapacityReservations {
 			Expect(cr.InstanceMatchCriteria).To(Equal("targeted"))
 		}
@@ -377,24 +327,10 @@ var _ = Describe("NodeClass Capacity Reservation Reconciler", func() {
 			ExpectApplied(ctx, env.Client, nodeClass)
 			ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
 			nodeClass = ExpectExists(ctx, env.Client, nodeClass)
-			Expect(nodeClass.Status.Conditions).To(HaveLen(lo.Ternary(reservedCapacity, 8, 7)))
+			Expect(nodeClass.Status.Conditions).To(HaveLen(lo.Ternary(reservedCapacity, 7, 6)))
 			Expect(nodeClass.StatusConditions().Get(status.ConditionReady).IsTrue()).To(BeTrue())
 		},
 		Entry("when reserved capacity feature flag is enabled", true),
 		Entry("when reserved capacity feature flag is disabled", false),
 	)
-	It("should discover interruptible reservations", func() {
-		nodeClass.Spec.CapacityReservationSelectorTerms = append(nodeClass.Spec.CapacityReservationSelectorTerms, v1.CapacityReservationSelectorTerm{
-			Tags: interruptibleTags,
-		})
-		ExpectApplied(ctx, env.Client, nodeClass)
-		ExpectObjectReconciled(ctx, env.Client, controller, nodeClass)
-		nodeClass = ExpectExists(ctx, env.Client, nodeClass)
-		Expect(nodeClass.StatusConditions().Get(v1.ConditionTypeCapacityReservationsReady).IsTrue()).To(BeTrue())
-		Expect(nodeClass.Status.CapacityReservations).To(HaveLen(1))
-		cr := nodeClass.Status.CapacityReservations[0]
-		Expect(cr.ID).To(Equal("cr-i-m5.large-1a-1"))
-		Expect(cr.Interruptible).To(Equal(true))
-		Expect(cr.State).To(Equal(v1.CapacityReservationStateActive))
-	})
 })
