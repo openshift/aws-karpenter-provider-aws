@@ -80,10 +80,6 @@ type AttachVolumeInput struct {
 	// UnauthorizedOperation .
 	DryRun *bool
 
-	// The index of the EBS card. Some instance types support multiple EBS cards. The
-	// default EBS card index is 0.
-	EbsCardIndex *int32
-
 	noSmithyDocumentSerde
 }
 
@@ -105,10 +101,6 @@ type AttachVolumeOutput struct {
 	// If the volume is attached to an Amazon Web Services-managed resource, this
 	// parameter returns null .
 	Device *string
-
-	// The index of the EBS card. Some instance types support multiple EBS cards. The
-	// default EBS card index is 0.
-	EbsCardIndex *int32
 
 	// The ID of the instance.
 	//
@@ -169,7 +161,7 @@ func (c *Client) addOperationAttachVolumeMiddlewares(stack *middleware.Stack, op
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options, c); err != nil {
+	if err = addRetry(stack, options); err != nil {
 		return err
 	}
 	if err = addRawResponseToMetadata(stack); err != nil {
@@ -191,6 +183,9 @@ func (c *Client) addOperationAttachVolumeMiddlewares(stack *middleware.Stack, op
 		return err
 	}
 	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
 		return err
 	}
 	if err = addUserAgentRetryMode(stack, options); err != nil {

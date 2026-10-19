@@ -109,15 +109,12 @@ var _ = AfterEach(func() {
 })
 
 var _ = Describe("InstanceProfileProvider", func() {
-	karpenterPath := func(nodeClassUID string) string {
-		return instanceprofile.FormatPath("karpenter", fake.DefaultRegion, options.FromContext(ctx).ClusterName, nodeClassUID)
-	}
 	DescribeTable(
 		"should support IAM roles",
 		func(roleWithPath, role string) {
 			const profileName = "profile-A"
 			nodeClass.Spec.Role = roleWithPath
-			Expect(awsEnv.InstanceProfileProvider.Create(ctx, profileName, role, nil, karpenterPath(string(nodeClass.UID)))).To(Succeed())
+			Expect(awsEnv.InstanceProfileProvider.Create(ctx, profileName, role, nil, string(nodeClass.UID), true)).To(Succeed())
 			Expect(profileName).ToNot(BeNil())
 			Expect(awsEnv.IAMAPI.InstanceProfiles[profileName].Roles).To(HaveLen(1))
 			Expect(aws.ToString(awsEnv.IAMAPI.InstanceProfiles[profileName].Roles[0].RoleName)).To(Equal(role))
@@ -125,17 +122,6 @@ var _ = Describe("InstanceProfileProvider", func() {
 		Entry("with custom paths", fmt.Sprintf("CustomPath/%s", nodeRole), nodeRole),
 		Entry("without custom paths", nodeRole, nodeRole),
 	)
-
-	It("should create an instance profile without a path when path is empty", func() {
-		const profileName = "profile-no-path"
-		Expect(awsEnv.InstanceProfileProvider.Create(ctx, profileName, nodeRole, nil, "")).To(Succeed())
-
-		profile, err := awsEnv.InstanceProfileProvider.Get(ctx, profileName)
-		Expect(err).To(BeNil())
-		Expect(aws.ToString(profile.InstanceProfileName)).To(Equal(profileName))
-		// When path is empty, the profile should not have a custom path set
-		Expect(profile.Path).To(BeNil())
-	})
 
 	It("should list all instance profiles for a NodeClass", func() {
 		// Create and apply first NodeClass
@@ -175,7 +161,7 @@ var _ = Describe("InstanceProfileProvider", func() {
 						RoleName: aws.String("role-1"),
 					},
 				},
-				Path: lo.ToPtr(karpenterPath(string(nodeClass1.UID))),
+				Path: lo.ToPtr(fmt.Sprintf("/karpenter/%s/%s/%s/", fake.DefaultRegion, options.FromContext(ctx).ClusterName, string(nodeClass1.UID))),
 			},
 			profile2: {
 				InstanceProfileName: lo.ToPtr(profile2),
@@ -185,12 +171,12 @@ var _ = Describe("InstanceProfileProvider", func() {
 						RoleName: aws.String("role-2"),
 					},
 				},
-				Path: lo.ToPtr(karpenterPath(string(nodeClass2.UID))),
+				Path: lo.ToPtr(fmt.Sprintf("/karpenter/%s/%s/%s/", fake.DefaultRegion, options.FromContext(ctx).ClusterName, string(nodeClass2.UID))),
 			},
 		}
 
 		// List profiles for first NodeClass
-		profiles, err := awsEnv.InstanceProfileProvider.ListProfiles(ctx, karpenterPath(string(nodeClass1.UID)))
+		profiles, err := awsEnv.InstanceProfileProvider.ListNodeClassProfiles(ctx, &nodeClass1.EC2NodeClass)
 		Expect(err).To(BeNil())
 
 		// Should only get profiles for first NodeClass
@@ -241,7 +227,7 @@ var _ = Describe("InstanceProfileProvider", func() {
 						RoleName: aws.String("role-1"),
 					},
 				},
-				Path: lo.ToPtr(karpenterPath(string(nodeClass1.UID))),
+				Path: lo.ToPtr(fmt.Sprintf("/karpenter/%s/%s/%s/", fake.DefaultRegion, options.FromContext(ctx).ClusterName, string(nodeClass1.UID))),
 			},
 			profile2: {
 				InstanceProfileName: lo.ToPtr(profile2),
@@ -251,7 +237,7 @@ var _ = Describe("InstanceProfileProvider", func() {
 						RoleName: aws.String("role-2"),
 					},
 				},
-				Path: lo.ToPtr(karpenterPath(string(nodeClass2.UID))),
+				Path: lo.ToPtr(fmt.Sprintf("/karpenter/%s/%s/%s/", fake.DefaultRegion, options.FromContext(ctx).ClusterName, string(nodeClass2.UID))),
 			},
 			profile3: {
 				InstanceProfileName: lo.ToPtr(profile3),
@@ -261,13 +247,12 @@ var _ = Describe("InstanceProfileProvider", func() {
 						RoleName: aws.String("role-3"),
 					},
 				},
-				Path: lo.ToPtr(instanceprofile.FormatPath("karpenter", fake.DefaultRegion, options.FromContext(otherClusterCtx).ClusterName, "some-uid")),
+				Path: lo.ToPtr(fmt.Sprintf("/karpenter/%s/%s/%s/", fake.DefaultRegion, options.FromContext(otherClusterCtx).ClusterName, "some-uid")),
 			},
 		}
 
 		// List all cluster profiles
-		clusterPath := instanceprofile.FormatPath("karpenter", fake.DefaultRegion, options.FromContext(ctx).ClusterName)
-		profiles, err := awsEnv.InstanceProfileProvider.ListProfiles(ctx, clusterPath)
+		profiles, err := awsEnv.InstanceProfileProvider.ListClusterProfiles(ctx)
 		Expect(err).To(BeNil())
 
 		// Should get both profiles in first cluster and not the other one
@@ -284,9 +269,9 @@ var _ = Describe("InstanceProfileProvider", func() {
 		// Create instance profile
 		profileName := "profile-A"
 		nodeClassUID := "test-uid"
-		expectedPath := karpenterPath(nodeClassUID)
+		expectedPath := fmt.Sprintf("/karpenter/%s/%s/%s/", fake.DefaultRegion, options.FromContext(ctx).ClusterName, nodeClassUID)
 
-		Expect(awsEnv.InstanceProfileProvider.Create(ctx, profileName, nodeRole, nil, expectedPath)).To(Succeed())
+		Expect(awsEnv.InstanceProfileProvider.Create(ctx, profileName, nodeRole, nil, nodeClassUID, true)).To(Succeed())
 
 		// Get the created profile
 		profile, err := awsEnv.InstanceProfileProvider.Get(ctx, profileName)
@@ -304,7 +289,7 @@ var _ = Describe("InstanceProfileProvider", func() {
 		profileName := "profile-A"
 		nodeClassUID := "test-uid"
 
-		Expect(awsEnv.InstanceProfileProvider.Create(ctx, profileName, nodeRole, nil, karpenterPath(nodeClassUID))).To(Succeed())
+		Expect(awsEnv.InstanceProfileProvider.Create(ctx, profileName, nodeRole, nil, nodeClassUID, true)).To(Succeed())
 
 		// Verify profile exists
 		Expect(awsEnv.IAMAPI.InstanceProfiles).To(HaveKey(profileName))
@@ -325,7 +310,7 @@ var _ = Describe("InstanceProfileProvider", func() {
 	It("should reflect IsProtected updates", func() {
 		// Create a profile
 		profileName := "profile-A"
-		Expect(awsEnv.InstanceProfileProvider.Create(ctx, profileName, nodeRole, nil, karpenterPath("test-uid"))).To(Succeed())
+		Expect(awsEnv.InstanceProfileProvider.Create(ctx, profileName, nodeRole, nil, "test-uid", true)).To(Succeed())
 
 		// Initially should not be protected (protection is set in instance profile reconciler)
 		Expect(awsEnv.InstanceProfileProvider.IsProtected(profileName)).To(BeFalse())
@@ -342,13 +327,13 @@ var _ = Describe("InstanceProfileProvider", func() {
 	It("should not update instance profile cache item on multiple create calls", func() {
 		roleName := "test-role"
 		profileName := "test-profile"
-		err := awsEnv.InstanceProfileProvider.Create(ctx, profileName, roleName, nil, karpenterPath("test-uid"))
+		err := awsEnv.InstanceProfileProvider.Create(ctx, profileName, roleName, nil, "test-uid", true)
 		_, initialExpirationTime, found := awsEnv.InstanceProfileCache.GetWithExpiration(instanceprofile.GetProfileCacheKey(profileName))
 		Expect(found).To(BeTrue())
 		Expect(err).ToNot(HaveOccurred())
 		time.Sleep(time.Second)
 
-		err = awsEnv.InstanceProfileProvider.Create(ctx, profileName, roleName, nil, karpenterPath("test-uid"))
+		err = awsEnv.InstanceProfileProvider.Create(ctx, profileName, roleName, nil, "test-uid", true)
 		Expect(err).ToNot(HaveOccurred())
 		_, expirationTime, found := awsEnv.InstanceProfileCache.GetWithExpiration(instanceprofile.GetProfileCacheKey(profileName))
 		Expect(found).To(BeTrue())
@@ -364,14 +349,14 @@ var _ = Describe("InstanceProfileProvider", func() {
 			}
 		})
 		It("should not cache role not found errors when the role exists", func() {
-			err := awsEnv.InstanceProfileProvider.Create(ctx, "test-profile", roleName, nil, karpenterPath("test-uid"))
+			err := awsEnv.InstanceProfileProvider.Create(ctx, "test-profile", roleName, nil, "test-uid", true)
 			Expect(err).ToNot(HaveOccurred())
 			_, ok := awsEnv.RoleCache.Get(roleName)
 			Expect(ok).To(BeFalse())
 		})
 		It("should cache role not found errors when the role does not", func() {
 			missingRoleName := "non-existent-role"
-			err := awsEnv.InstanceProfileProvider.Create(ctx, "test-profile", missingRoleName, nil, karpenterPath("test-uid"))
+			err := awsEnv.InstanceProfileProvider.Create(ctx, "test-profile", missingRoleName, nil, "test-uid", true)
 			Expect(err).To(HaveOccurred())
 			_, ok := awsEnv.RoleCache.Get(missingRoleName)
 			Expect(ok).To(BeTrue())
@@ -380,24 +365,11 @@ var _ = Describe("InstanceProfileProvider", func() {
 			missingRoleName := "non-existent-role"
 			awsEnv.RoleCache.SetDefault(missingRoleName, errors.New("role not found"))
 
-			err := awsEnv.InstanceProfileProvider.Create(ctx, "test-profile", missingRoleName, nil, karpenterPath("test-uid"))
+			err := awsEnv.InstanceProfileProvider.Create(ctx, "test-profile", missingRoleName, nil, "test-uid", true)
 			Expect(err).To(HaveOccurred())
 
 			Expect(awsEnv.IAMAPI.InstanceProfiles).To(HaveLen(0))
 			Expect(awsEnv.IAMAPI.CreateInstanceProfileBehavior.Calls()).To(BeZero())
 		})
 	})
-})
-
-var _ = Describe("FormatPath", func() {
-	DescribeTable("should format IAM paths",
-		func(expected string, segments ...string) {
-			Expect(instanceprofile.FormatPath(segments...)).To(Equal(expected))
-		},
-		Entry("no segments", "/"),
-		Entry("single segment", "/eks/", "eks"),
-		Entry("two segments", "/eks/us-west-2/", "eks", "us-west-2"),
-		Entry("three segments", "/karpenter/us-west-2/my-cluster/", "karpenter", "us-west-2", "my-cluster"),
-		Entry("four segments", "/karpenter/us-west-2/my-cluster/uid/", "karpenter", "us-west-2", "my-cluster", "uid"),
-	)
 })

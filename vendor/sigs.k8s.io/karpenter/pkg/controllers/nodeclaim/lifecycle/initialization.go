@@ -20,11 +20,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/awslabs/operatorpkg/status"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -38,7 +36,6 @@ import (
 
 type Initialization struct {
 	kubeClient client.Client
-	clock      clock.Clock
 }
 
 // Reconcile checks for initialization based on if:
@@ -49,7 +46,7 @@ type Initialization struct {
 func (i *Initialization) Reconcile(ctx context.Context, nodeClaim *v1.NodeClaim) (reconcile.Result, error) {
 	if cond := nodeClaim.StatusConditions().Get(v1.ConditionTypeInitialized); !cond.IsUnknown() {
 		// Ensure that we always set the status condition to the latest generation
-		nodeClaim.StatusConditions(status.WithClock(i.clock)).Set(*cond)
+		nodeClaim.StatusConditions().Set(*cond)
 		return reconcile.Result{}, nil
 	}
 	if !nodeClaim.StatusConditions().Get(v1.ConditionTypeRegistered).IsTrue() {
@@ -57,23 +54,23 @@ func (i *Initialization) Reconcile(ctx context.Context, nodeClaim *v1.NodeClaim)
 	}
 	node, err := nodeclaimutils.NodeForNodeClaim(ctx, i.kubeClient, nodeClaim)
 	if err != nil {
-		nodeClaim.StatusConditions(status.WithClock(i.clock)).SetUnknownWithReason(v1.ConditionTypeInitialized, "NodeNotFound", "Node not registered with cluster")
+		nodeClaim.StatusConditions().SetUnknownWithReason(v1.ConditionTypeInitialized, "NodeNotFound", "Node not registered with cluster")
 		return reconcile.Result{}, nil //nolint:nilerr
 	}
 	if nodeutils.GetCondition(node, corev1.NodeReady).Status != corev1.ConditionTrue {
-		nodeClaim.StatusConditions(status.WithClock(i.clock)).SetUnknownWithReason(v1.ConditionTypeInitialized, "NodeNotReady", "Node status is NotReady")
+		nodeClaim.StatusConditions().SetUnknownWithReason(v1.ConditionTypeInitialized, "NodeNotReady", "Node status is NotReady")
 		return reconcile.Result{}, nil
 	}
 	if taint, ok := StartupTaintsRemoved(node, nodeClaim); !ok {
-		nodeClaim.StatusConditions(status.WithClock(i.clock)).SetUnknownWithReason(v1.ConditionTypeInitialized, "StartupTaintsExist", fmt.Sprintf("StartupTaint %q still exists", formatTaint(taint)))
+		nodeClaim.StatusConditions().SetUnknownWithReason(v1.ConditionTypeInitialized, "StartupTaintsExist", fmt.Sprintf("StartupTaint %q still exists", formatTaint(taint)))
 		return reconcile.Result{}, nil
 	}
 	if taint, ok := KnownEphemeralTaintsRemoved(node); !ok {
-		nodeClaim.StatusConditions(status.WithClock(i.clock)).SetUnknownWithReason(v1.ConditionTypeInitialized, "KnownEphemeralTaintsExist", fmt.Sprintf("KnownEphemeralTaint %q still exists", formatTaint(taint)))
+		nodeClaim.StatusConditions().SetUnknownWithReason(v1.ConditionTypeInitialized, "KnownEphemeralTaintsExist", fmt.Sprintf("KnownEphemeralTaint %q still exists", formatTaint(taint)))
 		return reconcile.Result{}, nil
 	}
 	if name, ok := RequestedResourcesRegistered(node, nodeClaim); !ok {
-		nodeClaim.StatusConditions(status.WithClock(i.clock)).SetUnknownWithReason(v1.ConditionTypeInitialized, "ResourceNotRegistered", fmt.Sprintf("Resource %q was requested but not registered", name))
+		nodeClaim.StatusConditions().SetUnknownWithReason(v1.ConditionTypeInitialized, "ResourceNotRegistered", fmt.Sprintf("Resource %q was requested but not registered", name))
 		return reconcile.Result{}, nil
 	}
 	stored := node.DeepCopy()
@@ -84,15 +81,18 @@ func (i *Initialization) Reconcile(ctx context.Context, nodeClaim *v1.NodeClaim)
 		}
 	}
 	log.FromContext(ctx).WithValues("allocatable", node.Status.Allocatable).Info("initialized nodeclaim")
-	nodeClaim.StatusConditions(status.WithClock(i.clock)).SetTrue(v1.ConditionTypeInitialized)
+	nodeClaim.StatusConditions().SetTrue(v1.ConditionTypeInitialized)
 	return reconcile.Result{}, nil
 }
 
 // KnownEphemeralTaintsRemoved validates whether all the ephemeral taints are removed
 func KnownEphemeralTaintsRemoved(node *corev1.Node) (*corev1.Taint, bool) {
-	for i := range node.Spec.Taints {
-		if scheduling.IsKnownEphemeralTaint(&node.Spec.Taints[i]) {
-			return &node.Spec.Taints[i], false
+	for _, knownTaint := range scheduling.KnownEphemeralTaints {
+		// if the node still has a known ephemeral taint applied, it's not ready
+		for i := range node.Spec.Taints {
+			if knownTaint.MatchTaint(&node.Spec.Taints[i]) {
+				return &node.Spec.Taints[i], false
+			}
 		}
 	}
 	return nil, true
