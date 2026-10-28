@@ -103,7 +103,3 @@ knowledge_base:
     scope: auto
   pull_requests:
     scope: auto
-  jira:
-    project_keys:
-      - "AUTOSCALE"
-      - "OCPBUGS"

@@ -30,6 +30,7 @@ type NodeClass interface {
 	AMIFamily() string
 	ConnectionTracking() *v1.ConnectionTracking
 	CPUOptions() *v1.CPUOptions
+	EnclaveOptions() *v1.EnclaveOptions
 }
 
 type CompatibleCheck interface {
@@ -42,6 +43,7 @@ func IsCompatibleWithNodeClass(info ec2types.InstanceTypeInfo, nodeClass NodeCla
 		networkInterfaceCompatibility(networkInterfaces),
 		amiFamilyCompatibility(nodeClass.AMIFamily()),
 		nestedVirtualizationCompatibility(nodeClass.CPUOptions()),
+		nitroEnclavesCompatibility(nodeClass.EnclaveOptions()),
 		placementGroupCompatibility(pg),
 		connectionTrackingCompatibility(nodeClass.ConnectionTracking()),
 	} {
@@ -110,15 +112,9 @@ func (c networkInterfaceCheck) compatibleCheck(info ec2types.InstanceTypeInfo) b
 		// (4) the configured secondary IP count exceeds instance type capacity.
 		// Only one of SecondaryIPPrefixCount and SecondaryIPCount can be configured.
 		secondaryIPsConfigured := max(lo.FromPtrOr(networkInterface.SecondaryIPPrefixCount, int32(0)), lo.FromPtrOr(networkInterface.SecondaryIPCount, int32(0)))
-		if secondaryIPsConfigured > 0 {
-			totalAddressesConsumed := secondaryIPsConfigured
-			// For the primary ENI, account for the node IP which consumes one address slot
-			if networkInterface.NetworkCardIndex == 0 && networkInterface.DeviceIndex == 0 {
-				totalAddressesConsumed++
-			}
-			if totalAddressesConsumed > lo.FromPtr(info.NetworkInfo.Ipv4AddressesPerInterface) {
-				return false
-			}
+		// Account for the primary IP which consumes one address slot
+		if secondaryIPsConfigured > 0 && secondaryIPsConfigured+1 > lo.FromPtr(info.NetworkInfo.Ipv4AddressesPerInterface) {
+			return false
 		}
 	}
 	// (5) the configured number of EFA-only interfaces is greater than what the instance type offers
@@ -154,6 +150,23 @@ func (c nestedVirtualizationCheck) compatibleCheck(info ec2types.InstanceTypeInf
 		return false
 	}
 	return lo.Contains(info.ProcessorInfo.SupportedFeatures, ec2types.SupportedAdditionalProcessorFeatureNestedVirtualization)
+}
+
+type nitroEnclavesCheck struct {
+	enclaveOptions *v1.EnclaveOptions
+}
+
+func nitroEnclavesCompatibility(enclaveOptions *v1.EnclaveOptions) CompatibleCheck {
+	return &nitroEnclavesCheck{
+		enclaveOptions: enclaveOptions,
+	}
+}
+
+func (c nitroEnclavesCheck) compatibleCheck(info ec2types.InstanceTypeInfo) bool {
+	if c.enclaveOptions == nil || !c.enclaveOptions.Enabled {
+		return true
+	}
+	return info.NitroEnclavesSupport == ec2types.NitroEnclavesSupportSupported
 }
 
 type placementGroupCheck struct {
