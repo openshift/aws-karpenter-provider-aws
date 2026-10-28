@@ -150,6 +150,26 @@ func (m *validateOpCreateAssociation) HandleInitialize(ctx context.Context, in m
 	return next.HandleInitialize(ctx, in)
 }
 
+type validateOpCreateCloudConnector struct {
+}
+
+func (*validateOpCreateCloudConnector) ID() string {
+	return "OperationInputValidation"
+}
+
+func (m *validateOpCreateCloudConnector) HandleInitialize(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (
+	out middleware.InitializeOutput, metadata middleware.Metadata, err error,
+) {
+	input, ok := in.Parameters.(*CreateCloudConnectorInput)
+	if !ok {
+		return out, metadata, fmt.Errorf("unknown input parameters type %T", in.Parameters)
+	}
+	if err := validateOpCreateCloudConnectorInput(input); err != nil {
+		return out, metadata, err
+	}
+	return next.HandleInitialize(ctx, in)
+}
+
 type validateOpCreateDocument struct {
 }
 
@@ -285,6 +305,26 @@ func (m *validateOpDeleteActivation) HandleInitialize(ctx context.Context, in mi
 		return out, metadata, fmt.Errorf("unknown input parameters type %T", in.Parameters)
 	}
 	if err := validateOpDeleteActivationInput(input); err != nil {
+		return out, metadata, err
+	}
+	return next.HandleInitialize(ctx, in)
+}
+
+type validateOpDeleteCloudConnector struct {
+}
+
+func (*validateOpDeleteCloudConnector) ID() string {
+	return "OperationInputValidation"
+}
+
+func (m *validateOpDeleteCloudConnector) HandleInitialize(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (
+	out middleware.InitializeOutput, metadata middleware.Metadata, err error,
+) {
+	input, ok := in.Parameters.(*DeleteCloudConnectorInput)
+	if !ok {
+		return out, metadata, fmt.Errorf("unknown input parameters type %T", in.Parameters)
+	}
+	if err := validateOpDeleteCloudConnectorInput(input); err != nil {
 		return out, metadata, err
 	}
 	return next.HandleInitialize(ctx, in)
@@ -1090,6 +1130,26 @@ func (m *validateOpDisassociateOpsItemRelatedItem) HandleInitialize(ctx context.
 	return next.HandleInitialize(ctx, in)
 }
 
+type validateOpGetAccessToken struct {
+}
+
+func (*validateOpGetAccessToken) ID() string {
+	return "OperationInputValidation"
+}
+
+func (m *validateOpGetAccessToken) HandleInitialize(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (
+	out middleware.InitializeOutput, metadata middleware.Metadata, err error,
+) {
+	input, ok := in.Parameters.(*GetAccessTokenInput)
+	if !ok {
+		return out, metadata, fmt.Errorf("unknown input parameters type %T", in.Parameters)
+	}
+	if err := validateOpGetAccessTokenInput(input); err != nil {
+		return out, metadata, err
+	}
+	return next.HandleInitialize(ctx, in)
+}
+
 type validateOpGetAutomationExecution struct {
 }
 
@@ -1125,6 +1185,26 @@ func (m *validateOpGetCalendarState) HandleInitialize(ctx context.Context, in mi
 		return out, metadata, fmt.Errorf("unknown input parameters type %T", in.Parameters)
 	}
 	if err := validateOpGetCalendarStateInput(input); err != nil {
+		return out, metadata, err
+	}
+	return next.HandleInitialize(ctx, in)
+}
+
+type validateOpGetCloudConnector struct {
+}
+
+func (*validateOpGetCloudConnector) ID() string {
+	return "OperationInputValidation"
+}
+
+func (m *validateOpGetCloudConnector) HandleInitialize(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (
+	out middleware.InitializeOutput, metadata middleware.Metadata, err error,
+) {
+	input, ok := in.Parameters.(*GetCloudConnectorInput)
+	if !ok {
+		return out, metadata, fmt.Errorf("unknown input parameters type %T", in.Parameters)
+	}
+	if err := validateOpGetCloudConnectorInput(input); err != nil {
 		return out, metadata, err
 	}
 	return next.HandleInitialize(ctx, in)
@@ -2150,6 +2230,26 @@ func (m *validateOpSendCommand) HandleInitialize(ctx context.Context, in middlew
 	return next.HandleInitialize(ctx, in)
 }
 
+type validateOpStartAccessRequest struct {
+}
+
+func (*validateOpStartAccessRequest) ID() string {
+	return "OperationInputValidation"
+}
+
+func (m *validateOpStartAccessRequest) HandleInitialize(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (
+	out middleware.InitializeOutput, metadata middleware.Metadata, err error,
+) {
+	input, ok := in.Parameters.(*StartAccessRequestInput)
+	if !ok {
+		return out, metadata, fmt.Errorf("unknown input parameters type %T", in.Parameters)
+	}
+	if err := validateOpStartAccessRequestInput(input); err != nil {
+		return out, metadata, err
+	}
+	return next.HandleInitialize(ctx, in)
+}
+
 type validateOpStartAssociationsOnce struct {
 }
 
@@ -2345,6 +2445,26 @@ func (m *validateOpUpdateAssociationStatus) HandleInitialize(ctx context.Context
 		return out, metadata, fmt.Errorf("unknown input parameters type %T", in.Parameters)
 	}
 	if err := validateOpUpdateAssociationStatusInput(input); err != nil {
+		return out, metadata, err
+	}
+	return next.HandleInitialize(ctx, in)
+}
+
+type validateOpUpdateCloudConnector struct {
+}
+
+func (*validateOpUpdateCloudConnector) ID() string {
+	return "OperationInputValidation"
+}
+
+func (m *validateOpUpdateCloudConnector) HandleInitialize(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (
+	out middleware.InitializeOutput, metadata middleware.Metadata, err error,
+) {
+	input, ok := in.Parameters.(*UpdateCloudConnectorInput)
+	if !ok {
+		return out, metadata, fmt.Errorf("unknown input parameters type %T", in.Parameters)
+	}
+	if err := validateOpUpdateCloudConnectorInput(input); err != nil {
 		return out, metadata, err
 	}
 	return next.HandleInitialize(ctx, in)
@@ -2590,6 +2710,26 @@ func (m *validateOpUpdateServiceSetting) HandleInitialize(ctx context.Context, i
 	return next.HandleInitialize(ctx, in)
 }
 
+type validateOpValidateCloudConnector struct {
+}
+
+func (*validateOpValidateCloudConnector) ID() string {
+	return "OperationInputValidation"
+}
+
+func (m *validateOpValidateCloudConnector) HandleInitialize(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (
+	out middleware.InitializeOutput, metadata middleware.Metadata, err error,
+) {
+	input, ok := in.Parameters.(*ValidateCloudConnectorInput)
+	if !ok {
+		return out, metadata, fmt.Errorf("unknown input parameters type %T", in.Parameters)
+	}
+	if err := validateOpValidateCloudConnectorInput(input); err != nil {
+		return out, metadata, err
+	}
+	return next.HandleInitialize(ctx, in)
+}
+
 func addOpAddTagsToResourceValidationMiddleware(stack *middleware.Stack) error {
 	return stack.Initialize.Add(&validateOpAddTagsToResource{}, middleware.After)
 }
@@ -2618,6 +2758,10 @@ func addOpCreateAssociationValidationMiddleware(stack *middleware.Stack) error {
 	return stack.Initialize.Add(&validateOpCreateAssociation{}, middleware.After)
 }
 
+func addOpCreateCloudConnectorValidationMiddleware(stack *middleware.Stack) error {
+	return stack.Initialize.Add(&validateOpCreateCloudConnector{}, middleware.After)
+}
+
 func addOpCreateDocumentValidationMiddleware(stack *middleware.Stack) error {
 	return stack.Initialize.Add(&validateOpCreateDocument{}, middleware.After)
 }
@@ -2644,6 +2788,10 @@ func addOpCreateResourceDataSyncValidationMiddleware(stack *middleware.Stack) er
 
 func addOpDeleteActivationValidationMiddleware(stack *middleware.Stack) error {
 	return stack.Initialize.Add(&validateOpDeleteActivation{}, middleware.After)
+}
+
+func addOpDeleteCloudConnectorValidationMiddleware(stack *middleware.Stack) error {
+	return stack.Initialize.Add(&validateOpDeleteCloudConnector{}, middleware.After)
 }
 
 func addOpDeleteDocumentValidationMiddleware(stack *middleware.Stack) error {
@@ -2806,12 +2954,20 @@ func addOpDisassociateOpsItemRelatedItemValidationMiddleware(stack *middleware.S
 	return stack.Initialize.Add(&validateOpDisassociateOpsItemRelatedItem{}, middleware.After)
 }
 
+func addOpGetAccessTokenValidationMiddleware(stack *middleware.Stack) error {
+	return stack.Initialize.Add(&validateOpGetAccessToken{}, middleware.After)
+}
+
 func addOpGetAutomationExecutionValidationMiddleware(stack *middleware.Stack) error {
 	return stack.Initialize.Add(&validateOpGetAutomationExecution{}, middleware.After)
 }
 
 func addOpGetCalendarStateValidationMiddleware(stack *middleware.Stack) error {
 	return stack.Initialize.Add(&validateOpGetCalendarState{}, middleware.After)
+}
+
+func addOpGetCloudConnectorValidationMiddleware(stack *middleware.Stack) error {
+	return stack.Initialize.Add(&validateOpGetCloudConnector{}, middleware.After)
 }
 
 func addOpGetCommandInvocationValidationMiddleware(stack *middleware.Stack) error {
@@ -3018,6 +3174,10 @@ func addOpSendCommandValidationMiddleware(stack *middleware.Stack) error {
 	return stack.Initialize.Add(&validateOpSendCommand{}, middleware.After)
 }
 
+func addOpStartAccessRequestValidationMiddleware(stack *middleware.Stack) error {
+	return stack.Initialize.Add(&validateOpStartAccessRequest{}, middleware.After)
+}
+
 func addOpStartAssociationsOnceValidationMiddleware(stack *middleware.Stack) error {
 	return stack.Initialize.Add(&validateOpStartAssociationsOnce{}, middleware.After)
 }
@@ -3056,6 +3216,10 @@ func addOpUpdateAssociationValidationMiddleware(stack *middleware.Stack) error {
 
 func addOpUpdateAssociationStatusValidationMiddleware(stack *middleware.Stack) error {
 	return stack.Initialize.Add(&validateOpUpdateAssociationStatus{}, middleware.After)
+}
+
+func addOpUpdateCloudConnectorValidationMiddleware(stack *middleware.Stack) error {
+	return stack.Initialize.Add(&validateOpUpdateCloudConnector{}, middleware.After)
 }
 
 func addOpUpdateDocumentDefaultVersionValidationMiddleware(stack *middleware.Stack) error {
@@ -3104,6 +3268,10 @@ func addOpUpdateResourceDataSyncValidationMiddleware(stack *middleware.Stack) er
 
 func addOpUpdateServiceSettingValidationMiddleware(stack *middleware.Stack) error {
 	return stack.Initialize.Add(&validateOpUpdateServiceSetting{}, middleware.After)
+}
+
+func addOpValidateCloudConnectorValidationMiddleware(stack *middleware.Stack) error {
+	return stack.Initialize.Add(&validateOpValidateCloudConnector{}, middleware.After)
 }
 
 func validateAlarm(v *types.Alarm) error {
@@ -3338,6 +3506,61 @@ func validateAutomationExecutionInputs(v *types.AutomationExecutionInputs) error
 	}
 }
 
+func validateAzureConfiguration(v *types.AzureConfiguration) error {
+	if v == nil {
+		return nil
+	}
+	invalidParams := smithy.InvalidParamsError{Context: "AzureConfiguration"}
+	if v.TenantId == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("TenantId"))
+	}
+	if v.ApplicationId == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("ApplicationId"))
+	}
+	if v.Targets != nil {
+		if err := validateConfigurationTargets(v.Targets); err != nil {
+			invalidParams.AddNested("Targets", err.(smithy.InvalidParamsError))
+		}
+	}
+	if invalidParams.Len() > 0 {
+		return invalidParams
+	} else {
+		return nil
+	}
+}
+
+func validateAzureSubscription(v *types.AzureSubscription) error {
+	if v == nil {
+		return nil
+	}
+	invalidParams := smithy.InvalidParamsError{Context: "AzureSubscription"}
+	if v.Id == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("Id"))
+	}
+	if invalidParams.Len() > 0 {
+		return invalidParams
+	} else {
+		return nil
+	}
+}
+
+func validateAzureSubscriptionList(v []types.AzureSubscription) error {
+	if v == nil {
+		return nil
+	}
+	invalidParams := smithy.InvalidParamsError{Context: "AzureSubscriptionList"}
+	for i := range v {
+		if err := validateAzureSubscription(&v[i]); err != nil {
+			invalidParams.AddNested(fmt.Sprintf("[%d]", i), err.(smithy.InvalidParamsError))
+		}
+	}
+	if invalidParams.Len() > 0 {
+		return invalidParams
+	} else {
+		return nil
+	}
+}
+
 func validateBaselineOverride(v *types.BaselineOverride) error {
 	if v == nil {
 		return nil
@@ -3357,6 +3580,25 @@ func validateBaselineOverride(v *types.BaselineOverride) error {
 		if err := validatePatchSourceList(v.Sources); err != nil {
 			invalidParams.AddNested("Sources", err.(smithy.InvalidParamsError))
 		}
+	}
+	if invalidParams.Len() > 0 {
+		return invalidParams
+	} else {
+		return nil
+	}
+}
+
+func validateCloudConnectorConfiguration(v types.CloudConnectorConfiguration) error {
+	if v == nil {
+		return nil
+	}
+	invalidParams := smithy.InvalidParamsError{Context: "CloudConnectorConfiguration"}
+	switch uv := v.(type) {
+	case *types.CloudConnectorConfigurationMemberAzureConfiguration:
+		if err := validateAzureConfiguration(&uv.Value); err != nil {
+			invalidParams.AddNested("[AzureConfiguration]", err.(smithy.InvalidParamsError))
+		}
+
 	}
 	if invalidParams.Len() > 0 {
 		return invalidParams
@@ -3442,6 +3684,25 @@ func validateComplianceItemEntryList(v []types.ComplianceItemEntry) error {
 		if err := validateComplianceItemEntry(&v[i]); err != nil {
 			invalidParams.AddNested(fmt.Sprintf("[%d]", i), err.(smithy.InvalidParamsError))
 		}
+	}
+	if invalidParams.Len() > 0 {
+		return invalidParams
+	} else {
+		return nil
+	}
+}
+
+func validateConfigurationTargets(v types.ConfigurationTargets) error {
+	if v == nil {
+		return nil
+	}
+	invalidParams := smithy.InvalidParamsError{Context: "ConfigurationTargets"}
+	switch uv := v.(type) {
+	case *types.ConfigurationTargetsMemberSubscriptions:
+		if err := validateAzureSubscriptionList(uv.Value); err != nil {
+			invalidParams.AddNested("[Subscriptions]", err.(smithy.InvalidParamsError))
+		}
+
 	}
 	if invalidParams.Len() > 0 {
 		return invalidParams
@@ -4974,6 +5235,39 @@ func validateOpCreateAssociationInput(v *CreateAssociationInput) error {
 	}
 }
 
+func validateOpCreateCloudConnectorInput(v *CreateCloudConnectorInput) error {
+	if v == nil {
+		return nil
+	}
+	invalidParams := smithy.InvalidParamsError{Context: "CreateCloudConnectorInput"}
+	if v.DisplayName == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("DisplayName"))
+	}
+	if v.RoleArn == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("RoleArn"))
+	}
+	if v.Configuration == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("Configuration"))
+	} else if v.Configuration != nil {
+		if err := validateCloudConnectorConfiguration(v.Configuration); err != nil {
+			invalidParams.AddNested("Configuration", err.(smithy.InvalidParamsError))
+		}
+	}
+	if v.ConfigConnectorArn == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("ConfigConnectorArn"))
+	}
+	if v.Tags != nil {
+		if err := validateTagList(v.Tags); err != nil {
+			invalidParams.AddNested("Tags", err.(smithy.InvalidParamsError))
+		}
+	}
+	if invalidParams.Len() > 0 {
+		return invalidParams
+	} else {
+		return nil
+	}
+}
+
 func validateOpCreateDocumentInput(v *CreateDocumentInput) error {
 	if v == nil {
 		return nil
@@ -5146,6 +5440,21 @@ func validateOpDeleteActivationInput(v *DeleteActivationInput) error {
 	invalidParams := smithy.InvalidParamsError{Context: "DeleteActivationInput"}
 	if v.ActivationId == nil {
 		invalidParams.Add(smithy.NewErrParamRequired("ActivationId"))
+	}
+	if invalidParams.Len() > 0 {
+		return invalidParams
+	} else {
+		return nil
+	}
+}
+
+func validateOpDeleteCloudConnectorInput(v *DeleteCloudConnectorInput) error {
+	if v == nil {
+		return nil
+	}
+	invalidParams := smithy.InvalidParamsError{Context: "DeleteCloudConnectorInput"}
+	if v.CloudConnectorId == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("CloudConnectorId"))
 	}
 	if invalidParams.Len() > 0 {
 		return invalidParams
@@ -5837,6 +6146,21 @@ func validateOpDisassociateOpsItemRelatedItemInput(v *DisassociateOpsItemRelated
 	}
 }
 
+func validateOpGetAccessTokenInput(v *GetAccessTokenInput) error {
+	if v == nil {
+		return nil
+	}
+	invalidParams := smithy.InvalidParamsError{Context: "GetAccessTokenInput"}
+	if v.AccessRequestId == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("AccessRequestId"))
+	}
+	if invalidParams.Len() > 0 {
+		return invalidParams
+	} else {
+		return nil
+	}
+}
+
 func validateOpGetAutomationExecutionInput(v *GetAutomationExecutionInput) error {
 	if v == nil {
 		return nil
@@ -5859,6 +6183,21 @@ func validateOpGetCalendarStateInput(v *GetCalendarStateInput) error {
 	invalidParams := smithy.InvalidParamsError{Context: "GetCalendarStateInput"}
 	if v.CalendarNames == nil {
 		invalidParams.Add(smithy.NewErrParamRequired("CalendarNames"))
+	}
+	if invalidParams.Len() > 0 {
+		return invalidParams
+	} else {
+		return nil
+	}
+}
+
+func validateOpGetCloudConnectorInput(v *GetCloudConnectorInput) error {
+	if v == nil {
+		return nil
+	}
+	invalidParams := smithy.InvalidParamsError{Context: "GetCloudConnectorInput"}
+	if v.CloudConnectorId == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("CloudConnectorId"))
 	}
 	if invalidParams.Len() > 0 {
 		return invalidParams
@@ -6806,6 +7145,29 @@ func validateOpSendCommandInput(v *SendCommandInput) error {
 	}
 }
 
+func validateOpStartAccessRequestInput(v *StartAccessRequestInput) error {
+	if v == nil {
+		return nil
+	}
+	invalidParams := smithy.InvalidParamsError{Context: "StartAccessRequestInput"}
+	if v.Reason == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("Reason"))
+	}
+	if v.Targets == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("Targets"))
+	}
+	if v.Tags != nil {
+		if err := validateTagList(v.Tags); err != nil {
+			invalidParams.AddNested("Tags", err.(smithy.InvalidParamsError))
+		}
+	}
+	if invalidParams.Len() > 0 {
+		return invalidParams
+	} else {
+		return nil
+	}
+}
+
 func validateOpStartAssociationsOnceInput(v *StartAssociationsOnceInput) error {
 	if v == nil {
 		return nil
@@ -7005,6 +7367,26 @@ func validateOpUpdateAssociationStatusInput(v *UpdateAssociationStatusInput) err
 	} else if v.AssociationStatus != nil {
 		if err := validateAssociationStatus(v.AssociationStatus); err != nil {
 			invalidParams.AddNested("AssociationStatus", err.(smithy.InvalidParamsError))
+		}
+	}
+	if invalidParams.Len() > 0 {
+		return invalidParams
+	} else {
+		return nil
+	}
+}
+
+func validateOpUpdateCloudConnectorInput(v *UpdateCloudConnectorInput) error {
+	if v == nil {
+		return nil
+	}
+	invalidParams := smithy.InvalidParamsError{Context: "UpdateCloudConnectorInput"}
+	if v.CloudConnectorId == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("CloudConnectorId"))
+	}
+	if v.Configuration != nil {
+		if err := validateCloudConnectorConfiguration(v.Configuration); err != nil {
+			invalidParams.AddNested("Configuration", err.(smithy.InvalidParamsError))
 		}
 	}
 	if invalidParams.Len() > 0 {
@@ -7251,6 +7633,21 @@ func validateOpUpdateServiceSettingInput(v *UpdateServiceSettingInput) error {
 	}
 	if v.SettingValue == nil {
 		invalidParams.Add(smithy.NewErrParamRequired("SettingValue"))
+	}
+	if invalidParams.Len() > 0 {
+		return invalidParams
+	} else {
+		return nil
+	}
+}
+
+func validateOpValidateCloudConnectorInput(v *ValidateCloudConnectorInput) error {
+	if v == nil {
+		return nil
+	}
+	invalidParams := smithy.InvalidParamsError{Context: "ValidateCloudConnectorInput"}
+	if v.CloudConnectorId == nil {
+		invalidParams.Add(smithy.NewErrParamRequired("CloudConnectorId"))
 	}
 	if invalidParams.Len() > 0 {
 		return invalidParams

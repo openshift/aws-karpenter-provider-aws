@@ -22,17 +22,29 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/awslabs/operatorpkg/serrors"
+	"github.com/awslabs/operatorpkg/status"
 	"github.com/samber/lo"
 	"go.uber.org/multierr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
+	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
+	"k8s.io/utils/clock"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"sigs.k8s.io/karpenter/pkg/events"
+
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/controllers/node/health"
 	"sigs.k8s.io/karpenter/pkg/operator/options"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
+	disruptionutils "sigs.k8s.io/karpenter/pkg/utils/disruption"
 	nodeutils "sigs.k8s.io/karpenter/pkg/utils/node"
 	"sigs.k8s.io/karpenter/pkg/utils/pdb"
 	podutils "sigs.k8s.io/karpenter/pkg/utils/pod"
@@ -62,7 +74,59 @@ func IgnorePodBlockEvictionError(err error) error {
 	return err
 }
 
-//go:generate controller-gen object:headerFile="../../../hack/boilerplate.go.txt" paths="."
+// NodeDoNotDisruptError is returned by ValidateNodeDisruptable when a node carries the do-not-disrupt annotation.
+// It is a distinct type so the repair path can selectively ignore it: repair is not discretionary disruption, so
+// do-not-disrupt must not block it (that would be a breaking behavior change and conflate two intents). Repair
+// instead honors the separate do-not-repair annotation.
+type NodeDoNotDisruptError struct {
+	error
+}
+
+func NewNodeDoNotDisruptError(err error) *NodeDoNotDisruptError {
+	return &NodeDoNotDisruptError{error: err}
+}
+
+func IsNodeDoNotDisruptError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var nodeDoNotDisruptError *NodeDoNotDisruptError
+	return stderrors.As(err, &nodeDoNotDisruptError)
+}
+
+func IgnoreNodeDoNotDisruptError(err error) error {
+	if IsNodeDoNotDisruptError(err) {
+		return nil
+	}
+	return err
+}
+
+// NodeUninitializedError is returned when a registered node hasn't initialized. Repair ignores it, since a node that
+// never initializes is otherwise only replaced by a human.
+type NodeUninitializedError struct {
+	error
+}
+
+func NewNodeUninitializedError(err error) *NodeUninitializedError {
+	return &NodeUninitializedError{error: err}
+}
+
+func IsNodeUninitializedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var nodeUninitializedError *NodeUninitializedError
+	return stderrors.As(err, &nodeUninitializedError)
+}
+
+func IgnoreNodeUninitializedError(err error) error {
+	if IsNodeUninitializedError(err) {
+		return nil
+	}
+	return err
+}
+
+//go:generate go tool -modfile=../../../go.tools.mod controller-gen object:headerFile="../../../hack/boilerplate.go.txt" paths="."
 
 // StateNodes is a typed version of a list of *Node
 // nolint: revive
@@ -95,10 +159,10 @@ func (n StateNodes) Pods(ctx context.Context, kubeClient client.Client) ([]*core
 	return pods, nil
 }
 
-func (n StateNodes) ReschedulablePods(ctx context.Context, kubeClient client.Client) ([]*corev1.Pod, error) {
+func (n StateNodes) CurrentlyReschedulablePods(ctx context.Context, kubeClient client.Client, clk clock.Clock, recorder events.Recorder) ([]*corev1.Pod, error) {
 	var pods []*corev1.Pod
 	for _, node := range n {
-		p, err := node.ReschedulablePods(ctx, kubeClient)
+		p, err := node.CurrentlyReschedulablePods(ctx, kubeClient, clk, recorder)
 		if err != nil {
 			return nil, err
 		}
@@ -121,8 +185,9 @@ type StateNode struct {
 	daemonSetRequests map[types.NamespacedName]corev1.ResourceList
 	daemonSetLimits   map[types.NamespacedName]corev1.ResourceList
 
-	podRequests map[types.NamespacedName]corev1.ResourceList
-	podLimits   map[types.NamespacedName]corev1.ResourceList
+	podRequests        map[types.NamespacedName]corev1.ResourceList
+	podLimits          map[types.NamespacedName]corev1.ResourceList
+	podDisruptionCosts map[types.NamespacedName]float64
 
 	hostPortUsage *scheduling.HostPortUsage
 	volumeUsage   *scheduling.VolumeUsage
@@ -131,17 +196,55 @@ type StateNode struct {
 	// of the karpenter.sh/disruption taint to know when a node is marked for deletion.
 	markedForDeletion bool
 	nominatedUntil    metav1.Time
+
+	// repairPolicyMatches are the repair policies matching the Node's conditions, recomputed when they change.
+	repairPolicyMatches []health.RepairPolicyMatch
 }
 
 func NewNode() *StateNode {
 	return &StateNode{
-		daemonSetRequests: map[types.NamespacedName]corev1.ResourceList{},
-		daemonSetLimits:   map[types.NamespacedName]corev1.ResourceList{},
-		podRequests:       map[types.NamespacedName]corev1.ResourceList{},
-		podLimits:         map[types.NamespacedName]corev1.ResourceList{},
-		hostPortUsage:     scheduling.NewHostPortUsage(),
-		volumeUsage:       scheduling.NewVolumeUsage(),
+		daemonSetRequests:  map[types.NamespacedName]corev1.ResourceList{},
+		daemonSetLimits:    map[types.NamespacedName]corev1.ResourceList{},
+		podRequests:        map[types.NamespacedName]corev1.ResourceList{},
+		podLimits:          map[types.NamespacedName]corev1.ResourceList{},
+		podDisruptionCosts: map[types.NamespacedName]float64{},
+		hostPortUsage:      scheduling.NewHostPortUsage(),
+		volumeUsage:        scheduling.NewVolumeUsage(),
 	}
+}
+
+func (in *StateNode) ShallowCopy() *StateNode {
+	return &StateNode{
+		Node:                in.Node,
+		NodeClaim:           in.NodeClaim,
+		daemonSetRequests:   in.daemonSetRequests,
+		daemonSetLimits:     in.daemonSetLimits,
+		podRequests:         in.podRequests,
+		podLimits:           in.podLimits,
+		podDisruptionCosts:  in.podDisruptionCosts,
+		hostPortUsage:       in.hostPortUsage,
+		volumeUsage:         in.volumeUsage,
+		markedForDeletion:   in.markedForDeletion,
+		nominatedUntil:      in.nominatedUntil,
+		repairPolicyMatches: in.repairPolicyMatches,
+	}
+}
+
+// GetRepairResult returns the repair decision for the Node at now, from the policy matches the Node informer keeps
+// current. An empty Action means no policy applies or none has waited out its toleration yet. Tolerations are measured
+// from no earlier than the end of the last reboot, since a node rejoins uninitialized after a successful reboot and its
+// conditions may not have caught up yet.
+func (in *StateNode) GetRepairResult(now time.Time) health.RepairResult {
+	if in.Node == nil {
+		return health.RepairResult{}
+	}
+	var rebootFinishedAt time.Time
+	if in.NodeClaim != nil {
+		if rebooting := in.NodeClaim.StatusConditions().Get(v1.ConditionTypeRebooting); rebooting != nil && rebooting.IsFalse() {
+			rebootFinishedAt = rebooting.LastTransitionTime.Time
+		}
+	}
+	return health.Resolve(in.repairPolicyMatches, now, rebootFinishedAt)
 }
 
 func (in *StateNode) Name() string {
@@ -172,7 +275,7 @@ func (in *StateNode) Pods(ctx context.Context, kubeClient client.Client) ([]*cor
 	if in.Node == nil {
 		return nil, nil
 	}
-	return nodeutils.GetPods(ctx, kubeClient, in.Node)
+	return nodeutils.GetPods(ctx, kubeClient, in.Node.Name)
 }
 
 // ValidateNodeDisruptable returns an error if the StateNode cannot be disrupted
@@ -180,29 +283,39 @@ func (in *StateNode) Pods(ctx context.Context, kubeClient client.Client) ([]*cor
 // ValidateNodeDisruptable takes in a recorder to emit events on the nodeclaims when the state node is not a candidate
 //
 //nolint:gocyclo
-func (in *StateNode) ValidateNodeDisruptable() error {
+func (in *StateNode) ValidateNodeDisruptable(clk clock.Clock) error {
 	if in.NodeClaim == nil {
 		return fmt.Errorf("node isn't managed by karpenter")
 	}
 	if in.Node == nil {
 		return fmt.Errorf("nodeclaim does not have an associated node")
 	}
-	if !in.Initialized() {
-		return fmt.Errorf("node isn't initialized")
+	// A rebooting node must not be picked up by other disruption methods. This covers the drain window
+	// too, where the node is still Initialized but a reboot is already committed.
+	if in.RebootInProgress() {
+		return fmt.Errorf("node is rebooting")
 	}
 	if in.MarkedForDeletion() {
 		return fmt.Errorf("node is deleting or marked for deletion")
 	}
+	// Checked ahead of nomination, which provisioning keeps renewing on an uninitialized node while pods wait for it.
+	if !in.Initialized() {
+		// Liveness's registration timeout owns a node until it registers, so only a registered node is ignorable.
+		if !in.Registered() {
+			return fmt.Errorf("node isn't initialized nor registered")
+		}
+		return NewNodeUninitializedError(fmt.Errorf("node isn't initialized"))
+	}
 	// skip the node if it is nominated by a recent provisioning pass to be the target of a pending pod.
-	if in.Nominated() {
+	if in.Nominated(clk) {
 		return fmt.Errorf("node is nominated for a pending pod")
 	}
 	if in.Annotations()[v1.DoNotDisruptAnnotationKey] == "true" {
-		return fmt.Errorf("disruption is blocked through the %q annotation", v1.DoNotDisruptAnnotationKey)
+		return NewNodeDoNotDisruptError(fmt.Errorf("disruption is blocked through the %q annotation", v1.DoNotDisruptAnnotationKey))
 	}
 	// check whether the node has the NodePool label
 	if _, ok := in.Labels()[v1.NodePoolLabelKey]; !ok {
-		return fmt.Errorf("node doesn't have required label %q", v1.NodePoolLabelKey)
+		return serrors.Wrap(fmt.Errorf("node doesn't have required label"), "label", v1.NodePoolLabelKey)
 	}
 	return nil
 }
@@ -212,31 +325,34 @@ func (in *StateNode) ValidateNodeDisruptable() error {
 // ValidatePodDisruptable takes in a recorder to emit events on the nodeclaims when the state node is not a candidate
 //
 //nolint:gocyclo
-func (in *StateNode) ValidatePodsDisruptable(ctx context.Context, kubeClient client.Client, pdbs pdb.Limits) ([]*corev1.Pod, error) {
+func (in *StateNode) ValidatePodsDisruptable(ctx context.Context, kubeClient client.Client, pdbs pdb.Limits, clk clock.Clock, recorder events.Recorder) ([]*corev1.Pod, error) {
 	pods, err := in.Pods(ctx, kubeClient)
 	if err != nil {
-		return nil, fmt.Errorf("getting pods from node, %w", err)
+		return nil, err
 	}
 	for _, po := range pods {
 		// We only consider pods that are actively running for "karpenter.sh/do-not-disrupt"
 		// This means that we will allow Mirror Pods and DaemonSets to block disruption using this annotation
-		if !podutils.IsDisruptable(po) {
-			return pods, NewPodBlockEvictionError(fmt.Errorf(`pod %q has "karpenter.sh/do-not-disrupt" annotation`, client.ObjectKeyFromObject(po)))
+		if !podutils.IsDisruptable(po, clk, recorder) {
+			return pods, NewPodBlockEvictionError(serrors.Wrap(fmt.Errorf(`pod has "karpenter.sh/do-not-disrupt" annotation`), "Pod", klog.KObj(po)))
 		}
 	}
-	if pdbKey, ok := pdbs.CanEvictPods(pods); !ok {
-		return pods, NewPodBlockEvictionError(fmt.Errorf("pdb %q prevents pod evictions", pdbKey))
+	if pdbKeys, ok := pdbs.CanEvictPods(pods, clk, recorder); !ok {
+		if len(pdbKeys) > 1 {
+			return pods, NewPodBlockEvictionError(serrors.Wrap(fmt.Errorf("eviction does not support multiple PDBs"), "PodDisruptionBudget(s)", pdbKeys))
+		}
+		return pods, NewPodBlockEvictionError(serrors.Wrap(fmt.Errorf("pdb prevents pod evictions"), "PodDisruptionBudget", pdbKeys))
 	}
 
 	return pods, nil
 }
 
-// ReschedulablePods gets the pods assigned to the Node that are reschedulable based on the kubernetes api-server bindings
-func (in *StateNode) ReschedulablePods(ctx context.Context, kubeClient client.Client) ([]*corev1.Pod, error) {
+// CurrentlyReschedulablePods gets the pods assigned to the Node that are currently reschedulable based on the kubernetes api-server bindings
+func (in *StateNode) CurrentlyReschedulablePods(ctx context.Context, kubeClient client.Client, clk clock.Clock, recorder events.Recorder) ([]*corev1.Pod, error) {
 	if in.Node == nil {
 		return nil, nil
 	}
-	return nodeutils.GetReschedulablePods(ctx, kubeClient, in.Node)
+	return nodeutils.GetCurrentlyReschedulablePods(ctx, kubeClient, clk, recorder, in.Node)
 }
 
 func (in *StateNode) HostName() string {
@@ -276,6 +392,17 @@ func (in *StateNode) Labels() map[string]string {
 	return in.Node.Labels
 }
 
+// RebootInProgress returns true if the node's NodeClaim carries an active (True) Rebooting condition,
+// i.e. a reboot has been committed and has not yet reached a terminal outcome. It is used to advertise
+// the rebooting node's capacity as returning (rather than gone) and to exclude it from other disruption.
+func (in *StateNode) RebootInProgress() bool {
+	if in.NodeClaim == nil {
+		return false
+	}
+	cond := in.NodeClaim.StatusConditions().Get(v1.ConditionTypeRebooting)
+	return cond != nil && cond.IsTrue()
+}
+
 func (in *StateNode) Taints() []corev1.Taint {
 	// If we have a managed node that isn't registered, we should use its NodeClaim
 	// representation of taints. Likewise, if we don't have a Node representation for this
@@ -286,15 +413,17 @@ func (in *StateNode) Taints() []corev1.Taint {
 	} else {
 		taints = in.Node.Spec.Taints
 	}
-	if !in.Initialized() && in.Managed() {
-		// We reject any well-known ephemeral taints and startup taints attached to this node until
-		// the node is initialized. Without this, if the taint is generic and re-appears on the node for a
-		// different reason (e.g. the node is cordoned) we will assume that pods can schedule against the
-		// node in the future incorrectly.
+	if (!in.Initialized() || in.RebootInProgress()) && in.Managed() {
+		// We reject well-known ephemeral taints, startup taints, and the reboot-owned scheduling fence
+		// while the node is uninitialized or rebooting. Without this the scheduling simulation would
+		// treat these transient taints as permanent and incorrectly assume pods can't schedule onto the
+		// node in the future. Stripping the reboot taint here lets the rebooting node's capacity be
+		// modeled as returning (so we don't over-provision) even though the real scheduler is fenced.
 		return lo.Reject(taints, func(taint corev1.Taint, _ int) bool {
-			if _, found := lo.Find(scheduling.KnownEphemeralTaints, func(t corev1.Taint) bool {
-				return t.MatchTaint(&taint)
-			}); found {
+			if scheduling.IsKnownEphemeralTaint(&taint) {
+				return true
+			}
+			if taint.MatchTaint(&v1.RebootingNoScheduleTaint) {
 				return true
 			}
 			if _, found := lo.Find(in.NodeClaim.Spec.StartupTaints, func(t corev1.Taint) bool {
@@ -336,11 +465,12 @@ func (in *StateNode) Capacity() corev1.ResourceList {
 					ret[resourceName] = quantity
 				}
 			}
-			return ret
+			// A StateNode will always have a capacity of 1 node.
+			return lo.Assign(ret, corev1.ResourceList{resources.Node: resource.MustParse("1")})
 		}
-		return in.NodeClaim.Status.Capacity
+		return lo.Assign(in.NodeClaim.Status.Capacity, corev1.ResourceList{resources.Node: resource.MustParse("1")})
 	}
-	return in.Node.Status.Capacity
+	return lo.Assign(in.Node.Status.Capacity, corev1.ResourceList{resources.Node: resource.MustParse("1")})
 }
 
 func (in *StateNode) Allocatable() corev1.ResourceList {
@@ -393,6 +523,16 @@ func (in *StateNode) PodLimits() corev1.ResourceList {
 	return resources.Merge(lo.Values(in.podLimits)...)
 }
 
+// DisruptionCost returns the exact disruption cost for this node:
+// This is maintained incrementally as pods are added/removed.
+func (in *StateNode) DisruptionCost() float64 {
+	cost := disruptionutils.PerNodeBaseDisruptionCost
+	for _, c := range in.podDisruptionCosts {
+		cost += c
+	}
+	return cost
+}
+
 func (in *StateNode) MarkedForDeletion() bool {
 	// The Node is marked for deletion if:
 	//  1. The Node has MarkedForDeletion set
@@ -406,12 +546,12 @@ func (in *StateNode) Deleted() bool {
 		(in.Node != nil && in.NodeClaim == nil && !in.Node.DeletionTimestamp.IsZero())
 }
 
-func (in *StateNode) Nominate(ctx context.Context) {
-	in.nominatedUntil = metav1.Time{Time: time.Now().Add(nominationWindow(ctx))}
+func (in *StateNode) Nominate(ctx context.Context, clk clock.Clock) {
+	in.nominatedUntil = metav1.Time{Time: clk.Now().Add(nominationWindow(ctx))}
 }
 
-func (in *StateNode) Nominated() bool {
-	return in.nominatedUntil.After(time.Now())
+func (in *StateNode) Nominated(clk clock.Clock) bool {
+	return in.nominatedUntil.After(clk.Now())
 }
 
 func (in *StateNode) Managed() bool {
@@ -432,6 +572,18 @@ func (in *StateNode) updateForPod(ctx context.Context, kubeClient client.Client,
 		in.daemonSetRequests[podKey] = resources.RequestsForPods(pod)
 		in.daemonSetLimits[podKey] = resources.LimitsForPods(pod)
 	}
+	// Maintain per-pod disruption cost for balanced scoring. Only non-daemon
+	// pods with positive eviction cost contribute to the node's disruption cost.
+	if !podutils.IsOwnedByDaemonSet(pod) {
+		if in.podDisruptionCosts == nil {
+			in.podDisruptionCosts = map[types.NamespacedName]float64{}
+		}
+		if evictionCost := disruptionutils.EvictionCost(ctx, pod); evictionCost > 0 {
+			in.podDisruptionCosts[podKey] = evictionCost
+		} else {
+			delete(in.podDisruptionCosts, podKey)
+		}
+	}
 	in.hostPortUsage.Add(pod, hostPorts)
 	in.volumeUsage.Add(pod, volumes)
 	return nil
@@ -444,13 +596,11 @@ func (in *StateNode) cleanupForPod(podKey types.NamespacedName) {
 	delete(in.podLimits, podKey)
 	delete(in.daemonSetRequests, podKey)
 	delete(in.daemonSetLimits, podKey)
+	delete(in.podDisruptionCosts, podKey)
 }
 
 func nominationWindow(ctx context.Context) time.Duration {
-	nominationPeriod := 2 * options.FromContext(ctx).BatchMaxDuration
-	if nominationPeriod < 10*time.Second {
-		nominationPeriod = 10 * time.Second
-	}
+	nominationPeriod := max(2*options.FromContext(ctx).BatchMaxDuration, 10*time.Second)
 	return nominationPeriod
 }
 
@@ -459,71 +609,80 @@ func nominationWindow(ctx context.Context) time.Duration {
 // to add/remove taints while executing a disruption action.
 // nolint:gocyclo
 func RequireNoScheduleTaint(ctx context.Context, kubeClient client.Client, addTaint bool, nodes ...*StateNode) error {
-	var multiErr error
-	for _, n := range nodes {
+	errs := make([]error, len(nodes))
+	workqueue.ParallelizeUntil(ctx, len(nodes), len(nodes), func(i int) {
 		// If the StateNode is Karpenter owned and only has a nodeclaim, or is not owned by
 		// Karpenter, thus having no nodeclaim, don't touch the node.
-		if n.Node == nil || n.NodeClaim == nil {
-			continue
+		if nodes[i].Node == nil || nodes[i].NodeClaim == nil {
+			return
 		}
 		node := &corev1.Node{}
-		if err := kubeClient.Get(ctx, client.ObjectKey{Name: n.Node.Name}, node); client.IgnoreNotFound(err) != nil {
-			multiErr = multierr.Append(multiErr, fmt.Errorf("getting node, %w", err))
-		}
-		// If the node already has the taint, continue to the next
-		_, hasTaint := lo.Find(node.Spec.Taints, func(taint corev1.Taint) bool {
-			return taint.MatchTaint(&v1.DisruptedNoScheduleTaint)
-		})
-		// Node is being deleted, so no need to remove taint as the node will be gone soon.
-		// This ensures that the disruption controller doesn't modify taints that the Termination
-		// controller is also modifying
-		if hasTaint && !node.DeletionTimestamp.IsZero() {
-			continue
-		}
-		stored := node.DeepCopy()
-		// If the taint is present and we want to remove the taint, remove it.
-		if !addTaint {
-			node.Spec.Taints = lo.Reject(node.Spec.Taints, func(taint corev1.Taint, _ int) bool {
-				return taint.MatchTaint(&v1.DisruptedNoScheduleTaint)
-			})
-			// otherwise, add it.
-		} else if addTaint && !hasTaint {
-			// If the taint key is present (but with a different value or effect), remove it.
-			node.Spec.Taints = lo.Reject(node.Spec.Taints, func(taint corev1.Taint, _ int) bool {
-				return taint.MatchTaint(&v1.DisruptedNoScheduleTaint)
-			})
-			node.Spec.Taints = append(node.Spec.Taints, v1.DisruptedNoScheduleTaint)
-		}
-		if !equality.Semantic.DeepEqual(stored, node) {
-			// We use client.MergeFromWithOptimisticLock because patching a list with a JSON merge patch
-			// can cause races due to the fact that it fully replaces the list on a change
-			// Here, we are updating the taint list
-			if err := kubeClient.Patch(ctx, node, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{})); err != nil {
-				multiErr = multierr.Append(multiErr, fmt.Errorf("patching node %s, %w", node.Name, err))
+		if err := retry.OnError(retry.DefaultBackoff, func(err error) bool { return client.IgnoreNotFound(err) != nil }, func() error {
+			if e := kubeClient.Get(ctx, client.ObjectKey{Name: nodes[i].Node.Name}, node); e != nil {
+				return e
 			}
+			// If the node already has the taint, continue to the next
+			_, hasTaint := lo.Find(node.Spec.Taints, func(taint corev1.Taint) bool {
+				return taint.MatchTaint(&v1.DisruptedNoScheduleTaint)
+			})
+			// Node is being deleted, so no need to remove taint as the node will be gone soon.
+			// This ensures that the disruption controller doesn't modify taints that the Termination
+			// controller is also modifying
+			if hasTaint && !node.DeletionTimestamp.IsZero() {
+				return nil
+			}
+			stored := node.DeepCopy()
+			// If the taint is present and we want to remove the taint, remove it.
+			if !addTaint {
+				node.Spec.Taints = lo.Reject(node.Spec.Taints, func(taint corev1.Taint, _ int) bool {
+					return taint.MatchTaint(&v1.DisruptedNoScheduleTaint)
+				})
+				// otherwise, add it.
+			} else if addTaint && !hasTaint {
+				// If the taint key is present (but with a different value or effect), remove it.
+				node.Spec.Taints = lo.Reject(node.Spec.Taints, func(taint corev1.Taint, _ int) bool {
+					return taint.MatchTaint(&v1.DisruptedNoScheduleTaint)
+				})
+				node.Spec.Taints = append(node.Spec.Taints, v1.DisruptedNoScheduleTaint)
+			}
+			if !equality.Semantic.DeepEqual(stored, node) {
+				// We use client.MergeFromWithOptimisticLock because patching a list with a JSON merge patch
+				// can cause races due to the fact that it fully replaces the list on a change
+				// Here, we are updating the taint list
+				return kubeClient.Patch(ctx, node, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{}))
+			}
+			return nil
+		}); err != nil {
+			errs[i] = client.IgnoreNotFound(fmt.Errorf("getting node, %w", err))
+			return
 		}
-	}
-	return multiErr
+	})
+	return multierr.Combine(errs...)
 }
 
 // ClearNodeClaimsCondition will remove the conditionType from the NodeClaim status of the provided statenodes
-func ClearNodeClaimsCondition(ctx context.Context, kubeClient client.Client, conditionType string, nodes ...*StateNode) error {
-	return multierr.Combine(lo.Map(nodes, func(s *StateNode, _ int) error {
-		if !s.Initialized() || s.NodeClaim == nil {
-			return nil
+func ClearNodeClaimsCondition(ctx context.Context, kubeClient client.Client, clk clock.Clock, conditionType string, nodes ...*StateNode) error {
+	errs := make([]error, len(nodes))
+	workqueue.ParallelizeUntil(ctx, len(nodes), len(nodes), func(i int) {
+		if !nodes[i].Initialized() || nodes[i].NodeClaim == nil {
+			return
 		}
 		nodeClaim := &v1.NodeClaim{}
-		if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(s.NodeClaim), nodeClaim); err != nil {
-			return client.IgnoreNotFound(err)
-		}
-		stored := nodeClaim.DeepCopy()
-		_ = nodeClaim.StatusConditions().Clear(conditionType)
-
-		if !equality.Semantic.DeepEqual(stored, nodeClaim) {
-			if err := kubeClient.Status().Patch(ctx, nodeClaim, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{})); err != nil {
-				return client.IgnoreNotFound(err)
+		if err := retry.OnError(retry.DefaultBackoff, func(err error) bool { return client.IgnoreNotFound(err) != nil }, func() error {
+			if e := kubeClient.Get(ctx, client.ObjectKeyFromObject(nodes[i].NodeClaim), nodeClaim); e != nil {
+				return e
 			}
+			stored := nodeClaim.DeepCopy()
+			_ = nodeClaim.StatusConditions(status.WithClock(clk)).Clear(conditionType)
+			if !equality.Semantic.DeepEqual(stored, nodeClaim) {
+				return kubeClient.Status().Patch(ctx, nodeClaim, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{}))
+			}
+			return nil
+		}); err != nil {
+			errs[i] = client.IgnoreNotFound(err)
+			return
 		}
-		return nil
-	})...)
+
+	})
+	return multierr.Combine(errs...)
 }

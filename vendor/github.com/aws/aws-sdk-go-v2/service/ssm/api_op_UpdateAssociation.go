@@ -4,11 +4,8 @@ package ssm
 
 import (
 	"context"
-	"fmt"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // Updates an association. You can update the association name and version, the
@@ -58,24 +55,47 @@ type UpdateAssociationInput struct {
 
 	// By default, when you update an association, the system runs it immediately
 	// after it is updated and then according to the schedule you specified. Specify
-	// this option if you don't want an association to run immediately after you update
-	// it. This parameter isn't supported for rate expressions.
+	// true for ApplyOnlyAtCronInterval if you want the association to run only
+	// according to the schedule you specified.
 	//
 	// If you chose this option when you created an association and later you edit
-	// that association or you make changes to the SSM document on which that
-	// association is based (by using the Documents page in the console), State Manager
-	// applies the association at the next specified cron interval. For example, if you
-	// chose the Latest version of an SSM document when you created an association and
-	// you edit the association by choosing a different document version on the
-	// Documents page, State Manager applies the association at the next specified cron
-	// interval if you previously selected this option. If this option wasn't selected,
-	// State Manager immediately runs the association.
+	// that association or you make changes to the Automation runbook or SSM document
+	// on which that association is based, State Manager applies the association at the
+	// next specified cron interval. For example, if you chose the Latest version of
+	// an SSM document when you created an association and you edit the association by
+	// choosing a different document version on the Documents page, State Manager
+	// applies the association at the next specified cron interval if you previously
+	// set ApplyOnlyAtCronInterval to true . If this option wasn't selected, State
+	// Manager immediately runs the association.
 	//
-	// You can reset this option. To do so, specify the no-apply-only-at-cron-interval
-	// parameter when you update the association from the command line. This parameter
-	// forces the association to run immediately after updating it and according to the
-	// interval specified.
+	// For more information, see [Understanding when associations are applied to resources] and [About target updates with Automation runbooks] in the Amazon Web Services Systems Manager User
+	// Guide.
+	//
+	// This parameter isn't supported for rate expressions.
+	//
+	// You can reset this parameter. To do so, specify the
+	// no-apply-only-at-cron-interval parameter when you update the association from
+	// the command line. This parameter forces the association to run immediately after
+	// updating it and according to the interval specified.
+	//
+	// [Understanding when associations are applied to resources]: https://docs.aws.amazon.com/systems-manager/latest/userguide/state-manager-about.html#state-manager-about-scheduling
+	// [About target updates with Automation runbooks]: https://docs.aws.amazon.com/systems-manager/latest/userguide/state-manager-about.html#runbook-target-updates
 	ApplyOnlyAtCronInterval bool
+
+	// A role used by association to take actions on your behalf. State Manager will
+	// assume this role and call required APIs when dispatching configurations to
+	// nodes. If not specified, [service-linked role for Systems Manager]will be used by default.
+	//
+	// It is recommended that you define a custom IAM role so that you have full
+	// control of the permissions that State Manager has when taking actions on your
+	// behalf.
+	//
+	// Service-linked role support in State Manager is being phased out. Associations
+	// relying on service-linked role may require updates in the future to continue
+	// functioning properly.
+	//
+	// [service-linked role for Systems Manager]: https://docs.aws.amazon.com/systems-manager/latest/userguide/using-service-linked-roles.html
+	AssociationDispatchAssumeRole *string
 
 	// The name of the association that you want to update.
 	AssociationName *string
@@ -93,7 +113,8 @@ type UpdateAssociationInput struct {
 
 	// The names or Amazon Resource Names (ARNs) of the Change Calendar type documents
 	// you want to gate your associations under. The associations only run when that
-	// change calendar is open. For more information, see [Amazon Web Services Systems Manager Change Calendar].
+	// change calendar is open. For more information, see [Amazon Web Services Systems Manager Change Calendar]in the Amazon Web Services
+	// Systems Manager User Guide.
 	//
 	// [Amazon Web Services Systems Manager Change Calendar]: https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-change-calendar
 	CalendarNames []string
@@ -217,6 +238,9 @@ type UpdateAssociationInput struct {
 	// A location is a combination of Amazon Web Services Regions and Amazon Web
 	// Services accounts where you want to run the association. Use this action to
 	// update an association in multiple Regions and multiple accounts.
+	//
+	// The TargetLocationAlarmConfiguration parameter is not supported by State
+	// Manager.
 	TargetLocations []types.TargetLocation
 
 	// A key-value mapping of document parameters to target resources. Both Targets
@@ -241,9 +265,6 @@ type UpdateAssociationOutput struct {
 }
 
 func (c *Client) addOperationUpdateAssociationMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
-		return err
-	}
 	err = stack.Serialize.Add(&awsAwsjson11_serializeOpUpdateAssociation{}, middleware.After)
 	if err != nil {
 		return err
@@ -252,65 +273,20 @@ func (c *Client) addOperationUpdateAssociationMiddlewares(stack *middleware.Stac
 	if err != nil {
 		return err
 	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "UpdateAssociation"); err != nil {
-		return fmt.Errorf("add protocol finalizers: %v", err)
-	}
 
-	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
-		return err
-	}
-	if err = addSetLoggerMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addClientRequestID(stack); err != nil {
-		return err
-	}
-	if err = addComputeContentLength(stack); err != nil {
-		return err
-	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
+	if err = addRecordResponseTiming(stack, options); err != nil {
 		return err
 	}
-	if err = addRawResponseToMetadata(stack); err != nil {
-		return err
-	}
-	if err = addRecordResponseTiming(stack); err != nil {
-		return err
-	}
-	if err = addSpanRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addClientUserAgent(stack, options); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
-		return err
-	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpUpdateAssociationValidationMiddleware(stack); err != nil {
-		return err
-	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opUpdateAssociation(options.Region), middleware.Before); err != nil {
-		return err
-	}
-	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -325,25 +301,8 @@ func (c *Client) addOperationUpdateAssociationMiddlewares(stack *middleware.Stac
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanInitializeEnd(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil
-}
-
-func newServiceMetadataMiddleware_opUpdateAssociation(region string) *awsmiddleware.RegisterServiceMetadata {
-	return &awsmiddleware.RegisterServiceMetadata{
-		Region:        region,
-		ServiceID:     ServiceID,
-		OperationName: "UpdateAssociation",
-	}
 }

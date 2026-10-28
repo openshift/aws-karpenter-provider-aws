@@ -4,10 +4,7 @@ package iam
 
 import (
 	"context"
-	"fmt"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // Generates a report for service last accessed data for Organizations. You can
@@ -43,9 +40,9 @@ import (
 // authoritative source for information about all API calls and whether they were
 // successful or denied access. For more information, see [Logging IAM events with CloudTrail]in the IAM User Guide.
 //
-// This operation returns a JobId . Use this parameter in the GetOrganizationsAccessReport operation to check
+// This operation returns a JobId . Use this parameter in the [GetOrganizationsAccessReport] operation to check
 // the status of the report generation. To check the status of this request, use
-// the JobId parameter in the GetOrganizationsAccessReport operation and test the JobStatus response
+// the JobId parameter in the [GetOrganizationsAccessReport] operation and test the JobStatus response
 // parameter. When the job is complete, you can retrieve the report.
 //
 // To generate a service last accessed data report for entities, specify an entity
@@ -120,6 +117,7 @@ import (
 // [Logging IAM events with CloudTrail]: https://docs.aws.amazon.com/IAM/latest/UserGuide/cloudtrail-integration.html
 // [Refining permissions using service last accessed data]: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_access-advisor.html
 // [Reducing permissions using service last accessed data]: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_access-advisor.html
+// [GetOrganizationsAccessReport]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetOrganizationsAccessReport.html
 // [Evaluating policies]: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html#policy-eval-basics
 // [Reducing policy scope by viewing user activity]: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_access-advisor.html
 func (c *Client) GenerateOrganizationsAccessReport(ctx context.Context, params *GenerateOrganizationsAccessReportInput, optFns ...func(*Options)) (*GenerateOrganizationsAccessReportOutput, error) {
@@ -161,7 +159,9 @@ type GenerateOrganizationsAccessReportInput struct {
 
 type GenerateOrganizationsAccessReportOutput struct {
 
-	// The job identifier that you can use in the GetOrganizationsAccessReport operation.
+	// The job identifier that you can use in the [GetOrganizationsAccessReport] operation.
+	//
+	// [GetOrganizationsAccessReport]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetOrganizationsAccessReport.html
 	JobId *string
 
 	// Metadata pertaining to the operation's result.
@@ -171,9 +171,6 @@ type GenerateOrganizationsAccessReportOutput struct {
 }
 
 func (c *Client) addOperationGenerateOrganizationsAccessReportMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
-		return err
-	}
 	err = stack.Serialize.Add(&awsAwsquery_serializeOpGenerateOrganizationsAccessReport{}, middleware.After)
 	if err != nil {
 		return err
@@ -182,65 +179,20 @@ func (c *Client) addOperationGenerateOrganizationsAccessReportMiddlewares(stack 
 	if err != nil {
 		return err
 	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "GenerateOrganizationsAccessReport"); err != nil {
-		return fmt.Errorf("add protocol finalizers: %v", err)
-	}
 
-	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
-		return err
-	}
-	if err = addSetLoggerMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addClientRequestID(stack); err != nil {
-		return err
-	}
-	if err = addComputeContentLength(stack); err != nil {
-		return err
-	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
+	if err = addRecordResponseTiming(stack, options); err != nil {
 		return err
 	}
-	if err = addRawResponseToMetadata(stack); err != nil {
-		return err
-	}
-	if err = addRecordResponseTiming(stack); err != nil {
-		return err
-	}
-	if err = addSpanRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addClientUserAgent(stack, options); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
-		return err
-	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpGenerateOrganizationsAccessReportValidationMiddleware(stack); err != nil {
-		return err
-	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opGenerateOrganizationsAccessReport(options.Region), middleware.Before); err != nil {
-		return err
-	}
-	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -255,25 +207,8 @@ func (c *Client) addOperationGenerateOrganizationsAccessReportMiddlewares(stack 
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanInitializeEnd(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil
-}
-
-func newServiceMetadataMiddleware_opGenerateOrganizationsAccessReport(region string) *awsmiddleware.RegisterServiceMetadata {
-	return &awsmiddleware.RegisterServiceMetadata{
-		Region:        region,
-		ServiceID:     ServiceID,
-		OperationName: "GenerateOrganizationsAccessReport",
-	}
 }

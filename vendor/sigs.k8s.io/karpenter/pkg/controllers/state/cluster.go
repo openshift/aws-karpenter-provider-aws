@@ -19,29 +19,37 @@ package state
 import (
 	"context"
 	"fmt"
+	"iter"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/awslabs/operatorpkg/option"
+	"github.com/awslabs/operatorpkg/serrors"
 	"github.com/samber/lo"
 	"go.uber.org/multierr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
+	"sigs.k8s.io/karpenter/pkg/controllers/node/health"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 	nodeclaimutils "sigs.k8s.io/karpenter/pkg/utils/nodeclaim"
 	podutils "sigs.k8s.io/karpenter/pkg/utils/pod"
+	"sigs.k8s.io/karpenter/pkg/utils/resources"
 )
 
 // Cluster maintains cluster state that is often needed but expensive to compute.
@@ -56,11 +64,18 @@ type Cluster struct {
 	bindings                  map[types.NamespacedName]string // pod namespaced named -> node name
 	nodeNameToProviderID      map[string]string               // node name -> provider id
 	nodeClaimNameToProviderID map[string]string               // node claim name -> provider id
+	nodePoolResources         map[string]corev1.ResourceList  // node pool name -> resource list
 	daemonSetPods             sync.Map                        // daemonSet -> existing pod
 
-	podAcks                 sync.Map // pod namespaced name -> time when Karpenter first saw the pod as pending
-	podsSchedulingAttempted sync.Map // pod namespaced name -> time when Karpenter tried to schedule a pod
-	podsSchedulableTimes    sync.Map // pod namespaced name -> time when it was first marked as able to fit to a node
+	repairPolicyMatcher *health.RepairPolicyMatcher // nil when node repair is disabled
+
+	NodePoolState *NodePoolState
+
+	podAcks                         sync.Map // pod namespaced name -> time when Karpenter first saw the pod as pending
+	podsSchedulingAttempted         sync.Map // pod namespaced name -> time when Karpenter tried to schedule a pod
+	podsSchedulableTimes            sync.Map // pod namespaced name -> time when it was first marked as able to fit to a node
+	podHealthyNodePoolScheduledTime sync.Map // pod namespaced name -> time when pod scheduled to a nodePool that has NodeRegistrationHealthy=true, is marked as able to fit to a node
+	podToNodeClaim                  sync.Map // pod namespaced name -> nodeClaim name
 
 	clusterStateMu sync.RWMutex // Separate mutex as this is called in some places that mu is held
 	// A monotonically increasing timestamp representing the time state of the
@@ -68,13 +83,44 @@ type Cluster struct {
 	// changed about the cluster that might make consolidation possible. By recording
 	// the state, interested disruption methods can check to see if this has changed to
 	// optimize and not try to disrupt if nothing about the cluster has changed.
-	clusterState      time.Time
-	unsyncedStartTime time.Time
-	antiAffinityPods  sync.Map // pod namespaced name -> *corev1.Pod of pods that have required anti affinities
+	clusterState time.Time
+
+	unsyncedTimeMu      sync.Mutex
+	unsyncedStartTime   time.Time
+	lastUnsyncedLogTime time.Time
+	antiAffinityPods    sync.Map // pod namespaced name -> *corev1.Pod of pods that have required anti affinities
+
+	// bufferPodCounts tracks how many virtual CapacityBuffer pods the provisioner's
+	// scheduling simulation placed on each node (keyed by providerID). This is
+	// rebuilt wholesale after every provisioning pass — it is NOT incremental.
+	//
+	// Used by:
+	//   - disruption/emptiness.go: prevents empty-consolidation of nodes that host
+	//     buffer capacity (HasBufferPods check in ShouldDisrupt).
+	//
+	// NOT used by consolidation — consolidation naturally accounts for buffer pods
+	// because SimulateScheduling calls GetPendingPods which injects virtual pods
+	// into the pending set. Any replacement must fit both real and virtual pods.
+	bufferPodCountsMu sync.RWMutex
+	bufferPodCounts   map[string]int
 }
 
-func NewCluster(clk clock.Clock, client client.Client, cloudProvider cloudprovider.CloudProvider) *Cluster {
+type ClusterOptions struct {
+	repairPolicyMatcher *health.RepairPolicyMatcher
+}
+
+// WithRepairPolicyMatcher makes cluster state match each Node against the repair policies as it changes. Node repair
+// reads the same matcher back through RepairPolicyMatcher.
+func WithRepairPolicyMatcher(matcher *health.RepairPolicyMatcher) option.Function[ClusterOptions] {
+	return func(o *ClusterOptions) {
+		o.repairPolicyMatcher = matcher
+	}
+}
+
+func NewCluster(clk clock.Clock, client client.Client, cloudProvider cloudprovider.CloudProvider, opts ...option.Function[ClusterOptions]) *Cluster {
+	o := option.Resolve(opts...)
 	return &Cluster{
+		repairPolicyMatcher:       o.repairPolicyMatcher,
 		clock:                     clk,
 		kubeClient:                client,
 		cloudProvider:             cloudProvider,
@@ -83,9 +129,17 @@ func NewCluster(clk clock.Clock, client client.Client, cloudProvider cloudprovid
 		daemonSetPods:             sync.Map{},
 		nodeNameToProviderID:      map[string]string{},
 		nodeClaimNameToProviderID: map[string]string{},
-		podAcks:                   sync.Map{},
-		podsSchedulableTimes:      sync.Map{},
-		podsSchedulingAttempted:   sync.Map{},
+		nodePoolResources:         map[string]corev1.ResourceList{},
+
+		NodePoolState: NewNodePoolState(),
+
+		bufferPodCounts: map[string]int{},
+
+		podAcks:                         sync.Map{},
+		podsSchedulableTimes:            sync.Map{},
+		podsSchedulingAttempted:         sync.Map{},
+		podHealthyNodePoolScheduledTime: sync.Map{},
+		podToNodeClaim:                  sync.Map{},
 	}
 }
 
@@ -98,12 +152,24 @@ func NewCluster(clk clock.Clock, client client.Client, cloudProvider cloudprovid
 func (c *Cluster) Synced(ctx context.Context) (synced bool) {
 	// Set the metric depending on the result of the Synced() call
 	defer func() {
+		c.unsyncedTimeMu.Lock()
+		defer c.unsyncedTimeMu.Unlock()
+
 		if synced {
 			c.unsyncedStartTime = time.Time{}
+			c.lastUnsyncedLogTime = time.Time{}
 			ClusterStateUnsyncedTimeSeconds.Set(0, nil)
 		} else {
 			if c.unsyncedStartTime.IsZero() {
 				c.unsyncedStartTime = c.clock.Now()
+			}
+			// We want to log every 10s when the cluster hasn't synced for 30s which is long enough for us to think there is an issue
+			if c.clock.Since(c.unsyncedStartTime) > time.Second*30 && c.clock.Since(c.lastUnsyncedLogTime) > time.Second*10 {
+				c.lastUnsyncedLogTime = c.clock.Now()
+				log.FromContext(ctx).Error(
+					fmt.Errorf("waiting on cluster sync"),
+					"cluster is waiting on sync for extended duration",
+					"duration", c.clock.Since(c.unsyncedStartTime).Truncate(time.Second))
 			}
 			ClusterStateUnsyncedTimeSeconds.Set(c.clock.Since(c.unsyncedStartTime).Seconds(), nil)
 		}
@@ -132,13 +198,17 @@ func (c *Cluster) Synced(ctx context.Context) (synced bool) {
 
 	// If we haven't synced before, then we need to make sure that our internal cache is fully hydrated
 	// before we start doing operations against the state
-	nodeClaims, err := nodeclaimutils.ListManaged(ctx, c.kubeClient, c.cloudProvider)
+	// Because we get so many NodeClaims from this response, we are not DeepCopying the cached data here
+	// DO NOT MUTATE NodeClaims in this function as this will affect the underlying cached NodeClaim
+	nodeClaims, err := nodeclaimutils.ListManaged(ctx, c.kubeClient, c.cloudProvider, client.UnsafeDisableDeepCopy)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "failed checking cluster state sync")
 		return false
 	}
 	nodeList := &corev1.NodeList{}
-	if err := c.kubeClient.List(ctx, nodeList); err != nil {
+	// Because we get so many Nodes from this response, we are not DeepCopying the cached data here
+	// DO NOT MUTATE Nodes in this function as this will affect the underlying cached Node
+	if err := c.kubeClient.List(ctx, nodeList, client.UnsafeDisableDeepCopy); err != nil {
 		log.FromContext(ctx).Error(err, "failed checking cluster state sync")
 		return false
 	}
@@ -180,7 +250,7 @@ func (c *Cluster) Synced(ctx context.Context) (synced bool) {
 // currently bound to a node. The pod returned may not be up-to-date with respect to status, however since the
 // anti-affinity terms can't be modified, they will be correct.
 func (c *Cluster) ForPodsWithAntiAffinity(fn func(p *corev1.Pod, n *corev1.Node) bool) {
-	c.antiAffinityPods.Range(func(key, value interface{}) bool {
+	c.antiAffinityPods.Range(func(key, value any) bool {
 		pod := value.(*corev1.Pod)
 		c.mu.RLock()
 		defer c.mu.RUnlock()
@@ -197,28 +267,34 @@ func (c *Cluster) ForPodsWithAntiAffinity(fn func(p *corev1.Pod, n *corev1.Node)
 	})
 }
 
-// ForEachNode calls the supplied function once per node object that is being tracked. It is not safe to store the
-// state.StateNode object, it should be only accessed from within the function provided to this method.
-func (c *Cluster) ForEachNode(f func(n *StateNode) bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	for _, node := range c.nodes {
-		if !f(node) {
-			return
+// Nodes returns an iterator which iterates over the state nodes in the cluster under a read-lock. It is not safe to
+// store the state.StateNode object and it should only be accessed while the iterator is active.
+func (c *Cluster) Nodes() iter.Seq[*StateNode] {
+	return func(yield func(*StateNode) bool) {
+		c.mu.RLock()
+		defer c.mu.RUnlock()
+		for _, node := range c.nodes {
+			if !yield(node) {
+				return
+			}
 		}
 	}
 }
 
-// Nodes creates a DeepCopy of all state nodes.
+// DeepCopyNodes creates a DeepCopy of all state nodes.
 // NOTE: This is very inefficient so this should only be used when DeepCopying is absolutely necessary
-func (c *Cluster) Nodes() StateNodes {
+func (c *Cluster) DeepCopyNodes() StateNodes {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	return lo.Map(lo.Values(c.nodes), func(n *StateNode, _ int) *StateNode {
 		return n.DeepCopy()
 	})
+}
+
+// RepairPolicyMatcher returns the matcher cluster state matches Nodes with, or nil when node repair is disabled.
+func (c *Cluster) RepairPolicyMatcher() *health.RepairPolicyMatcher {
+	return c.repairPolicyMatcher
 }
 
 // IsNodeNominated returns true if the given node was expected to have a pod bound to it during a recent scheduling
@@ -228,7 +304,7 @@ func (c *Cluster) IsNodeNominated(providerID string) bool {
 	defer c.mu.RUnlock()
 
 	if n, ok := c.nodes[providerID]; ok {
-		return n.Nominated()
+		return n.Nominated(c.clock)
 	}
 	return false
 }
@@ -239,12 +315,37 @@ func (c *Cluster) NominateNodeForPod(ctx context.Context, providerID string) {
 	defer c.mu.Unlock()
 
 	if n, ok := c.nodes[providerID]; ok {
-		n.Nominate(ctx) // extends nomination window if already nominated
+		n.Nominate(ctx, c.clock) // extends nomination window if already nominated
 	}
 }
 
-// TODO remove this when v1alpha5 APIs are deprecated. With v1 APIs Karpenter relies on the existence
-// of the karpenter.sh/disruption taint to know when a node is marked for deletion.
+// UpdateBufferPodCounts replaces the entire buffer pod count mapping with the
+// new counts. Called by the provisioner after each scheduling pass to reflect
+// which nodes are hosting virtual buffer pods. Nodes not in the map are cleared.
+//
+// The mapping is derived from Results.ExistingNodes — each ExistingNode.Pods
+// entry that carries the fake-pod annotation is counted. When buffer capacity
+// is consumed (real pods take the space), virtual pods move to other nodes or
+// new NodeClaims, and this map updates accordingly on the next pass.
+func (c *Cluster) UpdateBufferPodCounts(counts map[string]int) {
+	c.bufferPodCountsMu.Lock()
+	defer c.bufferPodCountsMu.Unlock()
+	c.bufferPodCounts = counts
+}
+
+// HasBufferPods returns true if the node with the given providerID has at least
+// one virtual buffer pod placed on it during the last provisioning pass.
+func (c *Cluster) HasBufferPods(providerID string) bool {
+	return c.BufferPodCount(providerID) > 0
+}
+
+// BufferPodCount returns the number of virtual buffer pods on the node.
+func (c *Cluster) BufferPodCount(providerID string) int {
+	c.bufferPodCountsMu.RLock()
+	defer c.bufferPodCountsMu.RUnlock()
+	return c.bufferPodCounts[providerID]
+}
+
 // UnmarkForDeletion removes the marking on the node as a node the controller intends to delete
 func (c *Cluster) UnmarkForDeletion(providerIDs ...string) {
 	c.mu.Lock()
@@ -252,13 +353,16 @@ func (c *Cluster) UnmarkForDeletion(providerIDs ...string) {
 
 	for _, id := range providerIDs {
 		if n, ok := c.nodes[id]; ok {
+			oldNode := n.ShallowCopy()
 			n.markedForDeletion = false
+			c.updateNodePoolResources(oldNode, n)
+			if n.NodeClaim != nil && n.NodeClaim.DeletionTimestamp.IsZero() {
+				c.NodePoolState.MarkNodeClaimActive(n.NodeClaim.Labels[v1.NodePoolLabelKey], n.NodeClaim.Name)
+			}
 		}
 	}
 }
 
-// TODO remove this when v1alpha5 APIs are deprecated. With v1 APIs Karpenter relies on the existence
-// of the karpenter.sh/disruption taint to know when a node is marked for deletion.
 // MarkForDeletion marks the node as pending deletion in the internal cluster state
 func (c *Cluster) MarkForDeletion(providerIDs ...string) {
 	c.mu.Lock()
@@ -266,7 +370,12 @@ func (c *Cluster) MarkForDeletion(providerIDs ...string) {
 
 	for _, id := range providerIDs {
 		if n, ok := c.nodes[id]; ok {
+			oldNode := n.ShallowCopy()
 			n.markedForDeletion = true
+			c.updateNodePoolResources(oldNode, n)
+			if n.NodeClaim != nil {
+				c.NodePoolState.MarkNodeClaimDeleting(n.NodeClaim.Labels[v1.NodePoolLabelKey], n.NodeClaim.Name)
+			}
 		}
 	}
 }
@@ -282,6 +391,14 @@ func (c *Cluster) UpdateNodeClaim(nodeClaim *v1.NodeClaim) {
 		n := c.newStateFromNodeClaim(nodeClaim, c.nodes[nodeClaim.Status.ProviderID])
 		c.nodes[nodeClaim.Status.ProviderID] = n
 	}
+
+	// Update nodepool state with NodeClaim
+	markedForDel := false
+	if n, ok := c.nodes[nodeClaim.Status.ProviderID]; ok {
+		markedForDel = n.MarkedForDeletion()
+	}
+	c.NodePoolState.UpdateNodeClaim(nodeClaim, markedForDel)
+
 	// If the nodeclaim hasn't launched yet, we want to add it into cluster state to ensure
 	// that we're not racing with the internal cache for the cluster, assuming the node doesn't exist.
 	c.nodeClaimNameToProviderID[nodeClaim.Name] = nodeClaim.Status.ProviderID
@@ -345,6 +462,22 @@ func (c *Cluster) UpdatePod(ctx context.Context, pod *corev1.Pod) error {
 	return err
 }
 
+func (c *Cluster) NodeClaimExists(nodeClaimName string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	_, ok := c.nodeClaimNameToProviderID[nodeClaimName]
+	return ok
+}
+
+func (c *Cluster) UnlaunchedNodeClaimExists(nodeClaimName string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	providerID, ok := c.nodeClaimNameToProviderID[nodeClaimName]
+	return ok && providerID == ""
+}
+
 // AckPods marks the pod as acknowledged for scheduling from the provisioner. This is only done once per-pod.
 func (c *Cluster) AckPods(pods ...*corev1.Pod) {
 	now := c.clock.Now()
@@ -363,16 +496,16 @@ func (c *Cluster) PodAckTime(podKey types.NamespacedName) time.Time {
 }
 
 // MarkPodSchedulingDecisions keeps track of when we first tried to schedule a pod to a node.
-// This also marks when the pod is first seen as schedulable for pod metrics.
+// It updates podHealthyNodePoolScheduledTime for pods scheduled against nodePool that have
+// NodeRegistrationHealthy=true. This also marks when the pod is first seen as schedulable for pod metrics.
 // We'll only emit a metric for a pod if we haven't done it before.
-func (c *Cluster) MarkPodSchedulingDecisions(podErrors map[*corev1.Pod]error, pods ...*corev1.Pod) {
+// nolint:gocyclo
+func (c *Cluster) MarkPodSchedulingDecisions(ctx context.Context, podErrors map[*corev1.Pod]error, npPods map[string][]*corev1.Pod, ncPods map[string][]*corev1.Pod) {
 	now := c.clock.Now()
-	for _, p := range pods {
-		nn := client.ObjectKeyFromObject(p)
-		// If there's no error for the pod, then we mark it as schedulable
-		if err, ok := podErrors[p]; !ok || err == nil {
-			c.podsSchedulableTimes.LoadOrStore(nn, now)
-		}
+	for pod := range podErrors {
+		nn := client.ObjectKeyFromObject(pod)
+		// delete podsSchedulableTimes and podHealthyNodePoolScheduledTime for pods that have pod errors
+		c.podsSchedulableTimes.Delete(nn)
 		_, alreadyExists := c.podsSchedulingAttempted.LoadOrStore(nn, now)
 		// If we already attempted this, we don't need to emit another metric.
 		if !alreadyExists {
@@ -380,6 +513,52 @@ func (c *Cluster) MarkPodSchedulingDecisions(podErrors map[*corev1.Pod]error, po
 			if ackTime := c.PodAckTime(nn); !ackTime.IsZero() {
 				PodSchedulingDecisionSeconds.Observe(c.clock.Since(ackTime).Seconds(), nil)
 			}
+		}
+		c.podHealthyNodePoolScheduledTime.Delete(nn)
+		c.podToNodeClaim.Delete(nn)
+	}
+	for nodePoolName, pods := range npPods {
+		nodePool := &v1.NodePool{}
+		if nodePoolName != "" {
+			// Swallow errors if we can't get the nodepool
+			_ = c.kubeClient.Get(ctx, types.NamespacedName{Name: nodePoolName}, nodePool)
+		}
+		for _, p := range pods {
+			nn := client.ObjectKeyFromObject(p)
+			// Skip pods that are already bound to a node (e.g. pods from deleting nodes
+			// included in the scheduling simulation for capacity planning). Storing a new
+			// timestamp for already-bound pods would cause negative metric values since
+			// their PodScheduled LastTransitionTime is in the past.
+			if podutils.IsScheduled(p) {
+				continue
+			}
+			c.podsSchedulableTimes.LoadOrStore(nn, now)
+			_, alreadyExists := c.podsSchedulingAttempted.LoadOrStore(nn, now)
+			// If we already attempted this, we don't need to emit another metric.
+			if !alreadyExists {
+				// We should have ACK'd the pod.
+				if ackTime := c.PodAckTime(nn); !ackTime.IsZero() {
+					PodSchedulingDecisionSeconds.Observe(c.clock.Since(ackTime).Seconds(), nil)
+				}
+			}
+			// If the pod is scheduled to a nodePool and if the nodePool has NodeRegistrationHealthy=true
+			// then mark the time when we thought it can schedule to now.
+			if nodePoolName != "" && nodePool.StatusConditions().IsTrue(v1.ConditionTypeNodeRegistrationHealthy) {
+				c.podHealthyNodePoolScheduledTime.LoadOrStore(nn, c.clock.Now())
+			} else {
+				// If the pod was scheduled to a healthy nodePool earlier but is now getting scheduled to an
+				// unhealthy one then we need to delete its entry from the map because it will not schedule successfully
+				c.podHealthyNodePoolScheduledTime.Delete(nn)
+			}
+		}
+	}
+	c.UpdatePodToNodeClaimMapping(ncPods)
+}
+
+func (c *Cluster) UpdatePodToNodeClaimMapping(ncPods map[string][]*corev1.Pod) {
+	for ncName, pods := range ncPods {
+		for _, p := range pods {
+			c.podToNodeClaim.Store(client.ObjectKeyFromObject(p), ncName)
 		}
 	}
 }
@@ -402,6 +581,37 @@ func (c *Cluster) PodSchedulingSuccessTime(podKey types.NamespacedName) time.Tim
 	return time.Time{}
 }
 
+// PodNodeClaimMapping returns the nodeClaim against which the pod is simulated to get scheduled
+func (c *Cluster) PodNodeClaimMapping(podKey types.NamespacedName) string {
+	if val, found := c.podToNodeClaim.Load(podKey); found {
+		return val.(string)
+	}
+	return ""
+}
+
+// PodsMappedToNodeClaim returns the keys of the pods that were simulated to schedule against the given nodeClaim
+// during the most recent scheduling decision for each pod
+func (c *Cluster) PodsMappedToNodeClaim(nodeClaimName string) []types.NamespacedName {
+	var podKeys []types.NamespacedName
+	// TODO: store reverse mapping for perf
+	c.podToNodeClaim.Range(func(k, v any) bool {
+		if v.(string) == nodeClaimName {
+			podKeys = append(podKeys, k.(types.NamespacedName))
+		}
+		return true
+	})
+	return podKeys
+}
+
+// PodSchedulingSuccessTimeRegistrationHealthyCheck returns when Karpenter first thought it could schedule a pod in its scheduling simulation.
+// This returns 0, false if the pod was never considered in scheduling as a pending pod.
+func (c *Cluster) PodSchedulingSuccessTimeRegistrationHealthyCheck(podKey types.NamespacedName) time.Time {
+	if val, found := c.podHealthyNodePoolScheduledTime.Load(podKey); found {
+		return val.(time.Time)
+	}
+	return time.Time{}
+}
+
 func (c *Cluster) DeletePod(podKey types.NamespacedName) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -416,6 +626,8 @@ func (c *Cluster) ClearPodSchedulingMappings(podKey types.NamespacedName) {
 	c.podAcks.Delete(podKey)
 	c.podsSchedulableTimes.Delete(podKey)
 	c.podsSchedulingAttempted.Delete(podKey)
+	c.podHealthyNodePoolScheduledTime.Delete(podKey)
+	c.podToNodeClaim.Delete(podKey)
 }
 
 // MarkUnconsolidated marks the cluster state as being unconsolidated.  This should be called in any situation where
@@ -449,22 +661,43 @@ func (c *Cluster) ConsolidationState() time.Time {
 	return c.MarkUnconsolidated()
 }
 
+func (c *Cluster) NodePoolResourcesFor(nodePoolName string) corev1.ResourceList {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return maps.Clone(c.nodePoolResources[nodePoolName])
+}
+
 // Reset the cluster state for unit testing
 func (c *Cluster) Reset() {
+	c.unsyncedTimeMu.Lock()
+	defer c.unsyncedTimeMu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.clusterState = time.Time{}
 	c.unsyncedStartTime = time.Time{}
+	c.lastUnsyncedLogTime = time.Time{}
 	c.hasSynced.Store(false)
 	c.nodes = map[string]*StateNode{}
 	c.nodeNameToProviderID = map[string]string{}
 	c.nodeClaimNameToProviderID = map[string]string{}
+	c.NodePoolState.Reset()
+	c.nodePoolResources = map[string]corev1.ResourceList{}
 	c.bindings = map[types.NamespacedName]string{}
 	c.antiAffinityPods = sync.Map{}
 	c.daemonSetPods = sync.Map{}
 	c.podAcks = sync.Map{}
 	c.podsSchedulingAttempted = sync.Map{}
 	c.podsSchedulableTimes = sync.Map{}
+	c.podToNodeClaim = sync.Map{}
+	c.bufferPodCounts = map[string]int{}
+}
+
+// sets the cluster to be synced or unsynced for unit testing
+func (c *Cluster) SetSynced(state bool) {
+	c.unsyncedTimeMu.Lock()
+	defer c.unsyncedTimeMu.Unlock()
+	c.hasSynced.Store(state)
 }
 
 func (c *Cluster) GetDaemonSetPod(daemonset *appsv1.DaemonSet) *corev1.Pod {
@@ -522,6 +755,8 @@ func (c *Cluster) newStateFromNodeClaim(nodeClaim *v1.NodeClaim, oldNode *StateN
 		volumeUsage:       oldNode.volumeUsage,
 		markedForDeletion: oldNode.markedForDeletion,
 		nominatedUntil:    oldNode.nominatedUntil,
+
+		repairPolicyMatches: oldNode.repairPolicyMatches,
 	}
 	// Cleanup the old nodeClaim with its old providerID if its providerID changes
 	// This can happen since nodes don't get created with providerIDs. Rather, CCM picks up the
@@ -529,6 +764,7 @@ func (c *Cluster) newStateFromNodeClaim(nodeClaim *v1.NodeClaim, oldNode *StateN
 	if id, ok := c.nodeClaimNameToProviderID[nodeClaim.Name]; ok && id != nodeClaim.Status.ProviderID {
 		c.cleanupNodeClaim(nodeClaim.Name)
 	}
+	c.updateNodePoolResources(oldNode, n)
 	c.triggerConsolidationOnChange(oldNode, n)
 	return n
 }
@@ -536,9 +772,12 @@ func (c *Cluster) newStateFromNodeClaim(nodeClaim *v1.NodeClaim, oldNode *StateN
 func (c *Cluster) cleanupNodeClaim(name string) {
 	if id := c.nodeClaimNameToProviderID[name]; id != "" {
 		if c.nodes[id].Node == nil {
+			c.updateNodePoolResources(c.nodes[id], nil)
 			delete(c.nodes, id)
 		} else {
+			oldNode := c.nodes[id].ShallowCopy()
 			c.nodes[id].NodeClaim = nil
+			c.updateNodePoolResources(oldNode, c.nodes[id])
 		}
 		c.MarkUnconsolidated()
 	}
@@ -546,6 +785,9 @@ func (c *Cluster) cleanupNodeClaim(name string) {
 	// yet. This ensures that if a nodeClaim is created and then deleted before it was able to launch that
 	// this is cleaned up.
 	delete(c.nodeClaimNameToProviderID, name)
+
+	// Delete the NodeClaim that is tracked in NodePoolState
+	c.NodePoolState.Cleanup(name)
 }
 
 func (c *Cluster) newStateFromNode(ctx context.Context, node *corev1.Node, oldNode *StateNode) (*StateNode, error) {
@@ -564,6 +806,7 @@ func (c *Cluster) newStateFromNode(ctx context.Context, node *corev1.Node, oldNo
 		markedForDeletion: oldNode.markedForDeletion,
 		nominatedUntil:    oldNode.nominatedUntil,
 	}
+	n.repairPolicyMatches = c.matchRepairPolicies(ctx, node, oldNode)
 	if err := multierr.Combine(
 		c.populateResourceRequests(ctx, n),
 		c.populateVolumeLimits(ctx, n),
@@ -576,6 +819,7 @@ func (c *Cluster) newStateFromNode(ctx context.Context, node *corev1.Node, oldNo
 	if id, ok := c.nodeNameToProviderID[node.Name]; ok && id != node.Spec.ProviderID {
 		c.cleanupNode(node.Name)
 	}
+	c.updateNodePoolResources(oldNode, n)
 	c.triggerConsolidationOnChange(oldNode, n)
 	return n, nil
 }
@@ -583,25 +827,104 @@ func (c *Cluster) newStateFromNode(ctx context.Context, node *corev1.Node, oldNo
 func (c *Cluster) cleanupNode(name string) {
 	if id := c.nodeNameToProviderID[name]; id != "" {
 		if c.nodes[id].NodeClaim == nil {
+			c.updateNodePoolResources(c.nodes[id], nil)
 			delete(c.nodes, id)
 		} else {
+			oldNode := c.nodes[id].ShallowCopy()
 			c.nodes[id].Node = nil
+			c.updateNodePoolResources(oldNode, c.nodes[id])
 		}
 		delete(c.nodeNameToProviderID, name)
 		c.MarkUnconsolidated()
 	}
 }
 
+// matchRepairPolicies matches the Node against the repair policies, reusing the old matches when the inputs to matching
+// are unchanged. It logs when the Node starts, changes, or stops matching, which records when and how repair will act.
+func (c *Cluster) matchRepairPolicies(ctx context.Context, node *corev1.Node, oldNode *StateNode) []health.RepairPolicyMatch {
+	if c.repairPolicyMatcher == nil {
+		return nil
+	}
+	if oldNode.Node != nil && health.MatchInputsEqual(oldNode.Node, node) {
+		return oldNode.repairPolicyMatches
+	}
+	matches := c.repairPolicyMatcher.Match(node)
+	// Guard on Enabled so a disabled V(1) logger doesn't pay for building the key/value pairs.
+	if logger := log.FromContext(ctx).V(1); logger.Enabled() {
+		logger = logger.WithValues("Node", klog.KObj(node))
+		for _, m := range matches {
+			logger.WithValues(m.LogValues()...).Info("matched repair policy")
+		}
+		if len(matches) == 0 && len(oldNode.repairPolicyMatches) > 0 {
+			logger.Info("no longer matches any repair policy")
+		}
+	}
+	return matches
+}
+
+// nolint:gocyclo
+func (c *Cluster) updateNodePoolResources(oldNode, newNode *StateNode) {
+	var oldNodePoolName, newNodePoolName string
+	var oldResources, newResources corev1.ResourceList
+	if oldNode != nil && (oldNode.Node != nil || oldNode.NodeClaim != nil) {
+		oldNodePoolName = oldNode.Labels()[v1.NodePoolLabelKey]
+		oldResources = lo.Ternary(oldNode.MarkedForDeletion(), corev1.ResourceList{}, oldNode.Capacity())
+	}
+	if newNode != nil && (newNode.Node != nil || newNode.NodeClaim != nil) {
+		newNodePoolName = newNode.Labels()[v1.NodePoolLabelKey]
+		newResources = lo.Ternary(newNode.MarkedForDeletion(), corev1.ResourceList{}, newNode.Capacity())
+	}
+	if len(oldResources) != 0 {
+		oldResources[resources.Node] = resource.MustParse("1")
+	}
+	if len(newResources) != 0 {
+		newResources[resources.Node] = resource.MustParse("1")
+	}
+	if _, ok := c.nodePoolResources[newNodePoolName]; !ok && newNodePoolName != "" {
+		c.nodePoolResources[newNodePoolName] = corev1.ResourceList{}
+	}
+	if oldNodePoolName != "" {
+		for resourceName, quantity := range oldResources {
+			current := c.nodePoolResources[oldNodePoolName][resourceName]
+			current.Sub(quantity)
+			c.nodePoolResources[oldNodePoolName][resourceName] = current
+		}
+	}
+	if newNodePoolName != "" {
+		for resourceName, quantity := range newResources {
+			current := c.nodePoolResources[newNodePoolName][resourceName]
+			current.Add(quantity)
+			c.nodePoolResources[newNodePoolName][resourceName] = current
+		}
+	}
+	// Garbage collect any NodePool keys that no longer have any resources assigned to them.
+	// We do this when there are no longer any NodeClaims that map to this NodePool
+	// so that we don't leak NodePool keys in our nodePoolResources map
+	for _, name := range []string{oldNodePoolName, newNodePoolName} {
+		allZero := true
+		for _, v := range c.nodePoolResources[name] {
+			if !v.IsZero() {
+				allZero = false
+				break
+			}
+		}
+		if allZero {
+			delete(c.nodePoolResources, name)
+		}
+	}
+}
+
 func (c *Cluster) populateVolumeLimits(ctx context.Context, n *StateNode) error {
 	var csiNode storagev1.CSINode
 	if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: n.Node.Name}, &csiNode); err != nil {
-		return client.IgnoreNotFound(fmt.Errorf("getting CSINode to determine volume limit for %s, %w", n.Node.Name, err))
+		return client.IgnoreNotFound(serrors.Wrap(fmt.Errorf("getting CSINode to determine volume limit, %w", err), "CSINode", klog.KRef("", n.Node.Name)))
 	}
 	for _, driver := range csiNode.Spec.Drivers {
-		if driver.Allocatable == nil {
+		if driver.Allocatable == nil || driver.Allocatable.Count == nil {
+			n.volumeUsage.AddUnbounded(driver.Name)
 			continue
 		}
-		n.volumeUsage.AddLimit(driver.Name, int(lo.FromPtr(driver.Allocatable.Count)))
+		n.volumeUsage.AddLimit(driver.Name, int(*driver.Allocatable.Count))
 	}
 	return nil
 }
@@ -710,4 +1033,9 @@ func (c *Cluster) triggerConsolidationOnChange(old, new *StateNode) {
 		c.MarkUnconsolidated()
 		return
 	}
+}
+
+// HasSynced returns whether the cluster state has been synchronized at least once.
+func (c *Cluster) HasSynced() bool {
+	return c.hasSynced.Load()
 }
