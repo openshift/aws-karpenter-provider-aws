@@ -8,6 +8,14 @@ description: >
 ---
 <!-- this document is generated from hack/docs/metrics_gen/main.go -->
 Karpenter makes several metrics available in Prometheus format to allow monitoring cluster provisioning status. These metrics are available by default at `karpenter.kube-system.svc.cluster.local:8080/metrics` configurable via the `METRICS_PORT` environment variable documented [here](../settings)
+### `karpenter_consolidation_score`
+Score of balanced consolidation moves. Labeled by decision, NodePool, and policy.
+- Stability Level: ALPHA
+
+### `karpenter_consolidation_moves_total`
+Number of balanced consolidation moves. Labeled by decision, NodePool, and policy.
+- Stability Level: ALPHA
+
 ### `karpenter_build_info`
 A metric with a constant '1' value labeled by version from which karpenter was built.
 - Stability Level: STABLE
@@ -23,7 +31,7 @@ Duration of NodeClaim termination in seconds.
 - Stability Level: BETA
 
 ### `karpenter_nodeclaims_terminated_total`
-Number of nodeclaims terminated in total by Karpenter. Labeled by the owning nodepool.
+Number of nodeclaims terminated in total by Karpenter. Labeled by the owning nodepool, capacity type, and zone.
 - Stability Level: STABLE
 
 ### `karpenter_nodeclaims_instance_termination_duration_seconds`
@@ -89,7 +97,7 @@ The time taken between a node's deletion request and the removal of its finalize
 - Stability Level: BETA
 
 ### `karpenter_nodes_terminated_total`
-Number of nodes terminated in total by Karpenter. Labeled by owning nodepool.
+Number of nodes terminated in total by Karpenter. Labeled by owning nodepool and zone.
 - Stability Level: STABLE
 
 ### `karpenter_nodes_system_overhead`
@@ -109,7 +117,7 @@ Node age in seconds
 - Stability Level: ALPHA
 
 ### `karpenter_nodes_created_total`
-Number of nodes created in total by Karpenter. Labeled by owning nodepool.
+Number of nodes created in total by Karpenter. Labeled by owning nodepool and zone.
 - Stability Level: STABLE
 
 ### `karpenter_nodes_allocatable`
@@ -302,6 +310,10 @@ Duration of scheduling simulations used for deprovisioning and provisioning in s
 The number of pods currently waiting to be scheduled.
 - Stability Level: BETA
 
+### `karpenter_scheduler_pending_pods_by_effective_zone_count`
+Pending pods dimensioned by effective zone constraint, or the intersection of pod-level zone signals, volume topology (PVC zones), and topology constraints. Values: specific zone name (e.g., 'us-west-2a'), 'flexible' (multiple zones), or 'none' (no valid intersection).
+- Stability Level: ALPHA
+
 ### `karpenter_scheduler_ignored_pods_count`
 Number of pods ignored during scheduling by Karpenter
 - Stability Level: ALPHA
@@ -343,7 +355,7 @@ Amount of time an interruption message is on the queue before it is processed by
 - Stability Level: STABLE
 
 ### `karpenter_interruption_instance_status_unhealthy_total`
-Count of unhealthy instance statuses detected from EC2 DescribeInstanceStatus. Broken down by status check category.
+Count of unique unhealthy instance statuses detected from EC2 DescribeInstanceStatus. Broken down by status check category.
 - Stability Level: STABLE
 
 ### `karpenter_interruption_deleted_messages_total`
@@ -388,6 +400,14 @@ Memory, in bytes, for a given instance type.
 VCPUs cores for a given instance type.
 - Stability Level: BETA
 
+### `karpenter_cloudprovider_instance_termination_failures_total`
+Number of instance termination (TerminateInstances) failures, dimensioned by availability zone and zone ID.
+- Stability Level: BETA
+
+### `karpenter_cloudprovider_instance_launch_failures_total`
+Number of instance launch (CreateFleet offering) failures, dimensioned by availability zone, zone ID, capacity type, and launch failure reason.
+- Stability Level: BETA
+
 ### `karpenter_cloudprovider_errors_total`
 Total number of errors returned from CloudProvider calls.
 - Stability Level: BETA
@@ -414,6 +434,10 @@ Total number of terminal reconciliation errors per controller
 
 ### `controller_runtime_reconcile_total`
 Total number of reconciliations per controller
+- Stability Level: STABLE
+
+### `controller_runtime_reconcile_timeouts_total`
+Total number of reconciliation timeouts per controller
 - Stability Level: STABLE
 
 ### `controller_runtime_reconcile_time_seconds`
