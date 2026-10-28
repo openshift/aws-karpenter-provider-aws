@@ -18,6 +18,7 @@ package scheduling
 
 import (
 	"fmt"
+	"iter"
 	"slices"
 	"sort"
 	"strings"
@@ -118,9 +119,15 @@ func HasPreferredNodeAffinity(p *corev1.Pod) bool {
 }
 
 func (r Requirements) NodeSelectorRequirements() []v1.NodeSelectorRequirementWithMinValues {
-	return lo.Map(lo.Values(r), func(req *Requirement, _ int) v1.NodeSelectorRequirementWithMinValues {
-		return req.NodeSelectorRequirement()
-	})
+	result := make([]v1.NodeSelectorRequirementWithMinValues, 0, len(r))
+	for _, req := range r {
+		if req.gte != nil && req.lte != nil {
+			result = append(result, req.BoundedNodeSelectorRequirements()...)
+		} else {
+			result = append(result, req.NodeSelectorRequirement())
+		}
+	}
+	return result
 }
 
 // Add requirements to provided requirements. Mutates existing requirements
@@ -172,7 +179,7 @@ func (r Requirements) IsCompatible(requirements Requirements, options ...option.
 }
 
 // Compatible ensures the provided requirements can loosely be met.
-func (r Requirements) Compatible(requirements Requirements, options ...option.Function[CompatibilityOptions]) (errs error) {
+func (r Requirements) Compatible(requirements Requirements, options ...option.Function[CompatibilityOptions]) error {
 	opts := option.Resolve(options...)
 
 	// Custom Labels must intersect, but if not defined are denied.
@@ -183,49 +190,11 @@ func (r Requirements) Compatible(requirements Requirements, options ...option.Fu
 		if operator := requirements.Get(key).Operator(); r.Has(key) || operator == corev1.NodeSelectorOpNotIn || operator == corev1.NodeSelectorOpDoesNotExist {
 			continue
 		}
-		errs = multierr.Append(errs, fmt.Errorf("label %q does not have known values%s", key, labelHint(r, key, opts.AllowUndefined)))
+		// break early so we only report the first error
+		return fmt.Errorf("label %q does not have known values%s", key, labelHint(r, key, opts.AllowUndefined))
 	}
 	// Well Known Labels must intersect, but if not defined, are allowed.
-	return multierr.Append(errs, r.Intersects(requirements))
-}
-
-// editDistance is an implementation of edit distance from Algorithms/DPV
-func editDistance(s, t string) int {
-	min := func(a, b, c int) int {
-		m := a
-		if b < m {
-			m = b
-		}
-		if c < m {
-			m = c
-		}
-		return m
-	}
-
-	m := len(s)
-	n := len(t)
-	if m == 0 {
-		return n
-	}
-	if n == 0 {
-		return m
-	}
-	prevRow := make([]int, n)
-	curRow := make([]int, n)
-	for j := 1; j < n; j++ {
-		prevRow[j] = j
-	}
-	for i := 1; i < m; i++ {
-		for j := 1; j < n; j++ {
-			diff := 0
-			if s[i] != t[j] {
-				diff = 1
-			}
-			curRow[j] = min(prevRow[j]+1, curRow[j-1]+1, prevRow[j-1]+diff)
-		}
-		prevRow, curRow = curRow, prevRow
-	}
-	return prevRow[n-1]
+	return r.Intersects(requirements)
 }
 
 func getSuffix(key string) string {
@@ -235,7 +204,7 @@ func getSuffix(key string) string {
 
 func labelHint(r Requirements, key string, allowedUndefined sets.Set[string]) string {
 	for wellKnown := range allowedUndefined {
-		if strings.Contains(wellKnown, key) || editDistance(key, wellKnown) < len(wellKnown)/5 {
+		if strings.Contains(wellKnown, key) {
 			return fmt.Sprintf(" (typo of %q?)", wellKnown)
 		}
 		if strings.HasSuffix(wellKnown, getSuffix(key)) {
@@ -243,7 +212,7 @@ func labelHint(r Requirements, key string, allowedUndefined sets.Set[string]) st
 		}
 	}
 	for existing := range r {
-		if strings.Contains(existing, key) || editDistance(key, existing) < len(existing)/5 {
+		if strings.Contains(existing, key) {
 			return fmt.Sprintf(" (typo of %q?)", existing)
 		}
 		if strings.HasSuffix(existing, getSuffix(key)) {
@@ -265,21 +234,22 @@ func (b badKeyError) Error() string {
 	return fmt.Sprintf("key %s, %s not in %s", b.key, b.incoming, b.existing)
 }
 
-// intersectKeys is much faster and allocates less han getting the two key sets separately and intersecting them
-func (r Requirements) intersectKeys(rhs Requirements) sets.Set[string] {
-	smallest := r
-	largest := rhs
-	if len(smallest) > len(largest) {
-		smallest, largest = largest, smallest
-	}
-	keys := sets.Set[string]{}
-
-	for key := range smallest {
-		if _, ok := largest[key]; ok {
-			keys.Insert(key)
+// intersectKeys iterates over the keys present in both requirements sets in O(len(smallest))
+func (r Requirements) intersectKeys(rhs Requirements) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		smallest := r
+		largest := rhs
+		if len(smallest) > len(largest) {
+			smallest, largest = largest, smallest
+		}
+		for key := range smallest {
+			if _, ok := largest[key]; ok {
+				if !yield(key) {
+					return
+				}
+			}
 		}
 	}
-	return keys
 }
 
 // Intersects returns errors if the requirements don't have overlapping values, undefined keys are allowed
@@ -305,21 +275,9 @@ func (r Requirements) Intersects(requirements Requirements) (errs error) {
 	return errs
 }
 
-func (r Requirements) Labels() map[string]string {
-	labels := map[string]string{}
-	for key, requirement := range r {
-		if !v1.IsRestrictedNodeLabel(key) {
-			if value := requirement.Any(); value != "" {
-				labels[key] = value
-			}
-		}
-	}
-	return labels
-}
-
 func (r Requirements) HasMinValues() bool {
 	for _, req := range r {
-		if req.MinValues != nil {
+		if req.MinValues() != nil {
 			return true
 		}
 	}
@@ -327,10 +285,17 @@ func (r Requirements) HasMinValues() bool {
 }
 
 func (r Requirements) String() string {
-	requirements := lo.Reject(r.Values(), func(requirement *Requirement, _ int) bool {
-		return v1.RestrictedLabels.Has(requirement.Key)
-	})
-	stringRequirements := lo.Map(requirements, func(requirement *Requirement, _ int) string { return requirement.String() })
-	slices.Sort(stringRequirements)
-	return strings.Join(stringRequirements, ", ")
+	result := make([]string, 0, len(r))
+
+	for _, requirement := range r {
+		// Skip restricted labels
+		if v1.RestrictedLabels.Has(requirement.Key) {
+			continue
+		}
+
+		result = append(result, requirement.String())
+	}
+
+	slices.Sort(result)
+	return strings.Join(result, ", ")
 }

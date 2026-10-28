@@ -4,14 +4,28 @@ package ssm
 
 import (
 	"context"
-	"fmt"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
-// Add a parameter to the system.
+// Create or update a parameter in Parameter Store.
+//
+// Parameter Store throughput defines the number of API transactions per second
+// (TPS) that Systems Manager can process. This applies to GetParameter ,
+// GetParameters , and PutParameter API calls for your Amazon Web Services account
+// and Amazon Web Services Region. By default, Parameter Store is configured with a
+// standard throughput quota suitable for low- to moderate-volume workloads.
+// Applications that retrieve configuration data infrequently or operate at smaller
+// scale can use this default setting without additional cost.
+//
+// For higher-volume workloads, you can enable higher throughput. This increases
+// the maximum number of supported transactions per second for your account and
+// Region. Increased throughput supports applications and workloads that need
+// concurrent access to multiple parameters. If you experience
+// ThrottlingException: Rate exceeded errors, enable higher throughput. For more
+// information, see [Changing Parameter Store throughput].
+//
+// [Changing Parameter Store throughput]: https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-store-throughput.html
 func (c *Client) PutParameter(ctx context.Context, params *PutParameterInput, optFns ...func(*Options)) (*PutParameterOutput, error) {
 	if params == nil {
 		params = &PutParameterInput{}
@@ -29,7 +43,7 @@ func (c *Client) PutParameter(ctx context.Context, params *PutParameterInput, op
 
 type PutParameterInput struct {
 
-	// The fully qualified name of the parameter that you want to add to the system.
+	// The fully qualified name of the parameter that you want to create or update.
 	//
 	// You can't enter the Amazon Resource Name (ARN) for a parameter, only the
 	// parameter name itself.
@@ -54,17 +68,24 @@ type PutParameterInput struct {
 	// In addition, the slash character ( / ) is used to delineate hierarchies in
 	//   parameter names. For example: /Dev/Production/East/Project-ABC/MyParameter
 	//
-	//   - A parameter name can't include spaces.
+	//   - Parameter names can't contain spaces. The service removes any spaces
+	//   specified for the beginning or end of a parameter name. If the specified name
+	//   for a parameter contains spaces between characters, the request fails with a
+	//   ValidationException error.
 	//
 	//   - Parameter hierarchies are limited to a maximum depth of fifteen levels.
 	//
 	// For additional information about valid values for parameter names, see [Creating Systems Manager parameters] in the
 	// Amazon Web Services Systems Manager User Guide.
 	//
-	// The maximum length constraint of 2048 characters listed below includes 1037
-	// characters reserved for internal use by Systems Manager. The maximum length for
-	// a parameter name that you create is 1011 characters. This includes the
-	// characters in the ARN that precede the name you specify, such as
+	// The reported maximum length of 2048 characters for a parameter name includes
+	// 1037 characters that are reserved for internal use by Systems Manager. The
+	// maximum length for a parameter name that you specify is 1011 characters.
+	//
+	// This count of 1011 characters includes the characters in the ARN that precede
+	// the name you specify. This ARN length will vary depending on your partition and
+	// Region. For example, the following 45 characters count toward the 1011 character
+	// maximum for a parameter created in the US East (Ohio) Region:
 	// arn:aws:ssm:us-east-2:111122223333:parameter/ .
 	//
 	// [Creating Systems Manager parameters]: https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-paramstore-su-create.html
@@ -130,7 +151,7 @@ type PutParameterInput struct {
 	// use the SecureString data type.
 	//
 	// If you don't specify a key ID, the system uses the default key associated with
-	// your Amazon Web Services account which is not as secure as using a custom key.
+	// your Amazon Web Services account, which is not as secure as using a custom key.
 	//
 	//   - To use a custom KMS key, choose the SecureString data type with the Key ID
 	//   parameter.
@@ -248,7 +269,7 @@ type PutParameterInput struct {
 	// [Managing parameter tiers]: https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-store-advanced-parameters.html
 	Tier types.ParameterTier
 
-	// The type of parameter that you want to add to the system.
+	// The type of parameter that you want to create.
 	//
 	// SecureString isn't currently supported for CloudFormation templates.
 	//
@@ -283,9 +304,6 @@ type PutParameterOutput struct {
 }
 
 func (c *Client) addOperationPutParameterMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
-		return err
-	}
 	err = stack.Serialize.Add(&awsAwsjson11_serializeOpPutParameter{}, middleware.After)
 	if err != nil {
 		return err
@@ -294,65 +312,20 @@ func (c *Client) addOperationPutParameterMiddlewares(stack *middleware.Stack, op
 	if err != nil {
 		return err
 	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "PutParameter"); err != nil {
-		return fmt.Errorf("add protocol finalizers: %v", err)
-	}
 
-	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
-		return err
-	}
-	if err = addSetLoggerMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addClientRequestID(stack); err != nil {
-		return err
-	}
-	if err = addComputeContentLength(stack); err != nil {
-		return err
-	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
+	if err = addRecordResponseTiming(stack, options); err != nil {
 		return err
 	}
-	if err = addRawResponseToMetadata(stack); err != nil {
-		return err
-	}
-	if err = addRecordResponseTiming(stack); err != nil {
-		return err
-	}
-	if err = addSpanRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addClientUserAgent(stack, options); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
-		return err
-	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpPutParameterValidationMiddleware(stack); err != nil {
-		return err
-	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opPutParameter(options.Region), middleware.Before); err != nil {
-		return err
-	}
-	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -367,25 +340,8 @@ func (c *Client) addOperationPutParameterMiddlewares(stack *middleware.Stack, op
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanInitializeEnd(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil
-}
-
-func newServiceMetadataMiddleware_opPutParameter(region string) *awsmiddleware.RegisterServiceMetadata {
-	return &awsmiddleware.RegisterServiceMetadata{
-		Region:        region,
-		ServiceID:     ServiceID,
-		OperationName: "PutParameter",
-	}
 }

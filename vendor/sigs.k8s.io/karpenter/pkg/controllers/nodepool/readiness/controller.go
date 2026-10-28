@@ -19,11 +19,10 @@ package readiness
 import (
 	"context"
 
-	"github.com/awslabs/operatorpkg/object"
 	"github.com/awslabs/operatorpkg/status"
-	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/utils/clock"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,6 +33,7 @@ import (
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/operator/injection"
+	utilscontroller "sigs.k8s.io/karpenter/pkg/utils/controller"
 	nodepoolutils "sigs.k8s.io/karpenter/pkg/utils/nodepool"
 )
 
@@ -41,37 +41,39 @@ import (
 type Controller struct {
 	kubeClient    client.Client
 	cloudProvider cloudprovider.CloudProvider
+	clock         clock.Clock
 }
 
 // NewController is a constructor
-func NewController(kubeClient client.Client, cloudProvider cloudprovider.CloudProvider) *Controller {
+func NewController(clk clock.Clock, kubeClient client.Client, cloudProvider cloudprovider.CloudProvider) *Controller {
 	return &Controller{
 		kubeClient:    kubeClient,
 		cloudProvider: cloudProvider,
+		clock:         clk,
 	}
 }
 
+func (c *Controller) Name() string {
+	return "nodepool.readiness"
+}
+
 func (c *Controller) Reconcile(ctx context.Context, nodePool *v1.NodePool) (reconcile.Result, error) {
-	ctx = injection.WithControllerName(ctx, "nodepool.readiness")
+	ctx = injection.WithControllerName(ctx, c.Name())
 	stored := nodePool.DeepCopy()
 
-	nodeClass, ok := lo.Find(c.cloudProvider.GetSupportedNodeClasses(), func(nc status.Object) bool {
-		return object.GVK(nc).GroupKind() == nodePool.Spec.Template.Spec.NodeClassRef.GroupKind()
-	})
-	if !ok {
-		// Ignore NodePools which aren't using a supported NodeClass.
-		return reconcile.Result{}, nil
-	}
-
-	err := c.kubeClient.Get(ctx, client.ObjectKey{Name: nodePool.Spec.Template.Spec.NodeClassRef.Name}, nodeClass)
+	nodeClass, err := nodepoolutils.GetNodeClass(ctx, c.kubeClient, nodePool, c.cloudProvider)
 	if client.IgnoreNotFound(err) != nil {
 		return reconcile.Result{}, err
 	}
+	// Ignore NodePools which aren't using a supported NodeClass
+	if nodeClass == nil {
+		return reconcile.Result{}, nil
+	}
 	switch {
 	case errors.IsNotFound(err):
-		nodePool.StatusConditions().SetFalse(v1.ConditionTypeNodeClassReady, "NodeClassNotFound", "NodeClass not found on cluster")
+		nodePool.StatusConditions(status.WithClock(c.clock)).SetFalse(v1.ConditionTypeNodeClassReady, "NodeClassNotFound", "NodeClass not found on cluster")
 	case !nodeClass.GetDeletionTimestamp().IsZero():
-		nodePool.StatusConditions().SetFalse(v1.ConditionTypeNodeClassReady, "NodeClassTerminating", "NodeClass is Terminating")
+		nodePool.StatusConditions(status.WithClock(c.clock)).SetFalse(v1.ConditionTypeNodeClassReady, "NodeClassTerminating", "NodeClass is Terminating")
 	default:
 		c.setReadyCondition(nodePool, nodeClass)
 	}
@@ -93,19 +95,19 @@ func (c *Controller) Reconcile(ctx context.Context, nodePool *v1.NodePool) (reco
 func (c *Controller) setReadyCondition(nodePool *v1.NodePool, nodeClass status.Object) {
 	ready := nodeClass.StatusConditions().Get(status.ConditionReady)
 	if ready.IsUnknown() {
-		nodePool.StatusConditions().SetFalse(v1.ConditionTypeNodeClassReady, "NodeClassReadinessUnknown", "Node Class Readiness Unknown")
+		nodePool.StatusConditions(status.WithClock(c.clock)).SetFalse(v1.ConditionTypeNodeClassReady, "NodeClassReadinessUnknown", "Node Class Readiness Unknown")
 	} else if ready.IsFalse() {
-		nodePool.StatusConditions().SetFalse(v1.ConditionTypeNodeClassReady, ready.Reason, ready.Message)
+		nodePool.StatusConditions(status.WithClock(c.clock)).SetFalse(v1.ConditionTypeNodeClassReady, ready.Reason, ready.Message)
 	} else {
-		nodePool.StatusConditions().SetTrue(v1.ConditionTypeNodeClassReady)
+		nodePool.StatusConditions(status.WithClock(c.clock)).SetTrue(v1.ConditionTypeNodeClassReady)
 	}
 }
 
-func (c *Controller) Register(_ context.Context, m manager.Manager) error {
+func (c *Controller) Register(ctx context.Context, m manager.Manager) error {
 	b := controllerruntime.NewControllerManagedBy(m).
-		Named("nodepool.readiness").
+		Named(c.Name()).
 		For(&v1.NodePool{}, builder.WithPredicates(nodepoolutils.IsManagedPredicateFuncs(c.cloudProvider))).
-		WithOptions(controller.Options{MaxConcurrentReconciles: 10})
+		WithOptions(controller.Options{MaxConcurrentReconciles: utilscontroller.LinearScaleReconciles(utilscontroller.CPUCount(ctx), 10, 1000)})
 	for _, nodeClass := range c.cloudProvider.GetSupportedNodeClasses() {
 		b.Watches(nodeClass, nodepoolutils.NodeClassEventHandler(c.kubeClient))
 	}

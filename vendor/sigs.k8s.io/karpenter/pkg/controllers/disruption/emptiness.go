@@ -18,55 +18,62 @@ package disruption
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"github.com/samber/lo"
+	"github.com/awslabs/operatorpkg/option"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	disruptionevents "sigs.k8s.io/karpenter/pkg/controllers/disruption/events"
-	"sigs.k8s.io/karpenter/pkg/controllers/provisioning/scheduling"
 )
 
 // Emptiness is a subreconciler that deletes empty candidates.
 type Emptiness struct {
 	consolidation
+	validator Validator
 }
 
-func NewEmptiness(c consolidation) *Emptiness {
-	return &Emptiness{
-		consolidation: c,
-	}
+func NewEmptiness(c consolidation, opts ...option.Function[MethodOptions]) *Emptiness {
+	o := option.Resolve(append([]option.Function[MethodOptions]{WithValidator(NewEmptinessValidator(c))}, opts...)...)
+	return &Emptiness{consolidation: c, validator: o.validator}
 }
 
 // ShouldDisrupt is a predicate used to filter candidates
 func (e *Emptiness) ShouldDisrupt(_ context.Context, c *Candidate) bool {
-	// If consolidation is disabled, don't do anything. This emptiness should run for both WhenEmpty and WhenEmptyOrUnderutilized
-	if c.nodePool.Spec.Disruption.ConsolidateAfter.Duration == nil {
-		e.recorder.Publish(disruptionevents.Unconsolidatable(c.Node, c.NodeClaim, fmt.Sprintf("NodePool %q has consolidation disabled", c.nodePool.Name))...)
+	if c.OwnedByStaticNodePool() {
 		return false
 	}
-	// return true if there are no pods and the nodeclaim is consolidatable
-	return len(c.reschedulablePods) == 0 && c.NodeClaim.StatusConditions().Get(v1.ConditionTypeConsolidatable).IsTrue()
+	// If consolidation is disabled, don't do anything. This emptiness should run for both WhenEmpty and WhenEmptyOrUnderutilized
+	if c.NodePool.Spec.Disruption.ConsolidateAfter.Duration == nil {
+		e.recorder.Publish(disruptionevents.Unconsolidatable(c.Node, c.NodeClaim, fmt.Sprintf("NodePool %q has consolidation disabled", c.NodePool.Name))...)
+		return false
+	}
+	// A node hosting virtual buffer pods is not empty — the provisioner placed
+	// buffer capacity here intentionally. Deleting it would trigger immediate
+	// re-provisioning (pointless churn).
+	if e.cluster.HasBufferPods(c.ProviderID()) {
+		e.recorder.Publish(disruptionevents.Unconsolidatable(c.Node, c.NodeClaim, fmt.Sprintf("Node %q has buffer pods", c.Node.Name))...)
+		return false
+	}
+	return c.IsEmpty() && c.NodeClaim.StatusConditions().Get(v1.ConditionTypeConsolidatable).IsTrue()
 }
 
 // ComputeCommand generates a disruption command given candidates
 //
 //nolint:gocyclo
-func (e *Emptiness) ComputeCommand(ctx context.Context, disruptionBudgetMapping map[string]int, candidates ...*Candidate) (Command, scheduling.Results, error) {
+func (e *Emptiness) ComputeCommands(ctx context.Context, disruptionBudgetMapping map[string]int, candidates ...*Candidate) ([]Command, error) {
 	if e.IsConsolidated() {
-		return Command{}, scheduling.Results{}, nil
+		return []Command{}, nil
 	}
-	candidates = e.sortCandidates(candidates)
+	candidates = e.sortCandidates(ctx, candidates)
 
 	empty := make([]*Candidate, 0, len(candidates))
 	constrainedByBudgets := false
 	for _, candidate := range candidates {
-		if len(candidate.reschedulablePods) > 0 {
+		if !candidate.IsEmpty() {
 			continue
 		}
-		if disruptionBudgetMapping[candidate.nodePool.Name] == 0 {
+		if disruptionBudgetMapping[candidate.NodePool.Name] == 0 {
 			// set constrainedByBudgets to true if any node was a candidate but was constrained by a budget
 			constrainedByBudgets = true
 			continue
@@ -74,7 +81,7 @@ func (e *Emptiness) ComputeCommand(ctx context.Context, disruptionBudgetMapping 
 		// If there's disruptions allowed for the candidate's nodepool,
 		// add it to the list of candidates, and decrement the budget.
 		empty = append(empty, candidate)
-		disruptionBudgetMapping[candidate.nodePool.Name]--
+		disruptionBudgetMapping[candidate.NodePool.Name]--
 	}
 	// none empty, so do nothing
 	if len(empty) == 0 {
@@ -84,41 +91,22 @@ func (e *Emptiness) ComputeCommand(ctx context.Context, disruptionBudgetMapping 
 		if !constrainedByBudgets {
 			e.markConsolidated()
 		}
-		return Command{}, scheduling.Results{}, nil
+		return []Command{}, nil
 	}
 
 	cmd := Command{
-		candidates: empty,
+		Candidates:          empty,
+		PoolDisruptionCosts: computePoolDisruptionCosts(empty),
 	}
-
-	// Empty Node Consolidation doesn't use Validation as we get to take advantage of cluster.IsNodeNominated.  This
-	// lets us avoid a scheduling simulation (which is performed periodically while pending pods exist and drives
-	// cluster.IsNodeNominated already).
-	select {
-	case <-ctx.Done():
-		return Command{}, scheduling.Results{}, errors.New("interrupted")
-	case <-e.clock.After(consolidationTTL):
-	}
-
-	v := NewValidation(e.clock, e.cluster, e.kubeClient, e.provisioner, e.cloudProvider, e.recorder, e.queue, e.Reason())
-	validatedCandidates, err := v.ValidateCandidates(ctx, cmd.candidates...)
+	validCmd, err := e.validator.Validate(ctx, cmd, commandValidationDelay)
 	if err != nil {
 		if IsValidationError(err) {
-			log.FromContext(ctx).V(1).Info(fmt.Sprintf("abandoning empty node consolidation attempt due to pod churn, command is no longer valid, %s", cmd))
-			return Command{}, scheduling.Results{}, nil
+			log.FromContext(ctx).V(1).WithValues(cmd.LogValues()...).Info("abandoning empty node consolidation attempt due to pod churn, command is no longer valid")
+			return []Command{}, nil
 		}
-		return Command{}, scheduling.Results{}, err
+		return []Command{}, err
 	}
-
-	// TODO (jmdeal@): better encapsulate within validation
-	if lo.ContainsBy(validatedCandidates, func(c *Candidate) bool {
-		return len(c.reschedulablePods) != 0
-	}) {
-		log.FromContext(ctx).V(1).Info(fmt.Sprintf("abandoning empty node consolidation attempt due to pod churn, command is no longer valid, %s", cmd))
-		return Command{}, scheduling.Results{}, nil
-	}
-
-	return cmd, scheduling.Results{}, nil
+	return []Command{validCmd}, nil
 }
 
 func (e *Emptiness) Reason() v1.DisruptionReason {
@@ -130,5 +118,5 @@ func (e *Emptiness) Class() string {
 }
 
 func (e *Emptiness) ConsolidationType() string {
-	return "empty"
+	return EmptyConsolidationType.Name
 }

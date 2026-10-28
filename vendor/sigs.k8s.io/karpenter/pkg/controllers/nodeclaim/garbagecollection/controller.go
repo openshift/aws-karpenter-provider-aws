@@ -20,6 +20,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/awslabs/operatorpkg/reconciler"
+
 	"github.com/awslabs/operatorpkg/singleton"
 	"github.com/samber/lo"
 	"go.uber.org/multierr"
@@ -32,7 +34,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
@@ -56,16 +57,20 @@ func NewController(c clock.Clock, kubeClient client.Client, cloudProvider cloudp
 	}
 }
 
-func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
-	ctx = injection.WithControllerName(ctx, "nodeclaim.garbagecollection")
+func (c *Controller) Name() string {
+	return "nodeclaim.garbagecollection"
+}
+
+func (c *Controller) Reconcile(ctx context.Context) (reconciler.Result, error) {
+	ctx = injection.WithControllerName(ctx, c.Name())
 
 	nodeClaims, err := nodeclaimutils.ListManaged(ctx, c.kubeClient, c.cloudProvider)
 	if err != nil {
-		return reconcile.Result{}, err
+		return reconciler.Result{}, err
 	}
 	cloudProviderNodeClaims, err := c.cloudProvider.List(ctx)
 	if err != nil {
-		return reconcile.Result{}, err
+		return reconciler.Result{}, err
 	}
 	cloudProviderNodeClaims = lo.Filter(cloudProviderNodeClaims, func(nc *v1.NodeClaim, _ int) bool {
 		return nc.DeletionTimestamp.IsZero()
@@ -100,25 +105,36 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 			return
 		}
 		log.FromContext(ctx).WithValues(
-			"NodeClaim", klog.KRef("", nodeClaims[i].Name),
+			"NodeClaim", klog.KObj(nodeClaims[i]),
+			"Node", klog.KRef("", nodeClaims[i].Status.NodeName),
 			"provider-id", nodeClaims[i].Status.ProviderID,
-			"nodepool", nodeClaims[i].Labels[v1.NodePoolLabelKey],
 		).V(1).Info("garbage collecting nodeclaim with no cloudprovider representation")
-		metrics.NodeClaimsDisruptedTotal.Inc(map[string]string{
-			metrics.ReasonLabel:       "garbage_collected",
-			metrics.NodePoolLabel:     nodeClaims[i].Labels[v1.NodePoolLabelKey],
-			metrics.CapacityTypeLabel: nodeClaims[i].Labels[v1.CapacityTypeLabelKey],
-		})
+		labels := map[string]string{
+			metrics.ReasonLabel:              metrics.GarbageCollectedReason,
+			metrics.NodePoolLabel:            nodeClaims[i].Labels[v1.NodePoolLabelKey],
+			metrics.CapacityTypeLabel:        nodeClaims[i].Labels[v1.CapacityTypeLabelKey],
+			metrics.ConsolidationPolicyLabel: "",
+			metrics.TerminationModeLabel:     nodeclaimutils.DisruptionTerminationMode(nodeClaims[i]),
+		}
+		metrics.NodeClaimsDisruptedTotal.Inc(labels)
+		// GC runs when the cloudprovider node is gone or NotReady; pod records may
+		// linger or already be cleaned up. GetPods (via ReschedulablePods) skips the
+		// empty-nodename case; any list error is logged and treated as zero pods.
+		reschedulablePods, podErr := nodeutils.ReschedulablePods(ctx, c.kubeClient, nodeClaims[i].Status.NodeName)
+		if podErr != nil {
+			log.FromContext(ctx).V(1).Info("listing reschedulable pods for disruption metric", "error", podErr.Error())
+		}
+		metrics.PodsDisruptionInitiatedTotal.Add(float64(len(reschedulablePods)), labels)
 	})
 	if err = multierr.Combine(errs...); err != nil {
-		return reconcile.Result{}, err
+		return reconciler.Result{}, err
 	}
-	return reconcile.Result{RequeueAfter: time.Minute * 2}, nil
+	return reconciler.Result{RequeueAfter: time.Minute * 2}, nil
 }
 
 func (c *Controller) Register(_ context.Context, m manager.Manager) error {
 	return controllerruntime.NewControllerManagedBy(m).
-		Named("nodeclaim.garbagecollection").
+		Named(c.Name()).
 		WatchesRawSource(singleton.Source()).
 		Complete(singleton.AsReconciler(c))
 }

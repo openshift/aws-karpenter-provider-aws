@@ -5,10 +5,10 @@ package eks
 import (
 	"context"
 	"fmt"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
+	"github.com/aws/aws-sdk-go-v2/service/eks/schemas"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
+	smithy "github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // Creates a managed node group for an Amazon EKS cluster.
@@ -16,8 +16,13 @@ import (
 // You can only create a node group for your cluster that is equal to the current
 // Kubernetes version for the cluster. All node groups are created with the latest
 // AMI release version for the respective minor Kubernetes version of the cluster,
-// unless you deploy a custom AMI using a launch template. For more information
-// about using launch templates, see [Customizing managed nodes with launch templates].
+// unless you deploy a custom AMI using a launch template.
+//
+// For later updates, you will only be able to update a node group using a launch
+// template only if it was originally deployed with a launch template.
+// Additionally, the launch template ID or name must match what was used when the
+// node group was created. You can update the launch template version with
+// necessary changes. For more information about using launch templates, see [Customizing managed nodes with launch templates].
 //
 // An Amazon EKS managed node group is an Amazon EC2 Auto Scaling group and
 // associated Amazon EC2 instances that are managed by Amazon Web Services for an
@@ -130,6 +135,9 @@ type CreateNodegroupInput struct {
 
 	// An object representing a node group's launch template specification. When using
 	// this object, don't directly specify instanceTypes , diskSize , or remoteAccess .
+	// You cannot later specify a different launch template ID or name than what was
+	// used to create the node group.
+	//
 	// Make sure that the launch template meets the requirements in
 	// launchTemplateSpecification . Also refer to [Customizing managed nodes with launch templates] in the Amazon EKS User Guide.
 	//
@@ -193,7 +201,83 @@ type CreateNodegroupInput struct {
 	// [Customizing managed nodes with launch templates]: https://docs.aws.amazon.com/eks/latest/userguide/launch-templates.html
 	Version *string
 
+	// The warm pool configuration for the node group. Warm pools maintain
+	// pre-initialized EC2 instances that can quickly join your cluster during
+	// scale-out events, improving application scaling performance and reducing costs.
+	WarmPoolConfig *types.WarmPoolConfig
+
 	noSmithyDocumentSerde
+}
+
+func (v *CreateNodegroupInput) Serialize(s smithy.ShapeSerializer) {
+	s.WriteStruct(schemas.CreateNodegroupRequest)
+	v.SerializeMembers(s)
+	s.CloseStruct()
+}
+
+func (v *CreateNodegroupInput) SerializeMembers(s smithy.ShapeSerializer) {
+	if v.AmiType != "" {
+		s.WriteString(schemas.CreateNodegroupRequest_amiType, string(v.AmiType))
+	}
+	if v.CapacityType != "" {
+		s.WriteString(schemas.CreateNodegroupRequest_capacityType, string(v.CapacityType))
+	}
+	if v.ClientRequestToken != nil {
+		s.WriteString(schemas.CreateNodegroupRequest_clientRequestToken, *v.ClientRequestToken)
+	}
+	if v.ClusterName != nil {
+		s.WriteString(schemas.CreateNodegroupRequest_clusterName, *v.ClusterName)
+	}
+	if v.DiskSize != nil {
+		s.WriteInt32(schemas.CreateNodegroupRequest_diskSize, *v.DiskSize)
+	}
+	serializeStringList(s, schemas.CreateNodegroupRequest_instanceTypes, v.InstanceTypes)
+	serializelabelsMap(s, schemas.CreateNodegroupRequest_labels, v.Labels)
+	if v.LaunchTemplate != nil {
+		s.WriteStruct(schemas.CreateNodegroupRequest_launchTemplate)
+		v.LaunchTemplate.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.NodeRepairConfig != nil {
+		s.WriteStruct(schemas.CreateNodegroupRequest_nodeRepairConfig)
+		v.NodeRepairConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.NodeRole != nil {
+		s.WriteString(schemas.CreateNodegroupRequest_nodeRole, *v.NodeRole)
+	}
+	if v.NodegroupName != nil {
+		s.WriteString(schemas.CreateNodegroupRequest_nodegroupName, *v.NodegroupName)
+	}
+	if v.ReleaseVersion != nil {
+		s.WriteString(schemas.CreateNodegroupRequest_releaseVersion, *v.ReleaseVersion)
+	}
+	if v.RemoteAccess != nil {
+		s.WriteStruct(schemas.CreateNodegroupRequest_remoteAccess)
+		v.RemoteAccess.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.ScalingConfig != nil {
+		s.WriteStruct(schemas.CreateNodegroupRequest_scalingConfig)
+		v.ScalingConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	serializeStringList(s, schemas.CreateNodegroupRequest_subnets, v.Subnets)
+	serializeTagMap(s, schemas.CreateNodegroupRequest_tags, v.Tags)
+	serializetaintsList(s, schemas.CreateNodegroupRequest_taints, v.Taints)
+	if v.UpdateConfig != nil {
+		s.WriteStruct(schemas.CreateNodegroupRequest_updateConfig)
+		v.UpdateConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.Version != nil {
+		s.WriteString(schemas.CreateNodegroupRequest_version, *v.Version)
+	}
+	if v.WarmPoolConfig != nil {
+		s.WriteStruct(schemas.CreateNodegroupRequest_warmPoolConfig)
+		v.WarmPoolConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
 }
 
 type CreateNodegroupOutput struct {
@@ -207,80 +291,53 @@ type CreateNodegroupOutput struct {
 	noSmithyDocumentSerde
 }
 
+func (v *CreateNodegroupOutput) Serialize(s smithy.ShapeSerializer) {
+	s.WriteStruct(schemas.CreateNodegroupResponse)
+	v.SerializeMembers(s)
+	s.CloseStruct()
+}
+
+func (v *CreateNodegroupOutput) SerializeMembers(s smithy.ShapeSerializer) {
+	if v.Nodegroup != nil {
+		s.WriteStruct(schemas.CreateNodegroupResponse_nodegroup)
+		v.Nodegroup.SerializeMembers(s)
+		s.CloseStruct()
+	}
+}
+func (v *CreateNodegroupOutput) Deserialize(d smithy.ShapeDeserializer) error {
+	return smithy.ReadStruct(d, schemas.CreateNodegroupResponse, func(s *smithy.Schema) error {
+		switch s {
+		case schemas.CreateNodegroupResponse_nodegroup:
+			v.Nodegroup = &types.Nodegroup{}
+			return v.Nodegroup.Deserialize(d)
+		}
+		return nil
+	})
+}
 func (c *Client) addOperationCreateNodegroupMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
+	if err := stack.Serialize.Add(&serializeRequestMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.CreateNodegroup, schemas.CreateNodegroupRequest, schemas.CreateNodegroupResponse)}, middleware.After); err != nil {
 		return err
 	}
-	err = stack.Serialize.Add(&awsRestjson1_serializeOpCreateNodegroup{}, middleware.After)
-	if err != nil {
+	if err := stack.Deserialize.Add(&deserializeResponseMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.CreateNodegroup, schemas.CreateNodegroupRequest, schemas.CreateNodegroupResponse), output: &CreateNodegroupOutput{}}, middleware.After); err != nil {
 		return err
-	}
-	err = stack.Deserialize.Add(&awsRestjson1_deserializeOpCreateNodegroup{}, middleware.After)
-	if err != nil {
-		return err
-	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "CreateNodegroup"); err != nil {
-		return fmt.Errorf("add protocol finalizers: %v", err)
 	}
 
-	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
-		return err
-	}
-	if err = addSetLoggerMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addClientRequestID(stack); err != nil {
-		return err
-	}
-	if err = addComputeContentLength(stack); err != nil {
-		return err
-	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
+	if err = addRecordResponseTiming(stack, options); err != nil {
 		return err
 	}
-	if err = addRawResponseToMetadata(stack); err != nil {
-		return err
-	}
-	if err = addRecordResponseTiming(stack); err != nil {
-		return err
-	}
-	if err = addSpanRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addClientUserAgent(stack, options); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
-		return err
-	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addIdempotencyToken_opCreateNodegroupMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addOpCreateNodegroupValidationMiddleware(stack); err != nil {
-		return err
-	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opCreateNodegroup(options.Region), middleware.Before); err != nil {
-		return err
-	}
-	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -295,16 +352,7 @@ func (c *Client) addOperationCreateNodegroupMiddlewares(stack *middleware.Stack,
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanInitializeEnd(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil
@@ -341,12 +389,4 @@ func (m *idempotencyToken_initializeOpCreateNodegroup) HandleInitialize(ctx cont
 }
 func addIdempotencyToken_opCreateNodegroupMiddleware(stack *middleware.Stack, cfg Options) error {
 	return stack.Initialize.Add(&idempotencyToken_initializeOpCreateNodegroup{tokenProvider: cfg.IdempotencyTokenProvider}, middleware.Before)
-}
-
-func newServiceMetadataMiddleware_opCreateNodegroup(region string) *awsmiddleware.RegisterServiceMetadata {
-	return &awsmiddleware.RegisterServiceMetadata{
-		Region:        region,
-		ServiceID:     ServiceID,
-		OperationName: "CreateNodegroup",
-	}
 }

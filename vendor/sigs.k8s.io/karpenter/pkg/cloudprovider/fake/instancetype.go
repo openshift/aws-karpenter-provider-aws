@@ -1,0 +1,445 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package fake
+
+import (
+	"fmt"
+	"strings"
+	"unique"
+
+	"github.com/awslabs/operatorpkg/option"
+	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
+	resourcev1 "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/sets"
+
+	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/cloudprovider"
+	"sigs.k8s.io/karpenter/pkg/scheduling"
+	"sigs.k8s.io/karpenter/pkg/test"
+)
+
+const (
+	LabelInstanceSize                           = "size"
+	ExoticInstanceLabelKey                      = "special"
+	IntegerInstanceLabelKey                     = "integer"
+	ResourceGPUVendorA      corev1.ResourceName = "fake.com/vendor-a"
+	ResourceGPUVendorB      corev1.ResourceName = "fake.com/vendor-b"
+)
+
+func init() {
+	v1.WellKnownLabels.Insert(
+		LabelInstanceSize,
+		ExoticInstanceLabelKey,
+		IntegerInstanceLabelKey,
+	)
+}
+
+type InstanceTypeOptions = option.Function[InstanceTypeConfig]
+
+type InstanceTypeConfig struct {
+	Resources              corev1.ResourceList
+	Offerings              cloudprovider.Offerings
+	Architecture           string
+	OperatingSystems       sets.Set[string]
+	ResourceSliceTemplates []*cloudprovider.ResourceSliceTemplate
+	AttributeBindings      []*cloudprovider.AttributeBinding
+	Requirements           []*scheduling.Requirement
+	VolumeAttachmentLimits map[string]int
+}
+
+func WithResources(resources corev1.ResourceList) InstanceTypeOptions {
+	return func(c *InstanceTypeConfig) { c.Resources = resources }
+}
+
+func WithOfferings(offerings ...cloudprovider.Offering) InstanceTypeOptions {
+	return func(c *InstanceTypeConfig) {
+		c.Offerings = lo.ToSlicePtr(offerings)
+	}
+}
+
+func WithArchitecture(arch string) InstanceTypeOptions {
+	return func(c *InstanceTypeConfig) { c.Architecture = arch }
+}
+
+func WithOperatingSystems(os ...string) InstanceTypeOptions {
+	return func(c *InstanceTypeConfig) { c.OperatingSystems = sets.New(os...) }
+}
+
+func WithResourceSliceTemplates(templates ...cloudprovider.ResourceSliceTemplate) InstanceTypeOptions {
+	return func(c *InstanceTypeConfig) {
+		c.ResourceSliceTemplates = lo.ToSlicePtr(templates)
+	}
+}
+
+func WithAttributeBindings(bindings ...cloudprovider.AttributeBinding) InstanceTypeOptions {
+	return func(c *InstanceTypeConfig) {
+		c.AttributeBindings = lo.ToSlicePtr(bindings)
+	}
+}
+
+func WithRequirements(reqs ...*scheduling.Requirement) InstanceTypeOptions {
+	return func(c *InstanceTypeConfig) { c.Requirements = reqs }
+}
+
+func WithVolumeAttachmentLimits(limits map[string]int) InstanceTypeOptions {
+	return func(c *InstanceTypeConfig) { c.VolumeAttachmentLimits = limits }
+}
+
+func NewInstanceType(name string, opts ...InstanceTypeOptions) *cloudprovider.InstanceType {
+	cfg := option.Resolve(opts...)
+	if cfg.Resources == nil {
+		cfg.Resources = corev1.ResourceList{}
+	}
+	if r := cfg.Resources[corev1.ResourceCPU]; r.IsZero() {
+		cfg.Resources[corev1.ResourceCPU] = resource.MustParse("4")
+	}
+	if r := cfg.Resources[corev1.ResourceMemory]; r.IsZero() {
+		cfg.Resources[corev1.ResourceMemory] = resource.MustParse("4Gi")
+	}
+	if r := cfg.Resources[corev1.ResourcePods]; r.IsZero() {
+		cfg.Resources[corev1.ResourcePods] = resource.MustParse("5")
+	}
+	if len(cfg.Offerings) == 0 {
+		cfg.Offerings = cloudprovider.Offerings{
+			{
+				Available: true,
+				Requirements: scheduling.NewLabelRequirements(map[string]string{
+					v1.CapacityTypeLabelKey:  "spot",
+					corev1.LabelTopologyZone: "test-zone-1",
+				}),
+				Price: PriceFromResources(cfg.Resources),
+			},
+			{
+				Available: true,
+				Requirements: scheduling.NewLabelRequirements(map[string]string{
+					v1.CapacityTypeLabelKey:  "spot",
+					corev1.LabelTopologyZone: "test-zone-2",
+				}),
+				Price: PriceFromResources(cfg.Resources),
+			},
+			{
+				Available: true,
+				Requirements: scheduling.NewLabelRequirements(map[string]string{
+					v1.CapacityTypeLabelKey:  "on-demand",
+					corev1.LabelTopologyZone: "test-zone-1",
+				}),
+				Price: PriceFromResources(cfg.Resources),
+			},
+			{
+				Available: true,
+				Requirements: scheduling.NewLabelRequirements(map[string]string{
+					v1.CapacityTypeLabelKey:  "on-demand",
+					corev1.LabelTopologyZone: "test-zone-2",
+				}),
+				Price: PriceFromResources(cfg.Resources),
+			},
+			{
+				Available: true,
+				Requirements: scheduling.NewLabelRequirements(map[string]string{
+					v1.CapacityTypeLabelKey:  "on-demand",
+					corev1.LabelTopologyZone: "test-zone-3",
+				}),
+				Price: PriceFromResources(cfg.Resources),
+			},
+		}
+	}
+	if len(cfg.Architecture) == 0 {
+		cfg.Architecture = "amd64"
+	}
+	if cfg.OperatingSystems.Len() == 0 {
+		cfg.OperatingSystems = sets.New(string(corev1.Linux), string(corev1.Windows), "darwin")
+	}
+	requirements := scheduling.NewRequirements(
+		scheduling.NewRequirement(corev1.LabelInstanceTypeStable, corev1.NodeSelectorOpIn, name),
+		scheduling.NewRequirement(corev1.LabelArchStable, corev1.NodeSelectorOpIn, cfg.Architecture),
+		scheduling.NewRequirement(corev1.LabelOSStable, corev1.NodeSelectorOpIn, sets.List(cfg.OperatingSystems)...),
+		scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, lo.Map(cfg.Offerings.Available(), func(o *cloudprovider.Offering, _ int) string {
+			return o.Requirements.Get(corev1.LabelTopologyZone).Any()
+		})...),
+		scheduling.NewRequirement(v1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, lo.Map(cfg.Offerings.Available(), func(o *cloudprovider.Offering, _ int) string {
+			return o.Requirements.Get(v1.CapacityTypeLabelKey).Any()
+		})...),
+		scheduling.NewRequirement(LabelInstanceSize, corev1.NodeSelectorOpDoesNotExist),
+		scheduling.NewRequirement(ExoticInstanceLabelKey, corev1.NodeSelectorOpDoesNotExist),
+		scheduling.NewRequirement(IntegerInstanceLabelKey, corev1.NodeSelectorOpIn, fmt.Sprint(cfg.Resources.Cpu().Value())),
+	)
+	for _, req := range cfg.Requirements {
+		requirements.Add(req)
+	}
+	if cfg.Resources.Cpu().Cmp(resource.MustParse("4")) > 0 &&
+		cfg.Resources.Memory().Cmp(resource.MustParse("8Gi")) > 0 {
+		requirements.Get(LabelInstanceSize).Insert("large")
+		requirements.Get(ExoticInstanceLabelKey).Insert("optional")
+	} else {
+		requirements.Get(LabelInstanceSize).Insert("small")
+	}
+
+	return &cloudprovider.InstanceType{
+		Name:                   name,
+		Requirements:           requirements,
+		Offerings:              cfg.Offerings,
+		Capacity:               cfg.Resources,
+		VolumeAttachmentLimits: cfg.VolumeAttachmentLimits,
+		DynamicResources: cloudprovider.DynamicResources{
+			ResourceSliceTemplates: cfg.ResourceSliceTemplates,
+			AttributeBindings:      cfg.AttributeBindings,
+		},
+		Overhead: &cloudprovider.InstanceTypeOverhead{
+			KubeReserved: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("10Mi"),
+			},
+		},
+	}
+}
+
+// ResourceSliceTemplate builds a cloud provider ResourceSliceTemplate with the given driver, pool, and devices.
+// It is a convenience for tests constructing instance types with DRA device shapes via WithResourceSliceTemplates.
+func ResourceSliceTemplate(driver, pool string, devices ...cloudprovider.Device) cloudprovider.ResourceSliceTemplate {
+	return cloudprovider.ResourceSliceTemplate{
+		Driver:  unique.Make(driver),
+		Pool:    cloudprovider.ResourcePool{Name: unique.Make(pool)},
+		Devices: devices,
+	}
+}
+
+// Device builds a cloud provider DRA device with the given name and optional attributes.
+func Device(name string, attributes map[resourcev1.QualifiedName]resourcev1.DeviceAttribute) cloudprovider.Device {
+	return cloudprovider.Device{
+		Name:       unique.Make(name),
+		Attributes: attributes,
+	}
+}
+
+// Devices builds a slice of attribute-less DRA devices from the given names.
+func Devices(names ...string) []cloudprovider.Device {
+	return lo.Map(names, func(name string, _ int) cloudprovider.Device {
+		return Device(name, nil)
+	})
+}
+
+// DeviceOption mutates a cloudprovider.Device, used by DeviceWith to compose capacity, multi-allocation,
+// and counter-consumption shapes onto a DRA template device.
+type DeviceOption = option.Function[cloudprovider.Device]
+
+// DeviceWith builds a cloud provider DRA device with the given name and applies the provided options. It is the
+// capacity/counter-aware analog of Device, used to construct consumable-capacity and partitionable template devices.
+func DeviceWith(name string, opts ...DeviceOption) cloudprovider.Device {
+	d := cloudprovider.Device{Name: unique.Make(name)}
+	for _, opt := range opts {
+		opt(&d)
+	}
+	return d
+}
+
+// WithDeviceAttributes sets the device's selector/constraint attributes.
+func WithDeviceAttributes(attributes map[resourcev1.QualifiedName]resourcev1.DeviceAttribute) DeviceOption {
+	return func(d *cloudprovider.Device) { d.Attributes = attributes }
+}
+
+// WithMultipleAllocations marks the device as multi-allocatable, allowing it to be allocated to multiple requests
+// (the precondition for consumable-capacity sharing).
+func WithMultipleAllocations() DeviceOption {
+	return func(d *cloudprovider.Device) { d.AllowMultipleAllocations = true }
+}
+
+// WithCapacity adds a capacity dimension to the device. The value is the device's fixed total for that dimension;
+// RequestPolicy (if any) is attached separately so callers can express unconstrained capacity simply.
+func WithCapacity(name resourcev1.QualifiedName, value resource.Quantity) DeviceOption {
+	return func(d *cloudprovider.Device) {
+		if d.Capacity == nil {
+			d.Capacity = map[resourcev1.QualifiedName]resourcev1.DeviceCapacity{}
+		}
+		cap := d.Capacity[name]
+		cap.Value = value
+		d.Capacity[name] = cap
+	}
+}
+
+// WithCapacityPolicy adds a capacity dimension with a RequestPolicy (Default / ValidValues / ValidRange) constraining
+// how much of the dimension a single request may consume. The device must be multi-allocatable for a policy to apply.
+func WithCapacityPolicy(name resourcev1.QualifiedName, value resource.Quantity, policy *resourcev1.CapacityRequestPolicy) DeviceOption {
+	return func(d *cloudprovider.Device) {
+		if d.Capacity == nil {
+			d.Capacity = map[resourcev1.QualifiedName]resourcev1.DeviceCapacity{}
+		}
+		d.Capacity[name] = resourcev1.DeviceCapacity{Value: value, RequestPolicy: policy}
+	}
+}
+
+// WithConsumesCounters declares the shared counters this device draws from on allocation (the partitionable-device
+// path). Each consumption references a counter set by name and the per-counter amounts it consumes.
+func WithConsumesCounters(consumes ...resourcev1.DeviceCounterConsumption) DeviceOption {
+	return func(d *cloudprovider.Device) { d.ConsumesCounters = consumes }
+}
+
+// ResourceSliceTemplateWithCounters builds a ResourceSliceTemplate that declares shared counter sets and no devices.
+// A ResourceSlice may carry either devices or shared counters, never both, so a partitionable pool pairs this
+// counter-set template with a separate device template (built via ResourceSliceTemplate) under the same pool.
+func ResourceSliceTemplateWithCounters(driver, pool string, counterSets ...resourcev1.CounterSet) cloudprovider.ResourceSliceTemplate {
+	return cloudprovider.ResourceSliceTemplate{
+		Driver:         unique.Make(driver),
+		Pool:           cloudprovider.ResourcePool{Name: unique.Make(pool)},
+		SharedCounters: counterSets,
+	}
+}
+
+// CounterSet builds a shared counter set with the given name and per-counter quantities. It is a convenience for
+// constructing the SharedCounters of a partitionable pool.
+func CounterSet(name string, counters map[string]resource.Quantity) resourcev1.CounterSet {
+	return resourcev1.CounterSet{
+		Name: name,
+		Counters: lo.MapValues(counters, func(q resource.Quantity, _ string) resourcev1.Counter {
+			return resourcev1.Counter{Value: q}
+		}),
+	}
+}
+
+// CounterConsumption builds a DeviceCounterConsumption referencing a counter set by name and the per-counter amounts
+// consumed from it, for use with WithConsumesCounters.
+func CounterConsumption(counterSet string, counters map[string]resource.Quantity) resourcev1.DeviceCounterConsumption {
+	return resourcev1.DeviceCounterConsumption{
+		CounterSet: counterSet,
+		Counters: lo.MapValues(counters, func(q resource.Quantity, _ string) resourcev1.Counter {
+			return resourcev1.Counter{Value: q}
+		}),
+	}
+}
+
+// GPUInstanceType builds a fake instance type publishing `count` GPU template devices under test.GPUDriver.
+func GPUInstanceType(name string, count int) *cloudprovider.InstanceType {
+	deviceNames := lo.Times(count, func(i int) string { return fmt.Sprintf("%s-gpu-%d", name, i) })
+	return NewInstanceType(name,
+		WithResourceSliceTemplates(ResourceSliceTemplate(test.GPUDriver, name+"-pool", Devices(deviceNames...)...)),
+	)
+}
+
+// GPUAndNICInstanceType builds a fake instance type publishing a GPU device under test.GPUDriver and a NIC device under
+// test.NICDriver, exercising multi-driver allocation on a single node.
+func GPUAndNICInstanceType(name string) *cloudprovider.InstanceType {
+	return NewInstanceType(name,
+		WithResourceSliceTemplates(
+			ResourceSliceTemplate(test.GPUDriver, name+"-gpu-pool", Devices(name+"-gpu-0")...),
+			ResourceSliceTemplate(test.NICDriver, name+"-nic-pool", Devices(name+"-nic-0")...),
+		),
+	)
+}
+
+// CapacityGPUInstanceType builds a fake instance type publishing one multi-allocatable GPU template device with the
+// given total memory capacity and an optional RequestPolicy (nil for unconstrained capacity consumption).
+func CapacityGPUInstanceType(name, totalMemory string, policy *resourcev1.CapacityRequestPolicy) *cloudprovider.InstanceType {
+	capacityOpt := WithCapacity(test.CapacityMemory, resource.MustParse(totalMemory))
+	if policy != nil {
+		capacityOpt = WithCapacityPolicy(test.CapacityMemory, resource.MustParse(totalMemory), policy)
+	}
+	return NewInstanceType(name, WithResourceSliceTemplates(
+		ResourceSliceTemplate(test.GPUDriver, name+"-pool",
+			DeviceWith(name+"-gpu-0", WithMultipleAllocations(), capacityOpt),
+		),
+	))
+}
+
+// PartitionableGPUInstanceType builds a fake instance type modeling a partitionable device: a pool with a shared
+// counter budget and `profiles` device profiles, each consuming `perProfile` counters from the budget on allocation.
+// The counter set and the devices live in separate templates under the same pool (a slice may carry either devices or
+// shared counters, never both).
+func PartitionableGPUInstanceType(name, counterSet string, budget map[string]resource.Quantity, profiles int, perProfile map[string]resource.Quantity) *cloudprovider.InstanceType {
+	deviceProfiles := lo.Times(profiles, func(i int) cloudprovider.Device {
+		return DeviceWith(fmt.Sprintf("%s-profile-%d", name, i),
+			WithConsumesCounters(CounterConsumption(counterSet, perProfile)),
+		)
+	})
+	return NewInstanceType(name, WithResourceSliceTemplates(
+		ResourceSliceTemplateWithCounters(test.GPUDriver, name+"-pool", CounterSet(counterSet, budget)),
+		ResourceSliceTemplate(test.GPUDriver, name+"-pool", deviceProfiles...),
+	))
+}
+
+// InstanceTypesAssorted create many unique instance types with varying CPU/memory/architecture/OS/zone/capacity type.
+func InstanceTypesAssorted() []*cloudprovider.InstanceType {
+	var instanceTypes []*cloudprovider.InstanceType
+	for _, cpu := range []int{1, 2, 4, 8, 16, 32, 64} {
+		for _, mem := range []int{1, 2, 4, 8, 16, 32, 64, 128} {
+			for _, zone := range []string{"test-zone-1", "test-zone-2", "test-zone-3"} {
+				for _, ct := range []string{v1.CapacityTypeSpot, v1.CapacityTypeOnDemand} {
+					for _, os := range []sets.Set[string]{sets.New(string(corev1.Linux)), sets.New(string(corev1.Windows))} {
+						for _, arch := range []string{v1.ArchitectureAmd64, v1.ArchitectureArm64} {
+							resources := corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", cpu)),
+								corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", mem)),
+							}
+							price := PriceFromResources(resources)
+							instanceTypes = append(instanceTypes, NewInstanceType(
+								fmt.Sprintf("%d-cpu-%d-mem-%s-%s-%s-%s", cpu, mem, arch, strings.Join(sets.List(os), ","), zone, ct),
+								WithArchitecture(arch),
+								WithOperatingSystems(sets.List(os)...),
+								WithResources(resources),
+								WithOfferings(cloudprovider.Offering{
+									Available: true,
+									Requirements: scheduling.NewLabelRequirements(map[string]string{
+										v1.CapacityTypeLabelKey:  ct,
+										corev1.LabelTopologyZone: zone,
+									}),
+									Price: price,
+								}),
+							))
+						}
+					}
+				}
+			}
+		}
+	}
+	return instanceTypes
+}
+
+// InstanceTypes creates instance types with incrementing resources
+// 2Gi of RAM and 10 pods for every 1vcpu
+// i.e. 1vcpu, 2Gi mem, 10 pods
+//
+//	2vcpu, 4Gi mem, 20 pods
+//	3vcpu, 6Gi mem, 30 pods
+func InstanceTypes(total int) []*cloudprovider.InstanceType {
+	instanceTypes := []*cloudprovider.InstanceType{}
+	for i := range total {
+		instanceTypes = append(instanceTypes, NewInstanceType(
+			fmt.Sprintf("fake-it-%d", i),
+			WithResources(corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", i+1)),
+				corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", (i+1)*2)),
+				corev1.ResourcePods:   resource.MustParse(fmt.Sprintf("%d", (i+1)*10)),
+			}),
+		))
+	}
+	return instanceTypes
+}
+
+func PriceFromResources(resources corev1.ResourceList) float64 {
+	price := 0.0
+	for k, v := range resources {
+		switch k {
+		case corev1.ResourceCPU:
+			price += 0.1 * v.AsApproximateFloat64()
+		case corev1.ResourceMemory:
+			price += 0.1 * v.AsApproximateFloat64() / (1e9)
+		case ResourceGPUVendorA, ResourceGPUVendorB:
+			price += 1.0
+		}
+	}
+	return price
+}

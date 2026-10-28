@@ -21,31 +21,48 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/awslabs/operatorpkg/status"
 	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
+	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/events"
 	"sigs.k8s.io/karpenter/pkg/metrics"
-	"sigs.k8s.io/karpenter/pkg/scheduling"
+	nodeclaimutils "sigs.k8s.io/karpenter/pkg/utils/nodeclaim"
+	podutils "sigs.k8s.io/karpenter/pkg/utils/pod"
+)
+
+const (
+	// maxEventMessageLength is the maximum length of an Event message. Kubernetes rejects Events whose message
+	// exceeds this limit at validation time, so the message has to be truncated before the Event is created.
+	// https://github.com/kubernetes/kubernetes/blob/564b0e55c7007745500d579356897848aaacb9dd/pkg/apis/core/validation/events.go#L38
+	maxEventMessageLength = 1024
 )
 
 type Launch struct {
 	kubeClient    client.Client
 	cloudProvider cloudprovider.CloudProvider
+	cluster       *state.Cluster
 	cache         *cache.Cache // exists due to eventual consistency on the cache
 	recorder      events.Recorder
+	clock         clock.Clock
 }
 
 func (l *Launch) Reconcile(ctx context.Context, nodeClaim *v1.NodeClaim) (reconcile.Result, error) {
 	if cond := nodeClaim.StatusConditions().Get(v1.ConditionTypeLaunched); !cond.IsUnknown() {
 		// Ensure that we always set the status condition to the latest generation
-		nodeClaim.StatusConditions().Set(*cond)
+		nodeClaim.StatusConditions(status.WithClock(l.clock)).Set(*cond)
+		if cond.IsTrue() {
+			// Once the NodeClaim has successfully marked as launched, we no longer need to store it
+			l.cache.Delete(string(nodeClaim.UID))
+		}
 		return reconcile.Result{}, nil
 	}
 
@@ -68,7 +85,7 @@ func (l *Launch) Reconcile(ctx context.Context, nodeClaim *v1.NodeClaim) (reconc
 	}
 	l.cache.SetDefault(string(nodeClaim.UID), created)
 	nodeClaim = PopulateNodeClaimDetails(nodeClaim, created)
-	nodeClaim.StatusConditions().SetTrue(v1.ConditionTypeLaunched)
+	nodeClaim.StatusConditions(status.WithClock(l.clock)).SetTrue(v1.ConditionTypeLaunched)
 	return reconcile.Result{}, nil
 }
 
@@ -78,15 +95,18 @@ func (l *Launch) launchNodeClaim(ctx context.Context, nodeClaim *v1.NodeClaim) (
 		switch {
 		case cloudprovider.IsInsufficientCapacityError(err):
 			l.recorder.Publish(InsufficientCapacityErrorEvent(nodeClaim, err))
+			l.publishPodInsufficientCapacityEvents(ctx, nodeClaim, err)
 			log.FromContext(ctx).Error(err, "failed launching nodeclaim")
 
 			if err = l.kubeClient.Delete(ctx, nodeClaim); err != nil {
 				return nil, client.IgnoreNotFound(err)
 			}
 			metrics.NodeClaimsDisruptedTotal.Inc(map[string]string{
-				metrics.ReasonLabel:       "insufficient_capacity",
-				metrics.NodePoolLabel:     nodeClaim.Labels[v1.NodePoolLabelKey],
-				metrics.CapacityTypeLabel: nodeClaim.Labels[v1.CapacityTypeLabelKey],
+				metrics.ReasonLabel:              metrics.InsufficientCapacityReason,
+				metrics.NodePoolLabel:            nodeClaim.Labels[v1.NodePoolLabelKey],
+				metrics.CapacityTypeLabel:        nodeClaim.Labels[v1.CapacityTypeLabelKey],
+				metrics.ConsolidationPolicyLabel: "",
+				metrics.TerminationModeLabel:     nodeclaimutils.DisruptionTerminationMode(nodeClaim),
 			})
 			return nil, nil
 		case cloudprovider.IsNodeClassNotReadyError(err):
@@ -95,17 +115,19 @@ func (l *Launch) launchNodeClaim(ctx context.Context, nodeClaim *v1.NodeClaim) (
 				return nil, client.IgnoreNotFound(err)
 			}
 			metrics.NodeClaimsDisruptedTotal.Inc(map[string]string{
-				metrics.ReasonLabel:       "nodeclass_not_ready",
-				metrics.NodePoolLabel:     nodeClaim.Labels[v1.NodePoolLabelKey],
-				metrics.CapacityTypeLabel: nodeClaim.Labels[v1.CapacityTypeLabelKey],
+				metrics.ReasonLabel:              metrics.NodeClassNotReadyReason,
+				metrics.NodePoolLabel:            nodeClaim.Labels[v1.NodePoolLabelKey],
+				metrics.CapacityTypeLabel:        nodeClaim.Labels[v1.CapacityTypeLabelKey],
+				metrics.ConsolidationPolicyLabel: "",
+				metrics.TerminationModeLabel:     nodeclaimutils.DisruptionTerminationMode(nodeClaim),
 			})
 			return nil, nil
 		default:
 			var createError *cloudprovider.CreateError
 			if errors.As(err, &createError) {
-				nodeClaim.StatusConditions().SetUnknownWithReason(v1.ConditionTypeLaunched, createError.ConditionReason, createError.ConditionMessage)
+				nodeClaim.StatusConditions(status.WithClock(l.clock)).SetUnknownWithReason(v1.ConditionTypeLaunched, createError.ConditionReason, createError.ConditionMessage)
 			} else {
-				nodeClaim.StatusConditions().SetUnknownWithReason(v1.ConditionTypeLaunched, "LaunchFailed", truncateMessage(err.Error()))
+				nodeClaim.StatusConditions(status.WithClock(l.clock)).SetUnknownWithReason(v1.ConditionTypeLaunched, "LaunchFailed", truncateMessage(err.Error()))
 			}
 			return nil, fmt.Errorf("launching nodeclaim, %w", err)
 		}
@@ -119,12 +141,31 @@ func (l *Launch) launchNodeClaim(ctx context.Context, nodeClaim *v1.NodeClaim) (
 	return created, nil
 }
 
+// publishPodInsufficientCapacityEvents emits an InsufficientCapacityError event for each pod that was simulated to schedule
+// against the NodeClaim, so that users can discover that insufficient capacity is preventing their pods from
+// scheduling without requiring access to the Karpenter logs.
+func (l *Launch) publishPodInsufficientCapacityEvents(ctx context.Context, nodeClaim *v1.NodeClaim, launchErr error) {
+	for _, podKey := range l.cluster.PodsMappedToNodeClaim(nodeClaim.Name) {
+		pod := &corev1.Pod{}
+		// This also skips CapacityBuffer virtual pods since they never exist in the API server
+		if err := l.kubeClient.Get(ctx, podKey, pod); err != nil {
+			continue
+		}
+		// Only emit events for pods that are still unscheduled and alive. Between the scheduling simulation and this
+		// launch failure, the pod may have been bound to a node (still in Pending phase while its containers
+		// start), reached a terminal phase, or been deleted. In any of those cases, the event would be misleading.
+		if podutils.IsScheduled(pod) || podutils.IsTerminal(pod) || podutils.IsTerminating(pod) {
+			continue
+		}
+		l.recorder.Publish(InsufficientCapacityErrorPodEvent(pod, nodeClaim, launchErr))
+	}
+}
+
 func PopulateNodeClaimDetails(nodeClaim, retrieved *v1.NodeClaim) *v1.NodeClaim {
 	// These are ordered in priority order so that user-defined nodeClaim labels and requirements trump retrieved labels
 	// or the static nodeClaim labels
 	nodeClaim.Labels = lo.Assign(
 		retrieved.Labels, // CloudProvider-resolved labels
-		scheduling.NewNodeSelectorRequirementsWithMinValues(nodeClaim.Spec.Requirements...).Labels(), // Single-value requirement resolved labels
 		nodeClaim.Labels, // User-defined labels
 	)
 	nodeClaim.Annotations = lo.Assign(nodeClaim.Annotations, retrieved.Annotations)
@@ -135,9 +176,11 @@ func PopulateNodeClaimDetails(nodeClaim, retrieved *v1.NodeClaim) *v1.NodeClaim 
 	return nodeClaim
 }
 
+// truncateMessage truncates the message so that it fits within the Event message length limit.
 func truncateMessage(msg string) string {
-	if len(msg) < 300 {
+	if len(msg) <= maxEventMessageLength {
 		return msg
 	}
-	return msg[:300] + "..."
+	const suffix = "..."
+	return msg[:maxEventMessageLength-len(suffix)] + suffix
 }

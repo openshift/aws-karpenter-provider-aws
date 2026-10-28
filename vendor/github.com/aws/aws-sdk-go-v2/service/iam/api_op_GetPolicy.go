@@ -6,12 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	smithy "github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
 	smithytime "github.com/aws/smithy-go/time"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	smithywaiter "github.com/aws/smithy-go/waiter"
 	"time"
 )
@@ -19,16 +17,21 @@ import (
 // Retrieves information about the specified managed policy, including the
 // policy's default version and the total number of IAM users, groups, and roles to
 // which the policy is attached. To retrieve the list of the specific users,
-// groups, and roles that the policy is attached to, use ListEntitiesForPolicy. This operation returns
+// groups, and roles that the policy is attached to, use [ListEntitiesForPolicy]. This operation returns
 // metadata about the policy. To retrieve the actual policy document for a specific
-// version of the policy, use GetPolicyVersion.
+// version of the policy, use [GetPolicyVersion].
 //
 // This operation retrieves information about managed policies. To retrieve
 // information about an inline policy that is embedded with an IAM user, group, or
-// role, use GetUserPolicy, GetGroupPolicy, or GetRolePolicy.
+// role, use [GetUserPolicy], [GetGroupPolicy], or [GetRolePolicy].
 //
 // For more information about policies, see [Managed policies and inline policies] in the IAM User Guide.
 //
+// [ListEntitiesForPolicy]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListEntitiesForPolicy.html
+// [GetRolePolicy]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetRolePolicy.html
+// [GetPolicyVersion]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetPolicyVersion.html
+// [GetGroupPolicy]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetGroupPolicy.html
+// [GetUserPolicy]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetUserPolicy.html
 // [Managed policies and inline policies]: https://docs.aws.amazon.com/IAM/latest/UserGuide/policies-managed-vs-inline.html
 func (c *Client) GetPolicy(ctx context.Context, params *GetPolicyInput, optFns ...func(*Options)) (*GetPolicyOutput, error) {
 	if params == nil {
@@ -61,7 +64,9 @@ type GetPolicyInput struct {
 	noSmithyDocumentSerde
 }
 
-// Contains the response to a successful GetPolicy request.
+// Contains the response to a successful [GetPolicy] request.
+//
+// [GetPolicy]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetPolicy.html
 type GetPolicyOutput struct {
 
 	// A structure containing details about the policy.
@@ -74,9 +79,6 @@ type GetPolicyOutput struct {
 }
 
 func (c *Client) addOperationGetPolicyMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
-		return err
-	}
 	err = stack.Serialize.Add(&awsAwsquery_serializeOpGetPolicy{}, middleware.After)
 	if err != nil {
 		return err
@@ -85,65 +87,20 @@ func (c *Client) addOperationGetPolicyMiddlewares(stack *middleware.Stack, optio
 	if err != nil {
 		return err
 	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "GetPolicy"); err != nil {
-		return fmt.Errorf("add protocol finalizers: %v", err)
-	}
 
-	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
-		return err
-	}
-	if err = addSetLoggerMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addClientRequestID(stack); err != nil {
-		return err
-	}
-	if err = addComputeContentLength(stack); err != nil {
-		return err
-	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
+	if err = addRecordResponseTiming(stack, options); err != nil {
 		return err
 	}
-	if err = addRawResponseToMetadata(stack); err != nil {
-		return err
-	}
-	if err = addRecordResponseTiming(stack); err != nil {
-		return err
-	}
-	if err = addSpanRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addClientUserAgent(stack, options); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
-		return err
-	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpGetPolicyValidationMiddleware(stack); err != nil {
-		return err
-	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opGetPolicy(options.Region), middleware.Before); err != nil {
-		return err
-	}
-	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -158,16 +115,7 @@ func (c *Client) addOperationGetPolicyMiddlewares(stack *middleware.Stack, optio
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanInitializeEnd(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil
@@ -359,11 +307,3 @@ type GetPolicyAPIClient interface {
 }
 
 var _ GetPolicyAPIClient = (*Client)(nil)
-
-func newServiceMetadataMiddleware_opGetPolicy(region string) *awsmiddleware.RegisterServiceMetadata {
-	return &awsmiddleware.RegisterServiceMetadata{
-		Region:        region,
-		ServiceID:     ServiceID,
-		OperationName: "GetPolicy",
-	}
-}

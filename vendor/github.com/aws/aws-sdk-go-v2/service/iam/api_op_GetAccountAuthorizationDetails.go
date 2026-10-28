@@ -5,10 +5,8 @@ package iam
 import (
 	"context"
 	"fmt"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // Retrieves information about all IAM users, groups, roles, and policies in your
@@ -20,7 +18,7 @@ import (
 // use a URL decoding method to convert the policy back to plain JSON text. For
 // example, if you use Java, you can use the decode method of the
 // java.net.URLDecoder utility class in the Java SDK. Other languages and SDKs
-// provide similar functionality.
+// provide similar functionality, and some SDKs do this decoding automatically.
 //
 // You can optionally filter the results using the Filter parameter. You can
 // paginate the results using the MaxItems and Marker parameters.
@@ -72,7 +70,9 @@ type GetAccountAuthorizationDetailsInput struct {
 	noSmithyDocumentSerde
 }
 
-// Contains the response to a successful GetAccountAuthorizationDetails request.
+// Contains the response to a successful [GetAccountAuthorizationDetails] request.
+//
+// [GetAccountAuthorizationDetails]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetAccountAuthorizationDetails.html
 type GetAccountAuthorizationDetailsOutput struct {
 
 	// A list containing information about IAM groups.
@@ -106,9 +106,6 @@ type GetAccountAuthorizationDetailsOutput struct {
 }
 
 func (c *Client) addOperationGetAccountAuthorizationDetailsMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
-		return err
-	}
 	err = stack.Serialize.Add(&awsAwsquery_serializeOpGetAccountAuthorizationDetails{}, middleware.After)
 	if err != nil {
 		return err
@@ -117,62 +114,17 @@ func (c *Client) addOperationGetAccountAuthorizationDetailsMiddlewares(stack *mi
 	if err != nil {
 		return err
 	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "GetAccountAuthorizationDetails"); err != nil {
-		return fmt.Errorf("add protocol finalizers: %v", err)
-	}
 
-	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
-		return err
-	}
-	if err = addSetLoggerMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addClientRequestID(stack); err != nil {
-		return err
-	}
-	if err = addComputeContentLength(stack); err != nil {
-		return err
-	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
+	if err = addRecordResponseTiming(stack, options); err != nil {
 		return err
 	}
-	if err = addRawResponseToMetadata(stack); err != nil {
-		return err
-	}
-	if err = addRecordResponseTiming(stack); err != nil {
-		return err
-	}
-	if err = addSpanRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addClientUserAgent(stack, options); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
-		return err
-	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
-		return err
-	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opGetAccountAuthorizationDetails(options.Region), middleware.Before); err != nil {
-		return err
-	}
-	if err = addRecursionDetection(stack); err != nil {
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -187,16 +139,7 @@ func (c *Client) addOperationGetAccountAuthorizationDetailsMiddlewares(stack *mi
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanInitializeEnd(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil
@@ -305,11 +248,3 @@ type GetAccountAuthorizationDetailsAPIClient interface {
 }
 
 var _ GetAccountAuthorizationDetailsAPIClient = (*Client)(nil)
-
-func newServiceMetadataMiddleware_opGetAccountAuthorizationDetails(region string) *awsmiddleware.RegisterServiceMetadata {
-	return &awsmiddleware.RegisterServiceMetadata{
-		Region:        region,
-		ServiceID:     ServiceID,
-		OperationName: "GetAccountAuthorizationDetails",
-	}
-}

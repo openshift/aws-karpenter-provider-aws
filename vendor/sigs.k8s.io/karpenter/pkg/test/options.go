@@ -28,27 +28,42 @@ import (
 
 type OptionsFields struct {
 	// Vendor Neutral
-	ServiceName             *string
-	MetricsPort             *int
-	HealthProbePort         *int
-	KubeClientQPS           *int
-	KubeClientBurst         *int
-	EnableProfiling         *bool
-	DisableLeaderElection   *bool
-	LeaderElectionName      *string
-	LeaderElectionNamespace *string
-	MemoryLimit             *int64
-	LogLevel                *string
-	LogOutputPaths          *string
-	LogErrorOutputPaths     *string
-	BatchMaxDuration        *time.Duration
-	BatchIdleDuration       *time.Duration
-	FeatureGates            FeatureGates
+	ServiceName                      *string
+	MetricsPort                      *int
+	HealthProbePort                  *int
+	KubeClientQPS                    *int
+	KubeClientBurst                  *int
+	EnableProfiling                  *bool
+	DisableControllerWarmup          *bool
+	DisableLeaderElection            *bool
+	DisableClusterStateObservability *bool
+	LeaderElectionName               *string
+	LeaderElectionNamespace          *string
+	MemoryLimit                      *int64
+	CPURequests                      *int64
+	LogLevel                         *string
+	LogOutputPaths                   *string
+	LogErrorOutputPaths              *string
+	PreferencePolicy                 *options.PreferencePolicy
+	MinValuesPolicy                  *options.MinValuesPolicy
+	BatchMaxDuration                 *time.Duration
+	BatchIdleDuration                *time.Duration
+	IgnoreDRARequests                *bool
+	LegacyNodeRepair                 *bool
+	FeatureGates                     FeatureGates
+	SchedulerConfig                  *options.SchedulerConfiguration
 }
 
 type FeatureGates struct {
-	NodeRepair              *bool
-	SpotToSpotConsolidation *bool
+	NodeRepair                *bool
+	ReservedCapacity          *bool
+	SpotToSpotConsolidation   *bool
+	NodeOverlay               *bool
+	StaticCapacity            *bool
+	CapacityBuffer            *bool
+	TerminateFirstDrift       *bool
+	TerminateFirstRepair      *bool
+	PodDeletionCostManagement *bool
 }
 
 func Options(overrides ...OptionsFields) *options.Options {
@@ -60,22 +75,37 @@ func Options(overrides ...OptionsFields) *options.Options {
 	}
 
 	return &options.Options{
-		ServiceName:           lo.FromPtrOr(opts.ServiceName, ""),
-		MetricsPort:           lo.FromPtrOr(opts.MetricsPort, 8080),
-		HealthProbePort:       lo.FromPtrOr(opts.HealthProbePort, 8081),
-		KubeClientQPS:         lo.FromPtrOr(opts.KubeClientQPS, 200),
-		KubeClientBurst:       lo.FromPtrOr(opts.KubeClientBurst, 300),
-		EnableProfiling:       lo.FromPtrOr(opts.EnableProfiling, false),
-		DisableLeaderElection: lo.FromPtrOr(opts.DisableLeaderElection, false),
-		MemoryLimit:           lo.FromPtrOr(opts.MemoryLimit, -1),
-		LogLevel:              lo.FromPtrOr(opts.LogLevel, ""),
-		LogOutputPaths:        lo.FromPtrOr(opts.LogOutputPaths, "stdout"),
-		LogErrorOutputPaths:   lo.FromPtrOr(opts.LogErrorOutputPaths, "stderr"),
-		BatchMaxDuration:      lo.FromPtrOr(opts.BatchMaxDuration, 10*time.Second),
-		BatchIdleDuration:     lo.FromPtrOr(opts.BatchIdleDuration, time.Second),
+		ServiceName:                      lo.FromPtrOr(opts.ServiceName, ""),
+		MetricsPort:                      lo.FromPtrOr(opts.MetricsPort, 8080),
+		HealthProbePort:                  lo.FromPtrOr(opts.HealthProbePort, 8081),
+		KubeClientQPS:                    lo.FromPtrOr(opts.KubeClientQPS, 200),
+		KubeClientBurst:                  lo.FromPtrOr(opts.KubeClientBurst, 300),
+		EnableProfiling:                  lo.FromPtrOr(opts.EnableProfiling, false),
+		DisableControllerWarmup:          lo.FromPtrOr(opts.DisableControllerWarmup, true),
+		DisableLeaderElection:            lo.FromPtrOr(opts.DisableLeaderElection, false),
+		DisableClusterStateObservability: lo.FromPtrOr(opts.DisableClusterStateObservability, false),
+		MemoryLimit:                      lo.FromPtrOr(opts.MemoryLimit, -1),
+		CPURequests:                      lo.FromPtrOr(opts.CPURequests, 5000), // use 5 threads to enforce parallelism
+		LogLevel:                         lo.FromPtrOr(opts.LogLevel, ""),
+		LogOutputPaths:                   lo.FromPtrOr(opts.LogOutputPaths, "stdout"),
+		LogErrorOutputPaths:              lo.FromPtrOr(opts.LogErrorOutputPaths, "stderr"),
+		BatchMaxDuration:                 lo.FromPtrOr(opts.BatchMaxDuration, 10*time.Second),
+		BatchIdleDuration:                lo.FromPtrOr(opts.BatchIdleDuration, time.Second),
+		PreferencePolicy:                 lo.FromPtrOr(opts.PreferencePolicy, options.PreferencePolicyRespect),
+		MinValuesPolicy:                  lo.FromPtrOr(opts.MinValuesPolicy, options.MinValuesPolicyStrict),
+		IgnoreDRARequests:                lo.FromPtrOr(opts.IgnoreDRARequests, true),
+		LegacyNodeRepair:                 lo.FromPtrOr(opts.LegacyNodeRepair, false),
+		SchedulerConfig:                  opts.SchedulerConfig,
 		FeatureGates: options.FeatureGates{
-			NodeRepair:              lo.FromPtrOr(opts.FeatureGates.NodeRepair, false),
-			SpotToSpotConsolidation: lo.FromPtrOr(opts.FeatureGates.SpotToSpotConsolidation, false),
+			NodeRepair:                lo.FromPtrOr(opts.FeatureGates.NodeRepair, options.NodeRepairFeatureGate.Default),
+			ReservedCapacity:          lo.FromPtrOr(opts.FeatureGates.ReservedCapacity, options.ReservedCapacityFeatureGate.Default),
+			SpotToSpotConsolidation:   lo.FromPtrOr(opts.FeatureGates.SpotToSpotConsolidation, options.SpotToSpotConsolidationFeatureGate.Default),
+			NodeOverlay:               lo.FromPtrOr(opts.FeatureGates.NodeOverlay, options.NodeOverlayFeatureGate.Default),
+			StaticCapacity:            lo.FromPtrOr(opts.FeatureGates.StaticCapacity, options.StaticCapacityFeatureGate.Default),
+			CapacityBuffer:            lo.FromPtrOr(opts.FeatureGates.CapacityBuffer, options.CapacityBufferFeatureGate.Default),
+			TerminateFirstDrift:       lo.FromPtrOr(opts.FeatureGates.TerminateFirstDrift, options.TerminateFirstDriftFeatureGate.Default),
+			TerminateFirstRepair:      lo.FromPtrOr(opts.FeatureGates.TerminateFirstRepair, options.TerminateFirstRepairFeatureGate.Default),
+			PodDeletionCostManagement: lo.FromPtrOr(opts.FeatureGates.PodDeletionCostManagement, options.PodDeletionCostManagementFeatureGate.Default),
 		},
 	}
 }

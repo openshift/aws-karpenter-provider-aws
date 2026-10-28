@@ -4,10 +4,7 @@ package iam
 
 import (
 	"context"
-	"fmt"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // Gets a list of all of the context keys referenced in all the IAM policies that
@@ -16,17 +13,24 @@ import (
 // policies attached to groups that the user is a member of.
 //
 // You can optionally include a list of one or more additional policies, specified
-// as strings. If you want to include only a list of policies by string, use GetContextKeysForCustomPolicy
+// as strings. If you want to include only a list of policies by string, use [GetContextKeysForCustomPolicy]
 // instead.
 //
 // Note: This operation discloses information about the permissions granted to
 // other users. If you do not want users to see other user's permissions, then
-// consider allowing them to use GetContextKeysForCustomPolicyinstead.
+// consider allowing them to use [GetContextKeysForCustomPolicy]instead.
 //
 // Context keys are variables maintained by Amazon Web Services and its services
 // that provide details about the context of an API query request. Context keys can
-// be evaluated by testing against a value in an IAM policy. Use GetContextKeysForPrincipalPolicyto understand
-// what key names and values you must supply when you call SimulatePrincipalPolicy.
+// be evaluated by testing against a value in an IAM policy. Use [GetContextKeysForPrincipalPolicy]to understand
+// what key names and values you must supply when you call [SimulatePrincipalPolicy]. This operation
+// doesn't return context keys referenced by service control policies (SCPs). Only
+// context keys referenced by the identity-based policies attached to the specified
+// entity, and any additional policies that you provide, are included.
+//
+// [GetContextKeysForPrincipalPolicy]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetContextKeysForPrincipalPolicy.html
+// [GetContextKeysForCustomPolicy]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetContextKeysForCustomPolicy.html
+// [SimulatePrincipalPolicy]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_SimulatePrincipalPolicy.html
 func (c *Client) GetContextKeysForPrincipalPolicy(ctx context.Context, params *GetContextKeysForPrincipalPolicyInput, optFns ...func(*Options)) (*GetContextKeysForPrincipalPolicyOutput, error) {
 	if params == nil {
 		params = &GetContextKeysForPrincipalPolicyInput{}
@@ -81,7 +85,10 @@ type GetContextKeysForPrincipalPolicyInput struct {
 	noSmithyDocumentSerde
 }
 
-// Contains the response to a successful GetContextKeysForPrincipalPolicy or GetContextKeysForCustomPolicy request.
+// Contains the response to a successful [GetContextKeysForPrincipalPolicy] or [GetContextKeysForCustomPolicy] request.
+//
+// [GetContextKeysForPrincipalPolicy]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetContextKeysForPrincipalPolicy.html
+// [GetContextKeysForCustomPolicy]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetContextKeysForCustomPolicy.html
 type GetContextKeysForPrincipalPolicyOutput struct {
 
 	// The list of context keys that are referenced in the input policies.
@@ -94,9 +101,6 @@ type GetContextKeysForPrincipalPolicyOutput struct {
 }
 
 func (c *Client) addOperationGetContextKeysForPrincipalPolicyMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
-		return err
-	}
 	err = stack.Serialize.Add(&awsAwsquery_serializeOpGetContextKeysForPrincipalPolicy{}, middleware.After)
 	if err != nil {
 		return err
@@ -105,65 +109,20 @@ func (c *Client) addOperationGetContextKeysForPrincipalPolicyMiddlewares(stack *
 	if err != nil {
 		return err
 	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "GetContextKeysForPrincipalPolicy"); err != nil {
-		return fmt.Errorf("add protocol finalizers: %v", err)
-	}
 
-	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
-		return err
-	}
-	if err = addSetLoggerMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addClientRequestID(stack); err != nil {
-		return err
-	}
-	if err = addComputeContentLength(stack); err != nil {
-		return err
-	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
+	if err = addRecordResponseTiming(stack, options); err != nil {
 		return err
 	}
-	if err = addRawResponseToMetadata(stack); err != nil {
-		return err
-	}
-	if err = addRecordResponseTiming(stack); err != nil {
-		return err
-	}
-	if err = addSpanRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addClientUserAgent(stack, options); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
-		return err
-	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpGetContextKeysForPrincipalPolicyValidationMiddleware(stack); err != nil {
-		return err
-	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opGetContextKeysForPrincipalPolicy(options.Region), middleware.Before); err != nil {
-		return err
-	}
-	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -178,25 +137,8 @@ func (c *Client) addOperationGetContextKeysForPrincipalPolicyMiddlewares(stack *
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanInitializeEnd(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil
-}
-
-func newServiceMetadataMiddleware_opGetContextKeysForPrincipalPolicy(region string) *awsmiddleware.RegisterServiceMetadata {
-	return &awsmiddleware.RegisterServiceMetadata{
-		Region:        region,
-		ServiceID:     ServiceID,
-		OperationName: "GetContextKeysForPrincipalPolicy",
-	}
 }

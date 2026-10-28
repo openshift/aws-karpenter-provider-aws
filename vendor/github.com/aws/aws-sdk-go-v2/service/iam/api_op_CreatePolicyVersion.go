@@ -4,17 +4,14 @@ package iam
 
 import (
 	"context"
-	"fmt"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // Creates a new version of the specified managed policy. To update a managed
 // policy, you create a new policy version. A managed policy can have up to five
 // versions. If the policy has five versions, you must delete an existing version
-// using DeletePolicyVersionbefore you create a new version.
+// using [DeletePolicyVersion]before you create a new version.
 //
 // Optionally, you can set the new version as the policy's default version. The
 // default version is the version that is in effect for the IAM users, groups, and
@@ -22,6 +19,7 @@ import (
 //
 // For more information about managed policy versions, see [Versioning for managed policies] in the IAM User Guide.
 //
+// [DeletePolicyVersion]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeletePolicyVersion.html
 // [Versioning for managed policies]: https://docs.aws.amazon.com/IAM/latest/UserGuide/policies-managed-versions.html
 func (c *Client) CreatePolicyVersion(ctx context.Context, params *CreatePolicyVersionInput, optFns ...func(*Options)) (*CreatePolicyVersionOutput, error) {
 	if params == nil {
@@ -95,7 +93,9 @@ type CreatePolicyVersionInput struct {
 	noSmithyDocumentSerde
 }
 
-// Contains the response to a successful CreatePolicyVersion request.
+// Contains the response to a successful [CreatePolicyVersion] request.
+//
+// [CreatePolicyVersion]: https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreatePolicyVersion.html
 type CreatePolicyVersionOutput struct {
 
 	// A structure containing details about the new policy version.
@@ -108,9 +108,6 @@ type CreatePolicyVersionOutput struct {
 }
 
 func (c *Client) addOperationCreatePolicyVersionMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
-		return err
-	}
 	err = stack.Serialize.Add(&awsAwsquery_serializeOpCreatePolicyVersion{}, middleware.After)
 	if err != nil {
 		return err
@@ -119,65 +116,20 @@ func (c *Client) addOperationCreatePolicyVersionMiddlewares(stack *middleware.St
 	if err != nil {
 		return err
 	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "CreatePolicyVersion"); err != nil {
-		return fmt.Errorf("add protocol finalizers: %v", err)
-	}
 
-	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
-		return err
-	}
-	if err = addSetLoggerMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addClientRequestID(stack); err != nil {
-		return err
-	}
-	if err = addComputeContentLength(stack); err != nil {
-		return err
-	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
+	if err = addRecordResponseTiming(stack, options); err != nil {
 		return err
 	}
-	if err = addRawResponseToMetadata(stack); err != nil {
-		return err
-	}
-	if err = addRecordResponseTiming(stack); err != nil {
-		return err
-	}
-	if err = addSpanRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addClientUserAgent(stack, options); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
-		return err
-	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpCreatePolicyVersionValidationMiddleware(stack); err != nil {
-		return err
-	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opCreatePolicyVersion(options.Region), middleware.Before); err != nil {
-		return err
-	}
-	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -192,25 +144,8 @@ func (c *Client) addOperationCreatePolicyVersionMiddlewares(stack *middleware.St
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanInitializeEnd(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil
-}
-
-func newServiceMetadataMiddleware_opCreatePolicyVersion(region string) *awsmiddleware.RegisterServiceMetadata {
-	return &awsmiddleware.RegisterServiceMetadata{
-		Region:        region,
-		ServiceID:     ServiceID,
-		OperationName: "CreatePolicyVersion",
-	}
 }

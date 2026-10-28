@@ -20,6 +20,7 @@ import (
 	"context"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/awslabs/operatorpkg/option"
 	"github.com/samber/lo"
@@ -30,6 +31,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	clocktesting "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -42,6 +45,7 @@ type Environment struct {
 	envtest.Environment
 
 	Client              client.Client
+	Clock               *clocktesting.FakeClock
 	KubernetesInterface kubernetes.Interface
 	Version             *version.Version
 	Done                chan struct{}
@@ -51,6 +55,7 @@ type Environment struct {
 type EnvironmentOptions struct {
 	crds          []*apiextensionsv1.CustomResourceDefinition
 	fieldIndexers []func(cache.Cache) error
+	configOptions []func(*rest.Config)
 }
 
 // WithCRDs registers the specified CRDs to the apiserver for use in testing
@@ -67,6 +72,13 @@ func WithCRDs(crds ...*apiextensionsv1.CustomResourceDefinition) option.Function
 func WithFieldIndexers(fieldIndexers ...func(cache.Cache) error) option.Function[EnvironmentOptions] {
 	return func(o *EnvironmentOptions) {
 		o.fieldIndexers = append(o.fieldIndexers, fieldIndexers...)
+	}
+}
+
+// WithConfigOptions allows customization of the rest.Config before client creation
+func WithConfigOptions(options ...func(*rest.Config)) option.Function[EnvironmentOptions] {
+	return func(o *EnvironmentOptions) {
+		o.configOptions = append(o.configOptions, options...)
 	}
 }
 
@@ -102,6 +114,22 @@ func NodeClaimNodeClassRefFieldIndexer(ctx context.Context) func(cache.Cache) er
 	}
 }
 
+func NodePoolNodeClassRefFieldIndexer(ctx context.Context) func(cache.Cache) error {
+	return func(c cache.Cache) error {
+		var err error
+		err = multierr.Append(err, c.IndexField(ctx, &v1.NodePool{}, "spec.template.spec.nodeClassRef.group", func(obj client.Object) []string {
+			return []string{obj.(*v1.NodePool).Spec.Template.Spec.NodeClassRef.Group}
+		}))
+		err = multierr.Append(err, c.IndexField(ctx, &v1.NodePool{}, "spec.template.spec.nodeClassRef.kind", func(obj client.Object) []string {
+			return []string{obj.(*v1.NodePool).Spec.Template.Spec.NodeClassRef.Kind}
+		}))
+		err = multierr.Append(err, c.IndexField(ctx, &v1.NodePool{}, "spec.template.spec.nodeClassRef.name", func(obj client.Object) []string {
+			return []string{obj.(*v1.NodePool).Spec.Template.Spec.NodeClassRef.Name}
+		}))
+		return err
+	}
+}
+
 func VolumeAttachmentFieldIndexer(ctx context.Context) func(cache.Cache) error {
 	return func(c cache.Cache) error {
 		return c.IndexField(ctx, &storagev1.VolumeAttachment{}, "spec.nodeName", func(obj client.Object) []string {
@@ -114,7 +142,7 @@ func NewEnvironment(options ...option.Function[EnvironmentOptions]) *Environment
 	opts := option.Resolve(options...)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	version := version.MustParseSemantic(strings.Replace(env.WithDefaultString("K8S_VERSION", "1.32.x"), ".x", ".0", -1))
+	version := version.MustParseSemantic(strings.ReplaceAll(env.WithDefaultString("K8S_VERSION", "1.36.x"), ".x", ".0"))
 	environment := envtest.Environment{Scheme: scheme.Scheme, CRDs: opts.crds}
 	if version.Minor() >= 21 && version.Minor() < 32 {
 		// PodAffinityNamespaceSelector is used for label selectors in pod affinities.  If the feature-gate is turned off,
@@ -132,6 +160,11 @@ func NewEnvironment(options ...option.Function[EnvironmentOptions]) *Environment
 	}
 
 	_ = lo.Must(environment.Start())
+
+	// Apply any config overrides
+	for _, option := range opts.configOptions {
+		option(environment.Config)
+	}
 
 	// We use a modified client if we need field indexers
 	var c client.Client
@@ -159,6 +192,7 @@ func NewEnvironment(options ...option.Function[EnvironmentOptions]) *Environment
 	return &Environment{
 		Environment:         environment,
 		Client:              c,
+		Clock:               clocktesting.NewFakeClock(time.Now()),
 		KubernetesInterface: kubernetes.NewForConfigOrDie(environment.Config),
 		Version:             version,
 		Done:                make(chan struct{}),
