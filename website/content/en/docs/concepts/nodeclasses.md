@@ -57,7 +57,7 @@ spec:
     cpuCFSQuota: true
     clusterDNS: ["10.0.1.100"]
   # Optional, dictates UserData generation and default block device mappings.
-  # May be ommited when using an `alias` amiSelectorTerm, otherwise required.
+  # May be omitted when using an `alias` amiSelectorTerm, otherwise required.
   amiFamily: AL2
 
   # Required, discovers subnets to attach to instances
@@ -131,6 +131,16 @@ spec:
     httpProtocolIPv6: disabled
     httpPutResponseHopLimit: 1 # This is changed to disable IMDS access from containers not on the host network
     httpTokens: required
+
+  # Optional, configures ENI Connection Tracking timeouts.
+  # Omit entirely to use EC2 defaults. Only set fields you want to override.
+  connectionTracking:
+    # Optional, configures timeout (in seconds) for idle TCP connections.
+    tcpEstablishedTimeout: 300 # lower than the EC2 default of 432000 (5 days)
+    # Optional, configures timeout (in seconds) for idle UDP stream flows.
+    udpStreamTimeout: 120
+    # Optional, configures timeout (in seconds) for idle unidirectional or single-transaction UDP flows.
+    udpTimeout: 45
 
   # Optional, configures storage devices for the instance
   blockDeviceMappings:
@@ -782,24 +792,24 @@ alias: bottlerocket@v1.20.4
 ```
 The Windows family does not support pinning, so only `latest` is supported.
 
-The following commands can be used to determine the versions availble for an alias in your region:
+The following commands can be used to determine the versions available for an alias in your region:
 
 {{< tabpane text=true right=false >}}
   {{% tab "AL2023" %}}
   ```bash
-  export K8S_VERSION="1.35"
+  export K8S_VERSION="1.36"
   aws ssm get-parameters-by-path --path "/aws/service/eks/optimized-ami/$K8S_VERSION/amazon-linux-2023/" --recursive | jq -cr '.Parameters[].Name' | grep -v "recommended" | awk -F '/' '{print $10}' | sed -r 's/.*(v[[:digit:]]+)$/\1/' | sort | uniq
   ```
   {{% /tab %}}
   {{% tab "AL2" %}}
   ```bash
-  export K8S_VERSION="1.35"
+  export K8S_VERSION="1.36"
   aws ssm get-parameters-by-path --path "/aws/service/eks/optimized-ami/$K8S_VERSION/amazon-linux-2/" --recursive | jq -cr '.Parameters[].Name' | grep -v "recommended" | awk -F '/' '{print $8}' | sed -r 's/.*(v[[:digit:]]+)$/\1/' | sort | uniq
   ```
   {{% /tab %}}
   {{% tab "Bottlerocket" %}}
   ```bash
-  export K8S_VERSION="1.35"
+  export K8S_VERSION="1.36"
   aws ssm get-parameters-by-path --path "/aws/service/bottlerocket/aws-k8s-$K8S_VERSION" --recursive | jq -cr '.Parameters[].Name' | grep -v "latest" | awk -F '/' '{print $7}' | sort | uniq
   ```
   {{% /tab %}}
@@ -1052,6 +1062,39 @@ spec:
     httpTokens: required
 ```
 
+## spec.connectionTracking
+
+Configure [Connection Tracking Timeouts](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/security-group-connection-tracking.html#connection-tracking-timeouts)
+on the ENIs Karpenter provisions in the launch template: the primary ENI, any EFA ENIs, and user-configured `interface`
+type network interfaces. EFA-only (`efa-only`) interfaces do not receive connection tracking settings. Secondary ENIs
+created at runtime by your CNI (e.g. VPC-CNI, Cilium in ENI IPAM mode) are out of scope and must be configured through
+the CNI. For VPC-CNI, see [aws/amazon-vpc-cni-k8s#3666](https://github.com/aws/amazon-vpc-cni-k8s/pull/3666) for
+support replicating connection tracking settings to secondary ENIs.
+
+{{% alert title="Note" color="primary" %}}
+Connection tracking timeout configuration requires instances built on the [Nitro System](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-types.html#ec2-nitro-instances). When this field is set, Karpenter automatically excludes non-Nitro instance types from consideration.
+{{% /alert %}}
+
+Idle connections left too long can exhaust the security group's connection tracking table and lead to dropped packets.
+
+All timeout values are specified in seconds as integers.
+Any field left unset falls back to the EC2 default for that timeout.
+
+### TCP Established Timeout
+Timeout for idle TCP connections in an established state.
+Value must be between 60 and 432,000 seconds (5 days). The default is 350 seconds for Nitro v6 instance types (excluding P6e-GB200) and 432,000 seconds for other instance types.
+Setting a lower timeout helps free up tracking slots sooner at the cost of tearing down longer-lived TCP flows.
+
+### UDP Stream Timeout
+Timeout for idle UDP "stream" flows that have seen more than one request-response transaction.
+Value must be between 60 and 180 seconds. AWS API defaults to 180 seconds.
+Use a lower timeout to reclaim slots for true streaming traffic that stalls frequently.
+
+### UDP Timeout
+Timeout for idle UDP flows that have seen traffic only in a single direction or a single request-response transaction.
+Value must be between 30 and 60 seconds. AWS API defaults to 30 seconds.
+For high volume short-lived, stateless UDP transactions it may be preferable to use a lower timeout.
+
 ## spec.blockDeviceMappings
 
 The `blockDeviceMappings` field in an `EC2NodeClass` can be used to control the [Elastic Block Storage (EBS) volumes](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/block-device-mapping-concepts.html#instance-block-device-mapping) that Karpenter attaches to provisioned nodes. Karpenter uses default block device mappings for the AMIFamily specified. For example, the `Bottlerocket` AMI Family defaults with two block device mappings, one for Bottlerocket's control volume and the other for container resources such as images and logs.
@@ -1252,6 +1295,12 @@ aws ssm get-parameter --name "<parameter-name>" --region <region> --with-decrypt
 For more examples on configuring fields for different AMI families, see the [examples here](https://github.com/aws/karpenter/blob/main/examples/v1).
 
 Karpenter will merge the userData you specify with the default userData for that AMIFamily. See the [AMIFamily]({{< ref "#specamifamily" >}}) section for more details on these defaults. View the sections below to understand the different merge strategies for each AMIFamily.
+
+{{% alert title="Warning" color="warning" %}}
+During an [EKS cluster certificate authority (CA) rotation](https://docs.aws.amazon.com/eks/latest/userguide/certificate-authority-rotation.html#_updating_your_kubernetes_clients), your cluster goes through a dual trust period where its trust bundle contains two CA certificates: the outgoing CA and the successor CA. Karpenter embeds your cluster's CA data in the UserData it generates, so your total user data grows while both CAs are trusted.
+
+If your `spec.userData` is close to the [EC2 user data limit](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/user-data.html), the addition of the successor CA can cause launch template creation to fail, which prevents Karpenter from provisioning new nodes. Karpenter does not compress user data, so reduce the size of your `spec.userData` before the dual trust period begins &mdash; for example, by baking configuration into your AMI or having your script fetch its contents at boot instead of inlining them.
+{{% /alert %}}
 
 ### AL2
 
@@ -1830,7 +1879,10 @@ NodeClasses have the following status conditions:
 | SubnetsReady         | Subnets are discovered.                                                                                                                                                                                                           |
 | SecurityGroupsReady  | Security Groups are discovered.                                                                                                                                                                                                   |
 | InstanceProfileReady | Instance Profile is discovered.                                                                                                                                                                                                   |
-| AMIsReady            | AMIs are discovered.                                                |
+| AMIsReady            | AMIs are discovered.                                                                                                                                                                                                              |
+| ValidationSucceeded  | EC2NodeClass validation succeeded.                                                                                                                                                                                                |
+| PlacementGroupReady  | Referenced placement groups are discovered.                                                                                                                                                                                       |
+| CapacityReservationsReady | Referenced capacity reservations are discovered. Only present when the capacity reservation feature is enabled.                                                                                                                   |
 | Ready                | Top level condition that indicates if the nodeClass is ready. If any of the underlying conditions is `False` then this condition is set to `False` and `Message` on the condition indicates the dependency that was not resolved. |
 
 If a NodeClass is not ready, NodePools that reference it through their `nodeClassRef` will not be considered for scheduling.
