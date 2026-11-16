@@ -5,10 +5,10 @@ package eks
 import (
 	"context"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/service/eks/schemas"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
-	smithy "github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // Creates a managed capability resource for an Amazon EKS cluster.
@@ -137,39 +137,6 @@ type CreateCapabilityInput struct {
 	noSmithyDocumentSerde
 }
 
-func (v *CreateCapabilityInput) Serialize(s smithy.ShapeSerializer) {
-	s.WriteStruct(schemas.CreateCapabilityRequest)
-	v.SerializeMembers(s)
-	s.CloseStruct()
-}
-
-func (v *CreateCapabilityInput) SerializeMembers(s smithy.ShapeSerializer) {
-	if v.CapabilityName != nil {
-		s.WriteString(schemas.CreateCapabilityRequest_capabilityName, *v.CapabilityName)
-	}
-	if v.ClientRequestToken != nil {
-		s.WriteString(schemas.CreateCapabilityRequest_clientRequestToken, *v.ClientRequestToken)
-	}
-	if v.ClusterName != nil {
-		s.WriteString(schemas.CreateCapabilityRequest_clusterName, *v.ClusterName)
-	}
-	if v.Configuration != nil {
-		s.WriteStruct(schemas.CreateCapabilityRequest_configuration)
-		v.Configuration.SerializeMembers(s)
-		s.CloseStruct()
-	}
-	if v.DeletePropagationPolicy != "" {
-		s.WriteString(schemas.CreateCapabilityRequest_deletePropagationPolicy, string(v.DeletePropagationPolicy))
-	}
-	if v.RoleArn != nil {
-		s.WriteString(schemas.CreateCapabilityRequest_roleArn, *v.RoleArn)
-	}
-	serializeTagMap(s, schemas.CreateCapabilityRequest_tags, v.Tags)
-	if v.Type != "" {
-		s.WriteString(schemas.CreateCapabilityRequest_type, string(v.Type))
-	}
-}
-
 type CreateCapabilityOutput struct {
 
 	// An object containing information about the newly created capability, including
@@ -182,44 +149,68 @@ type CreateCapabilityOutput struct {
 	noSmithyDocumentSerde
 }
 
-func (v *CreateCapabilityOutput) Serialize(s smithy.ShapeSerializer) {
-	s.WriteStruct(schemas.CreateCapabilityResponse)
-	v.SerializeMembers(s)
-	s.CloseStruct()
-}
-
-func (v *CreateCapabilityOutput) SerializeMembers(s smithy.ShapeSerializer) {
-	if v.Capability != nil {
-		s.WriteStruct(schemas.CreateCapabilityResponse_capability)
-		v.Capability.SerializeMembers(s)
-		s.CloseStruct()
-	}
-}
-func (v *CreateCapabilityOutput) Deserialize(d smithy.ShapeDeserializer) error {
-	return smithy.ReadStruct(d, schemas.CreateCapabilityResponse, func(s *smithy.Schema) error {
-		switch s {
-		case schemas.CreateCapabilityResponse_capability:
-			v.Capability = &types.Capability{}
-			return v.Capability.Deserialize(d)
-		}
-		return nil
-	})
-}
 func (c *Client) addOperationCreateCapabilityMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&serializeRequestMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.CreateCapability, schemas.CreateCapabilityRequest, schemas.CreateCapabilityResponse)}, middleware.After); err != nil {
+	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
 		return err
 	}
-	if err := stack.Deserialize.Add(&deserializeResponseMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.CreateCapability, schemas.CreateCapabilityRequest, schemas.CreateCapabilityResponse), output: &CreateCapabilityOutput{}}, middleware.After); err != nil {
+	err = stack.Serialize.Add(&awsRestjson1_serializeOpCreateCapability{}, middleware.After)
+	if err != nil {
 		return err
+	}
+	err = stack.Deserialize.Add(&awsRestjson1_deserializeOpCreateCapability{}, middleware.After)
+	if err != nil {
+		return err
+	}
+	if err := addProtocolFinalizerMiddlewares(stack, options, "CreateCapability"); err != nil {
+		return fmt.Errorf("add protocol finalizers: %v", err)
 	}
 
+	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
+		return err
+	}
+	if err = addSetLoggerMiddleware(stack, options); err != nil {
+		return err
+	}
+	if err = addClientRequestID(stack); err != nil {
+		return err
+	}
+	if err = addComputeContentLength(stack); err != nil {
+		return err
+	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRecordResponseTiming(stack, options); err != nil {
+	if err = addRetry(stack, options); err != nil {
+		return err
+	}
+	if err = addRawResponseToMetadata(stack); err != nil {
+		return err
+	}
+	if err = addRecordResponseTiming(stack); err != nil {
+		return err
+	}
+	if err = addSpanRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addClientUserAgent(stack, options); err != nil {
+		return err
+	}
+	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
+		return err
+	}
+	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
+		return err
+	}
+	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
 	if err = addCredentialSource(stack, options); err != nil {
@@ -229,6 +220,12 @@ func (c *Client) addOperationCreateCapabilityMiddlewares(stack *middleware.Stack
 		return err
 	}
 	if err = addOpCreateCapabilityValidationMiddleware(stack); err != nil {
+		return err
+	}
+	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opCreateCapability(options.Region), middleware.Before); err != nil {
+		return err
+	}
+	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -241,6 +238,12 @@ func (c *Client) addOperationCreateCapabilityMiddlewares(stack *middleware.Stack
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAttempt(stack, options); err != nil {
 		return err
 	}
 	if err = addInterceptors(stack, options); err != nil {
@@ -280,4 +283,12 @@ func (m *idempotencyToken_initializeOpCreateCapability) HandleInitialize(ctx con
 }
 func addIdempotencyToken_opCreateCapabilityMiddleware(stack *middleware.Stack, cfg Options) error {
 	return stack.Initialize.Add(&idempotencyToken_initializeOpCreateCapability{tokenProvider: cfg.IdempotencyTokenProvider}, middleware.Before)
+}
+
+func newServiceMetadataMiddleware_opCreateCapability(region string) *awsmiddleware.RegisterServiceMetadata {
+	return &awsmiddleware.RegisterServiceMetadata{
+		Region:        region,
+		ServiceID:     ServiceID,
+		OperationName: "CreateCapability",
+	}
 }

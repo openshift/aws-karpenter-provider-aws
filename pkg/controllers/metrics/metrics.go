@@ -19,17 +19,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/karpenter/pkg/metrics"
-
-	"github.com/aws/karpenter-provider-aws/pkg/providers/instancetype"
 )
 
 const (
 	cloudProviderSubsystem = "cloudprovider"
 	instanceTypeLabel      = "instance_type"
-	// capacityTypeLabel and zoneLabel alias the shared core dimensions so their
-	// canonical descriptions live on metrics.CapacityType / metrics.Zone.
-	capacityTypeLabel = metrics.CapacityTypeLabel
-	zoneLabel         = metrics.ZoneLabel
+	capacityTypeLabel      = "capacity_type"
+	zoneLabel              = "zone"
 )
 
 var (
@@ -41,12 +37,11 @@ var (
 			Name:      "instance_type_offering_available",
 			Help:      "Instance type offering availability, based on instance type, capacity type, and zone",
 		},
-		[]opmetrics.Label{
-			instancetype.InstanceType,
-			metrics.CapacityType,
-			metrics.Zone,
+		[]string{
+			instanceTypeLabel,
+			capacityTypeLabel,
+			zoneLabel,
 		},
-		opmetrics.Beta,
 	)
 	InstanceTypeOfferingPriceEstimate = opmetrics.NewPrometheusGauge(
 		crmetrics.Registry,
@@ -56,11 +51,10 @@ var (
 			Name:      "instance_type_offering_price_estimate",
 			Help:      "Instance type offering estimated hourly price used when making informed decisions on node cost calculation, based on instance type, capacity type, and zone.",
 		},
-		[]opmetrics.Label{
-			instancetype.InstanceType,
-			metrics.CapacityType,
-			metrics.Zone,
+		[]string{
+			instanceTypeLabel,
+			capacityTypeLabel,
+			zoneLabel,
 		},
-		opmetrics.Beta,
 	)
 )

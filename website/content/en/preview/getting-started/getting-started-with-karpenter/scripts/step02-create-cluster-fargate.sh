@@ -16,13 +16,6 @@ metadata:
   tags:
     karpenter.sh/discovery: ${CLUSTER_NAME}
 
-# Pack pods onto fewer nodes so pod placement aligns with Karpenter's bin-packing
-# and consolidation. See https://karpenter.sh/docs/concepts/scheduling/#kube-scheduler-settings
-kubeSchedulerConfig:
-  nodeResourcesFit:
-    scoringStrategy:
-      type: MostAllocated
-
 iam:
   withOIDC: true
   serviceAccounts:
@@ -31,12 +24,7 @@ iam:
       namespace: "${KARPENTER_NAMESPACE}"
     roleName: ${CLUSTER_NAME}-karpenter
     attachPolicyARNs:
-    - arn:${AWS_PARTITION}:iam::${AWS_ACCOUNT_ID}:policy/KarpenterControllerNodeLifecyclePolicy-${CLUSTER_NAME}
-    - arn:${AWS_PARTITION}:iam::${AWS_ACCOUNT_ID}:policy/KarpenterControllerIAMIntegrationPolicy-${CLUSTER_NAME}
-    - arn:${AWS_PARTITION}:iam::${AWS_ACCOUNT_ID}:policy/KarpenterControllerEKSIntegrationPolicy-${CLUSTER_NAME}
-    - arn:${AWS_PARTITION}:iam::${AWS_ACCOUNT_ID}:policy/KarpenterControllerInterruptionPolicy-${CLUSTER_NAME}
-    - arn:${AWS_PARTITION}:iam::${AWS_ACCOUNT_ID}:policy/KarpenterControllerResourceDiscoveryPolicy-${CLUSTER_NAME}
-    - arn:${AWS_PARTITION}:iam::${AWS_ACCOUNT_ID}:policy/KarpenterControllerZonalShiftPolicy-${CLUSTER_NAME}
+    - arn:${AWS_PARTITION}:iam::${AWS_ACCOUNT_ID}:policy/KarpenterControllerPolicy-${CLUSTER_NAME}
     roleOnly: true
 
 iamIdentityMappings:
@@ -48,9 +36,6 @@ iamIdentityMappings:
   ## If you intend to run Windows workloads, the kube-proxy group should be specified.
   # For more information, see https://github.com/aws/karpenter/issues/5099.
   # - eks:kube-proxy-windows
-
-zonalShiftConfig:
-  enabled: ${ENABLE_ZONAL_SHIFT}
 
 fargateProfiles:
 - name: karpenter

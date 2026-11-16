@@ -20,8 +20,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/awslabs/operatorpkg/serrors"
-	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -45,7 +43,7 @@ func Decorate(cloudProvider cloudprovider.CloudProvider, kubeClient client.Clien
 func (d *decorator) GetInstanceTypes(ctx context.Context, nodePool *v1.NodePool) ([]*cloudprovider.InstanceType, error) {
 	its, err := d.CloudProvider.GetInstanceTypes(ctx, nodePool)
 	if err != nil {
-		return []*cloudprovider.InstanceType{}, serrors.Wrap(fmt.Errorf("getting cloud provider instance types, %w", err), "NodePool", klog.KObj(nodePool))
+		return []*cloudprovider.InstanceType{}, err
 	}
 	if options.FromContext(ctx).FeatureGates.NodeOverlay {
 		its, err = d.store.ApplyAll(nodePool.Name, its)

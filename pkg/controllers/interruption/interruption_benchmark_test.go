@@ -110,7 +110,7 @@ func benchmarkNotificationController(b *testing.B, messageCount int) {
 	unavailableOfferingsCache = awscache.NewUnavailableOfferings()
 
 	// Set-up the controllers
-	interruptionController := interruption.NewController(env.Client, fakeClock, nil, recorder, providers.sqsProvider, nil, unavailableOfferingsCache, nil)
+	interruptionController := interruption.NewController(env.Client, fakeClock, recorder, providers.sqsProvider, unavailableOfferingsCache)
 
 	messages, nodes := makeDiverseMessagesAndNodes(messageCount)
 	log.FromContext(ctx).Info("provisioning nodes")

@@ -15,8 +15,6 @@ type RegisterServiceMetadata struct {
 	SigningName   string
 	Region        string
 	OperationName string
-
-	RequiresLegacyEndpoints bool
 }
 
 // ID returns the middleware identifier.
@@ -35,13 +33,10 @@ func (s RegisterServiceMetadata) HandleInitialize(
 		ctx = SetSigningName(ctx, s.SigningName)
 	}
 	if len(s.Region) > 0 {
-		ctx = SetRegion(ctx, s.Region)
+		ctx = setRegion(ctx, s.Region)
 	}
 	if len(s.OperationName) > 0 {
-		ctx = SetOperationName(ctx, s.OperationName)
-	}
-	if s.RequiresLegacyEndpoints {
-		ctx = SetRequiresLegacyEndpoints(ctx, true)
+		ctx = setOperationName(ctx, s.OperationName)
 	}
 	return next.HandleInitialize(ctx, in)
 }
@@ -166,19 +161,19 @@ func SetServiceID(ctx context.Context, value string) context.Context {
 	return middleware.WithStackValue(ctx, serviceIDKey{}, value)
 }
 
-// SetRegion sets the endpoint region on the context.
+// setRegion sets the endpoint region on the context.
 //
 // Scoped to stack values. Use github.com/aws/smithy-go/middleware#ClearStackValues
 // to clear all stack values.
-func SetRegion(ctx context.Context, value string) context.Context {
+func setRegion(ctx context.Context, value string) context.Context {
 	return middleware.WithStackValue(ctx, regionKey{}, value)
 }
 
-// SetOperationName sets the service operation on the context.
+// setOperationName sets the service operation on the context.
 //
 // Scoped to stack values. Use github.com/aws/smithy-go/middleware#ClearStackValues
 // to clear all stack values.
-func SetOperationName(ctx context.Context, value string) context.Context {
+func setOperationName(ctx context.Context, value string) context.Context {
 	return middleware.WithStackValue(ctx, operationNameKey{}, value)
 }
 

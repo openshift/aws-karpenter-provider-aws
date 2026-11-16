@@ -45,7 +45,7 @@ func (d *LocalDate) UnmarshalText(b []byte) error {
 type LocalTime struct {
 	Hour       int // Hour of the day: [0; 24[
 	Minute     int // Minute of the hour: [0; 60[
-	Second     int // Second of the minute: [0; 59]
+	Second     int // Second of the minute: [0; 60[
 	Nanosecond int // Nanoseconds within the second:  [0, 1000000000[
 	Precision  int // Number of digits to display for Nanosecond.
 }
@@ -62,7 +62,7 @@ func (d LocalTime) String() string {
 	} else if d.Nanosecond > 0 {
 		// Nanoseconds are specified, but precision is not provided. Use the
 		// minimum.
-		s += strings.TrimRight(fmt.Sprintf(".%09d", d.Nanosecond), "0")
+		s += strings.Trim(fmt.Sprintf(".%09d", d.Nanosecond), "0")
 	}
 
 	return s
@@ -77,7 +77,7 @@ func (d LocalTime) MarshalText() ([]byte, error) {
 func (d *LocalTime) UnmarshalText(b []byte) error {
 	res, left, err := parseLocalTime(b)
 	if err == nil && len(left) != 0 {
-		err = unstable.NewParserError(left, "extra characters at the end of a local time")
+		err = unstable.NewParserError(left, "extra characters")
 	}
 	if err != nil {
 		return err
@@ -111,11 +111,12 @@ func (d LocalDateTime) MarshalText() ([]byte, error) {
 func (d *LocalDateTime) UnmarshalText(data []byte) error {
 	res, left, err := parseLocalDateTime(data)
 	if err == nil && len(left) != 0 {
-		err = unstable.NewParserError(left, "extra characters at the end of a local date time")
+		err = unstable.NewParserError(left, "extra characters")
 	}
 	if err != nil {
 		return err
 	}
+
 	*d = res
 	return nil
 }

@@ -10,7 +10,6 @@ import (
 
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/clock"
 )
 
 // ConditionTypes is an abstract collection of the possible ConditionType values
@@ -48,46 +47,12 @@ func newConditionTypes(root string, dependents ...string) ConditionTypes {
 type ConditionSet struct {
 	ConditionTypes
 	object Object
-	clock  clock.Clock
-}
-
-// ForOptions configures a ConditionSet.
-type ForOptions struct {
-	Clock clock.Clock
-	// ObservedOnly builds the set from conditions already present, without
-	// initializing absent root/dependent conditions to Unknown. See WithObservedOnly.
-	ObservedOnly bool
-}
-
-// ForOption is a functional option for For.
-type ForOption func(*ForOptions)
-
-// WithClock sets the clock used for LastTransitionTime. Defaults to the real
-// clock. Inject a fake clock in tests to avoid real-time dependencies.
-func WithClock(c clock.Clock) ForOption {
-	return func(o *ForOptions) { o.Clock = c }
-}
-
-// WithObservedOnly builds the ConditionSet from the conditions already present on
-// the object, skipping initialization of missing root/dependent conditions to
-// Unknown. Use this when the set is a read-only reflection of observed state (e.g.
-// metrics emission for an object the caller does not own), so absent conditions are
-// not fabricated.
-func WithObservedOnly() ForOption {
-	return func(o *ForOptions) { o.ObservedOnly = true }
 }
 
 // For creates a ConditionSet from an object using the original
 // ConditionTypes as a reference. Status must be a pointer to a struct.
-func (r ConditionTypes) For(object Object, opts ...ForOption) ConditionSet {
-	o := ForOptions{Clock: clock.RealClock{}}
-	for _, opt := range opts {
-		opt(&o)
-	}
-	cs := ConditionSet{object: object, ConditionTypes: r, clock: o.Clock}
-	if o.ObservedOnly {
-		return cs
-	}
+func (r ConditionTypes) For(object Object) ConditionSet {
+	cs := ConditionSet{object: object, ConditionTypes: r}
 	// Set known conditions Unknown if not set.
 	// Set the root condition first to get consistent timing for LastTransitionTime
 	for _, t := range append([]string{r.root}, r.dependents...) {
@@ -158,7 +123,7 @@ func (c ConditionSet) Set(condition Condition) (modified bool) {
 			if condition.Status == cond.Status {
 				condition.LastTransitionTime = cond.LastTransitionTime
 			} else {
-				condition.LastTransitionTime = c.now()
+				condition.LastTransitionTime = metav1.Now()
 			}
 			if reflect.DeepEqual(condition, cond) {
 				return false
@@ -171,7 +136,7 @@ func (c ConditionSet) Set(condition Condition) (modified bool) {
 		if c.IsDependentCondition(condition.Type) {
 			condition.LastTransitionTime = c.object.GetCreationTimestamp()
 		} else {
-			condition.LastTransitionTime = c.now()
+			condition.LastTransitionTime = metav1.Now()
 		}
 	}
 	conditions = append(conditions, condition)
@@ -293,11 +258,6 @@ func (c ConditionSet) recomputeRootCondition(conditionType string) {
 			}), ", "),
 		})
 	}
-}
-
-// now returns the current time from the injected clock as a metav1.Time.
-func (c ConditionSet) now() metav1.Time {
-	return metav1.NewTime(c.clock.Now())
 }
 
 func (c ConditionSet) findUnhealthyDependents() []Condition {

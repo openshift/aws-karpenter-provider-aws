@@ -25,7 +25,6 @@ import (
 	apipolicyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
-	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	watch "k8s.io/apimachinery/pkg/watch"
 	internalinterfaces "k8s.io/client-go/informers/internalinterfaces"
 	kubernetes "k8s.io/client-go/kubernetes"
@@ -34,39 +33,11 @@ import (
 )
 
 // PodDisruptionBudgetInformer provides access to a shared informer and lister for
-// PodDisruptionBudgets. Prefer using the type-safe variant (see [TypedPodDisruptionBudgetInformer]).
+// PodDisruptionBudgets.
 type PodDisruptionBudgetInformer interface {
 	Informer() cache.SharedIndexInformer
 	Lister() policyv1.PodDisruptionBudgetLister
 }
-
-// TypedPodDisruptionBudgetInformer provides access to a shared informer and lister for
-// PodDisruptionBudgets, including the type-safe TypedInformer variant.
-// It is a superset of PodDisruptionBudgetInformer.
-type TypedPodDisruptionBudgetInformer interface {
-	Informer() cache.SharedIndexInformer
-	TypedInformer() PodDisruptionBudgetIndexInformer
-	Lister() policyv1.PodDisruptionBudgetLister
-}
-
-// PodDisruptionBudgetIndexInformer is a wrapper around the underlying [cache.SharedIndexInformer]
-// with type-safe variants of several methods.
-type PodDisruptionBudgetIndexInformer cache.TypedSharedIndexInformer[*apipolicyv1.PodDisruptionBudget]
-
-// PodDisruptionBudgetHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerFuncs] for PodDisruptionBudget.
-type PodDisruptionBudgetHandlerFuncs = cache.TypedResourceEventHandlerFuncs[*apipolicyv1.PodDisruptionBudget]
-
-// PodDisruptionBudgetDetailedHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerDetailedFuncs] for PodDisruptionBudget.
-type PodDisruptionBudgetDetailedHandlerFuncs = cache.TypedResourceEventHandlerDetailedFuncs[*apipolicyv1.PodDisruptionBudget]
-
-// PodDisruptionBudgetFilteringHandler is a specialization of [cache.TypedFilteringResourceEventHandler] for PodDisruptionBudget.
-type PodDisruptionBudgetFilteringHandler = cache.TypedFilteringResourceEventHandler[*apipolicyv1.PodDisruptionBudget]
-
-// PodDisruptionBudgetIndexers is a specialization of [cache.TypedIndexers] for PodDisruptionBudget.
-type PodDisruptionBudgetIndexers = cache.TypedIndexers[*apipolicyv1.PodDisruptionBudget]
-
-// DeletedPodDisruptionBudget is a specialization of [cache.DeletedObject] for PodDisruptionBudget.
-type DeletedPodDisruptionBudget = cache.DeletedObject[*apipolicyv1.PodDisruptionBudget]
 
 type podDisruptionBudgetInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
@@ -77,132 +48,55 @@ type podDisruptionBudgetInformer struct {
 // NewPodDisruptionBudgetInformer constructs a new informer for PodDisruptionBudget type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-// If you really need an independent one, prefer using the type-safe variant (see [NewTypedPodDisruptionBudgetInformer]).
 func NewPodDisruptionBudgetInformer(client kubernetes.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewPodDisruptionBudgetInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
-}
-
-// NewTypedPodDisruptionBudgetInformer constructs a new informer for PodDisruptionBudget type.
-// Always prefer using an informer factory to get a shared informer instead of getting an independent
-// one. This reduces memory footprint and number of connections to the server.
-func NewTypedPodDisruptionBudgetInformer(client kubernetes.Interface, namespace string, resyncPeriod time.Duration, indexers PodDisruptionBudgetIndexers) PodDisruptionBudgetIndexInformer {
-	return NewTypedPodDisruptionBudgetInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers)})
+	return NewFilteredPodDisruptionBudgetInformer(client, namespace, resyncPeriod, indexers, nil)
 }
 
 // NewFilteredPodDisruptionBudgetInformer constructs a new informer for PodDisruptionBudget type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-// If you really need an independent one, prefer using the type-safe variant (see [NewTypedFilteredPodDisruptionBudgetInformer]).
 func NewFilteredPodDisruptionBudgetInformer(client kubernetes.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return NewTypedPodDisruptionBudgetInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
-}
-
-// NewTypedFilteredPodDisruptionBudgetInformer constructs a new informer for PodDisruptionBudget type.
-// Always prefer using an informer factory to get a shared informer instead of getting an independent
-// one. This reduces memory footprint and number of connections to the server.
-func NewTypedFilteredPodDisruptionBudgetInformer(client kubernetes.Interface, namespace string, resyncPeriod time.Duration, indexers PodDisruptionBudgetIndexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) PodDisruptionBudgetIndexInformer {
-	return NewTypedPodDisruptionBudgetInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers), TweakListOptions: tweakListOptions})
-}
-
-// NewPodDisruptionBudgetInformerWithOptions constructs a new informer for PodDisruptionBudget type with additional options.
-// Always prefer using an informer factory to get a shared informer instead of getting an independent
-// one. This reduces memory footprint and number of connections to the server.
-// If you really need an independent one, prefer using the type-safe variant (see [NewTypedPodDisruptionBudgetInformerWithOptions]).
-func NewPodDisruptionBudgetInformerWithOptions(client kubernetes.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
-	return NewTypedPodDisruptionBudgetInformerWithOptions(client, namespace, options)
-}
-
-// NewTypedPodDisruptionBudgetInformerWithOptions constructs a new informer for PodDisruptionBudget type with additional options.
-// Always prefer using an informer factory to get a shared informer instead of getting an independent
-// one. This reduces memory footprint and number of connections to the server.
-func NewTypedPodDisruptionBudgetInformerWithOptions(client kubernetes.Interface, namespace string, options internalinterfaces.InformerOptions) PodDisruptionBudgetIndexInformer {
-	gvr := schema.GroupVersionResource{Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"}
-	identifier := options.InformerName.WithResource(gvr)
-	tweakListOptions := options.TweakListOptions
-	return cache.NewTypedSharedIndexInformer[*apipolicyv1.PodDisruptionBudget](cache.NewSharedIndexInformerWithOptions(
+	return cache.NewSharedIndexInformer(
 		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
-			ListFunc: func(opts metav1.ListOptions) (runtime.Object, error) {
+			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&opts)
+					tweakListOptions(&options)
 				}
-				return client.PolicyV1().PodDisruptionBudgets(namespace).List(context.Background(), opts)
+				return client.PolicyV1().PodDisruptionBudgets(namespace).List(context.Background(), options)
 			},
-			WatchFunc: func(opts metav1.ListOptions) (watch.Interface, error) {
+			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&opts)
+					tweakListOptions(&options)
 				}
-				return client.PolicyV1().PodDisruptionBudgets(namespace).Watch(context.Background(), opts)
+				return client.PolicyV1().PodDisruptionBudgets(namespace).Watch(context.Background(), options)
 			},
-			ListWithContextFunc: func(ctx context.Context, opts metav1.ListOptions) (runtime.Object, error) {
+			ListWithContextFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&opts)
+					tweakListOptions(&options)
 				}
-				return client.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, opts)
+				return client.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, options)
 			},
-			WatchFuncWithContext: func(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+			WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&opts)
+					tweakListOptions(&options)
 				}
-				return client.PolicyV1().PodDisruptionBudgets(namespace).Watch(ctx, opts)
+				return client.PolicyV1().PodDisruptionBudgets(namespace).Watch(ctx, options)
 			},
 		}, client),
 		&apipolicyv1.PodDisruptionBudget{},
-		cache.SharedIndexInformerOptions{
-			ResyncPeriod: options.ResyncPeriod,
-			Indexers:     options.Indexers,
-			Identifier:   identifier,
-		},
-	))
+		resyncPeriod,
+		indexers,
+	)
 }
 
 func (f *podDisruptionBudgetInformer) defaultInformer(client kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewTypedPodDisruptionBudgetInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
+	return NewFilteredPodDisruptionBudgetInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
 }
 
 func (f *podDisruptionBudgetInformer) Informer() cache.SharedIndexInformer {
-	return f.TypedInformer()
-}
-
-func (f *podDisruptionBudgetInformer) TypedInformer() PodDisruptionBudgetIndexInformer {
-	return cache.NewTypedSharedIndexInformer[*apipolicyv1.PodDisruptionBudget](f.factory.InformerFor(&apipolicyv1.PodDisruptionBudget{}, f.defaultInformer))
+	return f.factory.InformerFor(&apipolicyv1.PodDisruptionBudget{}, f.defaultInformer)
 }
 
 func (f *podDisruptionBudgetInformer) Lister() policyv1.PodDisruptionBudgetLister {
 	return policyv1.NewPodDisruptionBudgetLister(f.Informer().GetIndexer())
-}
-
-// ToTypedPodDisruptionBudgetInformer converts an untyped informer into a TypedPodDisruptionBudgetInformer.
-//
-// WARNING: this conversion is only safe if the informer handles objects of type
-// *PodDisruptionBudget. If that is not the case, calling type-safe methods of the returned
-// TypedPodDisruptionBudgetInformer leads to runtime panics. A safer alternative is to pass
-// around a TypedPodDisruptionBudgetInformer instances that was obtained from a
-// SharedInformerFactory.
-func ToTypedPodDisruptionBudgetInformer(informer PodDisruptionBudgetInformer) TypedPodDisruptionBudgetInformer {
-	if informer, ok := informer.(TypedPodDisruptionBudgetInformer); ok {
-		return informer
-	}
-	return &podDisruptionBudgetTypedInformerAdapter{informer}
-}
-
-type podDisruptionBudgetTypedInformerAdapter struct {
-	PodDisruptionBudgetInformer
-}
-
-func (a *podDisruptionBudgetTypedInformerAdapter) TypedInformer() PodDisruptionBudgetIndexInformer {
-	return cache.NewTypedSharedIndexInformer[*apipolicyv1.PodDisruptionBudget](a.Informer())
-}
-
-// ToPodDisruptionBudgetIndexInformer converts an untyped informer into a PodDisruptionBudgetIndexInformer.
-//
-// WARNING: this conversion is only safe if the informer handles objects of type
-// *PodDisruptionBudget. If that is not the case, calling type-safe methods of the returned
-// PodDisruptionBudgetIndexInformer leads to runtime panics. A safer alternative is to pass
-// around a PodDisruptionBudgetIndexInformer instances that was obtained from a
-// SharedInformerFactory.
-func ToPodDisruptionBudgetIndexInformer(informer cache.SharedIndexInformer) PodDisruptionBudgetIndexInformer {
-	if informer, ok := informer.(PodDisruptionBudgetIndexInformer); ok {
-		return informer
-	}
-	return cache.NewTypedSharedIndexInformer[*apipolicyv1.PodDisruptionBudget](informer)
 }

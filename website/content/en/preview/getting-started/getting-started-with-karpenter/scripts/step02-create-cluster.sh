@@ -16,13 +16,6 @@ metadata:
   tags:
     karpenter.sh/discovery: ${CLUSTER_NAME}
 
-# Pack pods onto fewer nodes so pod placement aligns with Karpenter's bin-packing
-# and consolidation. See https://karpenter.sh/docs/concepts/scheduling/#kube-scheduler-settings
-kubeSchedulerConfig:
-  nodeResourcesFit:
-    scoringStrategy:
-      type: MostAllocated
-
 iam:
   withOIDC: true
   podIdentityAssociations:
@@ -35,7 +28,6 @@ iam:
     - arn:${AWS_PARTITION}:iam::${AWS_ACCOUNT_ID}:policy/KarpenterControllerEKSIntegrationPolicy-${CLUSTER_NAME}
     - arn:${AWS_PARTITION}:iam::${AWS_ACCOUNT_ID}:policy/KarpenterControllerInterruptionPolicy-${CLUSTER_NAME}
     - arn:${AWS_PARTITION}:iam::${AWS_ACCOUNT_ID}:policy/KarpenterControllerResourceDiscoveryPolicy-${CLUSTER_NAME}
-    - arn:${AWS_PARTITION}:iam::${AWS_ACCOUNT_ID}:policy/KarpenterControllerZonalShiftPolicy-${CLUSTER_NAME}
 
 iamIdentityMappings:
 - arn: "arn:${AWS_PARTITION}:iam::${AWS_ACCOUNT_ID}:role/KarpenterNodeRole-${CLUSTER_NAME}"
@@ -54,9 +46,6 @@ managedNodeGroups:
   desiredCapacity: 2
   minSize: 1
   maxSize: 10
-
-zonalShiftConfig:
-  enabled: ${ENABLE_ZONAL_SHIFT}
 
 addons:
 - name: eks-pod-identity-agent

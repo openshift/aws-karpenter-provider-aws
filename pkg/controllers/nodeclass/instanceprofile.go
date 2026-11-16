@@ -18,10 +18,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/awslabs/operatorpkg/status"
 	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
-	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
@@ -33,15 +31,13 @@ import (
 type InstanceProfile struct {
 	instanceProfileProvider instanceprofile.Provider
 	region                  string
-	clk                     clock.Clock
 	recreationCache         *cache.Cache
 }
 
-func NewInstanceProfileReconciler(clk clock.Clock, instanceProfileProvider instanceprofile.Provider, region string, cache *cache.Cache) *InstanceProfile {
+func NewInstanceProfileReconciler(instanceProfileProvider instanceprofile.Provider, region string, cache *cache.Cache) *InstanceProfile {
 	return &InstanceProfile{
 		instanceProfileProvider: instanceProfileProvider,
 		region:                  region,
-		clk:                     clk,
 		recreationCache:         cache,
 	}
 }
@@ -88,7 +84,8 @@ func (ip *InstanceProfile) Reconcile(ctx context.Context, nodeClass *v1.EC2NodeC
 				newProfileName,
 				nodeClass.InstanceProfileRole(),
 				nodeClass.InstanceProfileTags(options.FromContext(ctx).ClusterName, ip.region),
-				instanceprofile.FormatPath("karpenter", ip.region, options.FromContext(ctx).ClusterName, string(nodeClass.UID)),
+				string(nodeClass.UID),
+				true,
 			); err != nil {
 				// If we failed Create, we may have successfully created the instance profile but failed to either attach the new
 				// role or remove the existing role. To prevent runaway instance profile creation, we'll attempt to delete the
@@ -118,6 +115,6 @@ func (ip *InstanceProfile) Reconcile(ctx context.Context, nodeClass *v1.EC2NodeC
 		ip.protectProfile(nodeClass.Status.InstanceProfile)
 		nodeClass.Status.InstanceProfile = lo.FromPtr(nodeClass.Spec.InstanceProfile)
 	}
-	nodeClass.StatusConditions(status.WithClock(ip.clk)).SetTrue(v1.ConditionTypeInstanceProfileReady)
+	nodeClass.StatusConditions().SetTrue(v1.ConditionTypeInstanceProfileReady)
 	return reconcile.Result{}, nil
 }

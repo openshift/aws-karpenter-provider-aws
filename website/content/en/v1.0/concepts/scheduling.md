@@ -23,7 +23,7 @@ For example, if the NodePool sets limits that allow only a particular zone to be
 Constraints you can request include:
 
 * **Resource requests**: Request that certain amount of memory or CPU be available.
-* **Node selection**: Choose to run on a node that has a particular label (`nodeSelector`).
+* **Node selection**: Choose to run on a node that is has a particular label (`nodeSelector`).
 * **Node affinity**: Draws a pod to run on nodes with particular attributes (affinity).
 * **Topology spread**: Use topology spread to help ensure availability of the application.
 * **Pod affinity/anti-affinity**: Draws pods towards or away from topology domains based on the scheduling of other pods.
@@ -123,20 +123,6 @@ spec:
 Security groups for pods are [currently unsupported for Windows nodes](https://docs.aws.amazon.com/eks/latest/userguide/security-groups-for-pods.html)
 {{% /alert %}}
 
-### DaemonSet overhead
-
-When Karpenter calculates the size of a node for a set of pending pods, it adds the resource requests of every DaemonSet that would run on that node to the pods' own requests, and picks an instance type large enough for the total.
-
-This overhead is only used to size the node.
-Karpenter does not reserve that capacity on the node after it joins the cluster, and it does not bind pods itself.
-
-{{% alert title="Note" color="primary" %}}
-Options to help DaemonSet pods get that capacity include:
-
-* [Startup taints]({{<ref "./nodepools/#spectemplatespecstartuptaints" >}}) will keep workload pods off the node until an external agent removes them, so DaemonSets that tolerate those taints will schedule first.
-* Setting a sufficiently high [PriorityClass](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/) on your DaemonSet pods will cause kube-scheduler to preempt lower-priority pods to make room for them. This is best-effort: pods of equal or higher priority will never be preempted, and PodDisruptionBudgets are only honored on a best-effort basis.
-{{% /alert %}}
-
 ## Selecting nodes
 
 With `nodeSelector` you can ask for a node that matches selected key-value pairs.
@@ -160,9 +146,7 @@ Take care to ensure the label domains are correct. A well known label like `karp
 | node.kubernetes.io/windows-build                               | 10.0.17763  | Windows OS build in the format "MajorVersion.MinorVersion.BuildNumber". Can be `10.0.17763` for WS2019, or `10.0.20348` for WS2022. ([k8s](https://kubernetes.io/docs/reference/labels-annotations-taints/#nodekubernetesiowindows-build)) |
 | kubernetes.io/os                                               | linux       | Operating systems are defined by [GOOS values](https://github.com/golang/go/blob/master/src/go/build/syslist.go#L10) on the instance                            |
 | kubernetes.io/arch                                             | amd64       | Architectures are defined by [GOARCH values](https://github.com/golang/go/blob/master/src/go/build/syslist.go#L50) on the instance                              |
-| karpenter.sh/nodepool                                          | default     | The name of the nodepool used to provision the node.                                                                                                            |
 | karpenter.sh/capacity-type                                     | spot        | Capacity types include `spot`, `on-demand`                                                                                                                      |
-| karpenter.k8s.aws/ec2nodeclass                                 | default     | [AWS Specific] The name of the ec2 nodeclass used to provision the node                                                                                         |
 | karpenter.k8s.aws/instance-hypervisor                          | nitro       | [AWS Specific] Instance types that use a specific hypervisor                                                                                                    |
 | karpenter.k8s.aws/instance-encryption-in-transit-supported     | true        | [AWS Specific] Instance types that support (or not) in-transit encryption                                                                                       |
 | karpenter.k8s.aws/instance-category                            | g           | [AWS Specific] Instance types of the same category, usually the string before the generation number                                                             |
@@ -180,7 +164,6 @@ Take care to ensure the label domains are correct. A well known label like `karp
 | karpenter.k8s.aws/instance-gpu-count                           | 1           | [AWS Specific] Number of GPUs on the instance                                                                                                                   |
 | karpenter.k8s.aws/instance-gpu-memory                          | 16384       | [AWS Specific] Number of mebibytes of memory on the GPU                                                                                                         |
 | karpenter.k8s.aws/instance-local-nvme                          | 900         | [AWS Specific] Number of gibibytes of local nvme storage on the instance                                                                                        |
-| topology.k8s.aws/zone-id                                       | use1-az1             | [AWS Specific] Globally consistent [zone id](https://docs.aws.amazon.com/global-infrastructure/latest/regions/az-ids.html)                             |
 
 {{% alert title="Note" color="primary" %}}
 Karpenter translates the following deprecated labels to their stable equivalents: `failure-domain.beta.kubernetes.io/zone`, `failure-domain.beta.kubernetes.io/region`, `beta.kubernetes.io/arch`, `beta.kubernetes.io/os`, and `beta.kubernetes.io/instance-type`.
@@ -195,10 +178,6 @@ requirements:
   - key: user.defined.label/type
     operator: Exists
 ```
-
-{{% alert title="Warning" color="warning" %}}
-Labels in the `karpenter.sh` domain that are **not** in the well-known table above — including `karpenter.sh/registered` and `karpenter.sh/initialized` — are restricted. Karpenter stamps them on nodes after they join, so kube-scheduler can match them on *existing* Karpenter nodes, but they do not trigger provisioning. You cannot make them provisionable by adding `Exists` on the NodePool (NodePool CEL rejects them). Pin workloads with `karpenter.sh/nodepool` (`Exists` or a specific pool name) instead. When a selector uses a restricted label, Karpenter emits a pod `FailedScheduling` event; controller logs for that path are at verbosity 1 by default.
-{{% /alert %}}
 
 {{% alert title="Note" color="primary" %}}
 There is currently a limit of 100 on the total number of requirements on both the NodePool and the NodeClaim. It's important to note that `spec.template.metadata.labels` are also propagated as requirements on the NodeClaim when it's created, meaning that you can't have more than 100 requirements and labels combined set on your NodePool.
@@ -672,18 +651,6 @@ requirement:
 
 {{% alert title="Note" color="primary" %}}
 If using Gt/Lt operators, make sure to use values under the actual label values of the desired resource.
-{{% /alert %}}
-
-### kube-scheduler settings
-
-Karpenter provisions capacity, but it does not place pods on nodes — that is the job of the Kubernetes [`kube-scheduler`](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/). Karpenter simulates a tight bin-packing of pending pods to decide which nodes to launch, then relies on `kube-scheduler` to bind those pods to nodes. When the scheduler's placement decisions diverge from Karpenter's simulation, Karpenter-launched nodes can end up under-packed. This lowers utilization and causes [Consolidation]({{<ref "./disruption#consolidation" >}}) to churn as it repeatedly tries to re-pack pods and remove the excess nodes.
-
-By default, `kube-scheduler` scores nodes with the `NodeResourcesFit` plugin's `LeastAllocated` strategy, which *spreads* pods to maximize the free resources left on each node. This is the opposite of Karpenter's goal of packing pods onto as few nodes as possible. **We recommend configuring `kube-scheduler` with the `MostAllocated` scoring strategy**, which makes it prefer the most-utilized feasible node so pod placement aligns with Karpenter's bin-packing. The result is higher node utilization, fewer under-packed nodes, more empty nodes available for consolidation, and lower cost.
-
-On Amazon EKS, configure the scheduler's scoring strategy with [advanced control plane configuration](https://docs.aws.amazon.com/eks/latest/userguide/control-plane-configuration.html), available on clusters running Kubernetes 1.31 or later. You can set it when you create a cluster or update an existing one, through the AWS Console, `eksctl`, the AWS CLI, CloudFormation, or the CDK. See the EKS documentation for the exact commands and supported values.
-
-{{% alert title="Note" color="primary" %}}
-`kube-scheduler` scores nodes based on pod resource *requests*, so `MostAllocated` packs pods onto the fullest feasible nodes and leaves little unreserved capacity on each node. Workloads that set limits higher than their requests rely on that unreserved capacity to burst — under tight packing there is less room to burst into, so a pod may be unable to burst into more memory (risking an OOM kill) or have its CPU throttled sooner than it would under the default spreading behavior. Packing pods onto fewer nodes may also concentrate blast radius if pods don't use scheduling constraints to ensure availability, since more pods are affected when a node becomes unhealthy. Changing the strategy affects only future scheduling — running pods are not moved — and preferred anti-affinity or topology spreads can still reduce consolidation effectiveness regardless of the scoring strategy.
 {{% /alert %}}
 
 ### `Exists` Operator

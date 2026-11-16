@@ -78,20 +78,17 @@ func (in *Offering) DeepCopyInto(out *Offering) {
 		in, out := &in.Requirements, &out.Requirements
 		*out = make(scheduling.Requirements, len(*in))
 		for key, val := range *in {
-			(*out)[key] = val.DeepCopy()
+			var outVal *scheduling.Requirement
+			if val == nil {
+				(*out)[key] = nil
+			} else {
+				inVal := (*in)[key]
+				in, out := &inVal, &outVal
+				*out = new(scheduling.Requirement)
+				(*in).DeepCopyInto(*out)
+			}
+			(*out)[key] = outVal
 		}
-	}
-	if in.CapacityOverride != nil {
-		in, out := &in.CapacityOverride, &out.CapacityOverride
-		*out = make(v1.ResourceList, len(*in))
-		for key, val := range *in {
-			(*out)[key] = val.DeepCopy()
-		}
-	}
-	if in.OverheadOverride != nil {
-		in, out := &in.OverheadOverride, &out.OverheadOverride
-		*out = new(InstanceTypeOverhead)
-		(*in).DeepCopyInto(*out)
 	}
 }
 

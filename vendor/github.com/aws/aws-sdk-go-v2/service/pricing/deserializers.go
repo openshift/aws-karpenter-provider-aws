@@ -34,17 +34,14 @@ func (m *awsAwsjson11_deserializeOpDescribeServices) HandleDeserialize(ctx conte
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsjson11_deserializeOpErrorDescribeServices(response, &metadata)
@@ -120,9 +117,6 @@ func awsAwsjson11_deserializeOpErrorDescribeServices(response *smithyhttp.Respon
 		errorMessage = bodyInfo.Message
 	}
 	switch {
-	case strings.EqualFold("AccessDeniedException", errorCode):
-		return awsAwsjson11_deserializeErrorAccessDeniedException(response, errorBody)
-
 	case strings.EqualFold("ExpiredNextTokenException", errorCode):
 		return awsAwsjson11_deserializeErrorExpiredNextTokenException(response, errorBody)
 
@@ -166,17 +160,14 @@ func (m *awsAwsjson11_deserializeOpGetAttributeValues) HandleDeserialize(ctx con
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsjson11_deserializeOpErrorGetAttributeValues(response, &metadata)
@@ -252,9 +243,6 @@ func awsAwsjson11_deserializeOpErrorGetAttributeValues(response *smithyhttp.Resp
 		errorMessage = bodyInfo.Message
 	}
 	switch {
-	case strings.EqualFold("AccessDeniedException", errorCode):
-		return awsAwsjson11_deserializeErrorAccessDeniedException(response, errorBody)
-
 	case strings.EqualFold("ExpiredNextTokenException", errorCode):
 		return awsAwsjson11_deserializeErrorExpiredNextTokenException(response, errorBody)
 
@@ -298,17 +286,14 @@ func (m *awsAwsjson11_deserializeOpGetPriceListFileUrl) HandleDeserialize(ctx co
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsjson11_deserializeOpErrorGetPriceListFileUrl(response, &metadata)
@@ -427,17 +412,14 @@ func (m *awsAwsjson11_deserializeOpGetProducts) HandleDeserialize(ctx context.Co
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsjson11_deserializeOpErrorGetProducts(response, &metadata)
@@ -513,9 +495,6 @@ func awsAwsjson11_deserializeOpErrorGetProducts(response *smithyhttp.Response, m
 		errorMessage = bodyInfo.Message
 	}
 	switch {
-	case strings.EqualFold("AccessDeniedException", errorCode):
-		return awsAwsjson11_deserializeErrorAccessDeniedException(response, errorBody)
-
 	case strings.EqualFold("ExpiredNextTokenException", errorCode):
 		return awsAwsjson11_deserializeErrorExpiredNextTokenException(response, errorBody)
 
@@ -559,17 +538,14 @@ func (m *awsAwsjson11_deserializeOpListPriceLists) HandleDeserialize(ctx context
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsjson11_deserializeOpErrorListPriceLists(response, &metadata)

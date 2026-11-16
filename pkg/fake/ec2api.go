@@ -49,19 +49,16 @@ type CapacityPool struct {
 // pollute each other.
 type EC2Behavior struct {
 	DescribeCapacityReservationsOutput  AtomicPtr[ec2.DescribeCapacityReservationsOutput]
-	DescribePlacementGroupsOutput       AtomicPtr[ec2.DescribePlacementGroupsOutput]
 	DescribeImagesOutput                AtomicPtr[ec2.DescribeImagesOutput]
 	DescribeLaunchTemplatesOutput       AtomicPtr[ec2.DescribeLaunchTemplatesOutput]
 	DescribeInstanceTypesOutput         AtomicPtr[ec2.DescribeInstanceTypesOutput]
 	DescribeInstanceTypeOfferingsOutput AtomicPtr[ec2.DescribeInstanceTypeOfferingsOutput]
-	DescribeInstanceStatusOutput        AtomicPtr[ec2.DescribeInstanceStatusOutput]
 	DescribeAvailabilityZonesOutput     AtomicPtr[ec2.DescribeAvailabilityZonesOutput]
 	DescribeSubnetsBehavior             MockedFunction[ec2.DescribeSubnetsInput, ec2.DescribeSubnetsOutput]
 	DescribeSecurityGroupsBehavior      MockedFunction[ec2.DescribeSecurityGroupsInput, ec2.DescribeSecurityGroupsOutput]
 	DescribeSpotPriceHistoryBehavior    MockedFunction[ec2.DescribeSpotPriceHistoryInput, ec2.DescribeSpotPriceHistoryOutput]
 	CreateFleetBehavior                 MockedFunction[ec2.CreateFleetInput, ec2.CreateFleetOutput]
 	TerminateInstancesBehavior          MockedFunction[ec2.TerminateInstancesInput, ec2.TerminateInstancesOutput]
-	RebootInstancesBehavior             MockedFunction[ec2.RebootInstancesInput, ec2.RebootInstancesOutput]
 	DescribeInstancesBehavior           MockedFunction[ec2.DescribeInstancesInput, ec2.DescribeInstancesOutput]
 	CreateTagsBehavior                  MockedFunction[ec2.CreateTagsInput, ec2.CreateTagsOutput]
 	RunInstancesBehavior                MockedFunction[ec2.RunInstancesInput, ec2.RunInstancesOutput]
@@ -95,13 +92,11 @@ func (e *EC2API) Reset() {
 	e.DescribeLaunchTemplatesOutput.Reset()
 	e.DescribeInstanceTypesOutput.Reset()
 	e.DescribeInstanceTypeOfferingsOutput.Reset()
-	e.DescribeInstanceStatusOutput.Reset()
 	e.DescribeAvailabilityZonesOutput.Reset()
 	e.DescribeSubnetsBehavior.Reset()
 	e.DescribeSecurityGroupsBehavior.Reset()
 	e.CreateFleetBehavior.Reset()
 	e.TerminateInstancesBehavior.Reset()
-	e.RebootInstancesBehavior.Reset()
 	e.DescribeInstancesBehavior.Reset()
 	e.CreateLaunchTemplateBehavior.Reset()
 	e.CalledWithDescribeImagesInput.Reset()
@@ -269,13 +264,6 @@ func (e *EC2API) TerminateInstances(_ context.Context, input *ec2.TerminateInsta
 	})
 }
 
-func (e *EC2API) RebootInstances(_ context.Context, input *ec2.RebootInstancesInput, _ ...func(*ec2.Options)) (*ec2.RebootInstancesOutput, error) {
-	return e.RebootInstancesBehavior.Invoke(input, func(input *ec2.RebootInstancesInput) (*ec2.RebootInstancesOutput, error) {
-		// A reboot preserves the instance, so unlike TerminateInstances the fake leaves e.Instances intact.
-		return &ec2.RebootInstancesOutput{}, nil
-	})
-}
-
 // Then modify the CreateLaunchTemplate method:
 func (e *EC2API) CreateLaunchTemplate(ctx context.Context, input *ec2.CreateLaunchTemplateInput, _ ...func(*ec2.Options)) (*ec2.CreateLaunchTemplateOutput, error) {
 	return e.CreateLaunchTemplateBehavior.Invoke(input, func(input *ec2.CreateLaunchTemplateInput) (*ec2.CreateLaunchTemplateOutput, error) {
@@ -394,19 +382,6 @@ func filterInstances(instances []ec2types.Instance, filters []ec2types.Filter) [
 		}
 	}
 	return ret
-}
-
-func (e *EC2API) DescribePlacementGroups(_ context.Context, input *ec2.DescribePlacementGroupsInput, _ ...func(*ec2.Options)) (*ec2.DescribePlacementGroupsOutput, error) {
-	if !e.NextError.IsNil() {
-		defer e.NextError.Reset()
-		return nil, e.NextError.Get()
-	}
-	if !e.DescribePlacementGroupsOutput.IsNil() {
-		out := e.DescribePlacementGroupsOutput.Clone()
-		out.PlacementGroups = FilterDescribePlacementGroups(out.PlacementGroups, input.GroupIds, input.GroupNames, input.Filters)
-		return out, nil
-	}
-	return &ec2.DescribePlacementGroupsOutput{}, nil
 }
 
 func (e *EC2API) DescribeCapacityReservations(ctx context.Context, input *ec2.DescribeCapacityReservationsInput, _ ...func(*ec2.Options)) (*ec2.DescribeCapacityReservationsOutput, error) {
@@ -663,15 +638,4 @@ func (e *EC2API) RunInstances(ctx context.Context, input *ec2.RunInstancesInput,
 			Instances: []ec2types.Instance{instance},
 		}, nil
 	})
-}
-
-func (e *EC2API) DescribeInstanceStatus(ctx context.Context, input *ec2.DescribeInstanceStatusInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstanceStatusOutput, error) {
-	if !e.NextError.IsNil() {
-		defer e.NextError.Reset()
-		return nil, e.NextError.Get()
-	}
-	if !e.DescribeInstanceStatusOutput.IsNil() {
-		return e.DescribeInstanceStatusOutput.Clone(), nil
-	}
-	return &ec2.DescribeInstanceStatusOutput{}, nil
 }

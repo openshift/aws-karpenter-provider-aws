@@ -149,7 +149,7 @@ func (s *Selection) ClosestMatcher(m Matcher) *Selection {
 // ClosestNodes gets the first element that matches one of the nodes by testing the
 // element itself and traversing up through its ancestors in the DOM tree.
 func (s *Selection) ClosestNodes(nodes ...*html.Node) *Selection {
-	set := make(map[*html.Node]bool, len(nodes))
+	set := make(map[*html.Node]bool)
 	for _, n := range nodes {
 		set[n] = true
 	}
@@ -537,7 +537,10 @@ func (s *Selection) PrevMatcherUntilNodes(filter Matcher, nodes ...*html.Node) *
 // Filter and push filters the nodes based on a matcher, and pushes the results
 // on the stack, with the srcSel as previous selection.
 func filterAndPush(srcSel *Selection, nodes []*html.Node, m Matcher) *Selection {
-	return pushStack(srcSel, winnow(nodes, m, true))
+	// Create a temporary Selection with the specified nodes to filter using winnow
+	sel := &Selection{nodes, srcSel.document, nil}
+	// Filter based on matcher and push on stack
+	return pushStack(srcSel, winnow(sel, m, true))
 }
 
 // Internal implementation of Find that return raw nodes.
@@ -559,12 +562,13 @@ func findWithMatcher(nodes []*html.Node, m Matcher) []*html.Node {
 func getParentsNodes(nodes []*html.Node, stopm Matcher, stopNodes []*html.Node) []*html.Node {
 	return mapNodes(nodes, func(i int, n *html.Node) (result []*html.Node) {
 		for p := n.Parent; p != nil; p = p.Parent {
+			sel := newSingleSelection(p, nil)
 			if stopm != nil {
-				if stopm.Match(p) {
+				if sel.IsMatcher(stopm) {
 					break
 				}
 			} else if len(stopNodes) > 0 {
-				if isInSlice(stopNodes, p) {
+				if sel.IsNodes(stopNodes...) {
 					break
 				}
 			}
@@ -585,9 +589,13 @@ func getSiblingNodes(nodes []*html.Node, st siblingType, untilm Matcher, untilNo
 	if st == siblingNextUntil || st == siblingPrevUntil {
 		f = func(n *html.Node) bool {
 			if untilm != nil {
-				return untilm.Match(n)
+				// Matcher-based condition
+				sel := newSingleSelection(n, nil)
+				return sel.IsMatcher(untilm)
 			} else if len(untilNodes) > 0 {
-				return isInSlice(untilNodes, n)
+				// Nodes-based condition
+				sel := newSingleSelection(n, nil)
+				return sel.IsNodes(untilNodes...)
 			}
 			return false
 		}
@@ -654,20 +662,6 @@ func getChildrenWithSiblingType(parent *html.Node, st siblingType, skipNode *htm
 		}
 	}
 
-	// For the cases that collect every matching sibling, count them in a
-	// cheap pointer walk first so the result slice can be sized exactly,
-	// avoiding repeated slice growth. The Until cases are skipped (counting
-	// would require running the predicate twice) and so are the single-result
-	// Next/Prev cases.
-	switch st {
-	case siblingAll, siblingAllIncludingNonElements, siblingPrevAll, siblingNextAll:
-		n := 0
-		for c := iter(nil); c != nil; c = iter(c) {
-			n++
-		}
-		result = make([]*html.Node, 0, n)
-	}
-
 	for c := iter(nil); c != nil; c = iter(c) {
 		// If this is an ...Until case, test before append (returns true
 		// if the until condition is reached)
@@ -687,21 +681,12 @@ func getChildrenWithSiblingType(parent *html.Node, st siblingType, skipNode *htm
 
 // Internal implementation of parent nodes that return a raw slice of Nodes.
 func getParentNodes(nodes []*html.Node) []*html.Node {
-	// Collect parents inline rather than going through mapNodes, which would
-	// allocate a throwaway one-element slice per source node. Many source
-	// nodes (e.g. siblings) share the same parent, so deduplicate as we go.
-	var result []*html.Node
-	set := make(map[*html.Node]bool, len(nodes))
-
-	for _, n := range nodes {
-		p := n.Parent
-		if p == nil || p.Type != html.ElementNode || set[p] {
-			continue
+	return mapNodes(nodes, func(i int, n *html.Node) []*html.Node {
+		if n.Parent != nil && n.Parent.Type == html.ElementNode {
+			return []*html.Node{n.Parent}
 		}
-		set[p] = true
-		result = append(result, p)
-	}
-	return result
+		return nil
+	})
 }
 
 // Internal map function used by many traversing methods. Takes the source nodes
@@ -709,14 +694,7 @@ func getParentNodes(nodes []*html.Node) []*html.Node {
 // Returns an array of nodes mapped by calling the callback function once for
 // each node in the source nodes.
 func mapNodes(nodes []*html.Node, f func(int, *html.Node) []*html.Node) (result []*html.Node) {
-	switch len(nodes) {
-	case 0:
-		return nil
-	case 1:
-		return f(0, nodes[0])
-	}
-
-	set := make(map[*html.Node]bool, len(nodes))
+	set := make(map[*html.Node]bool)
 	for i, n := range nodes {
 		if vals := f(i, n); len(vals) > 0 {
 			result = appendWithoutDuplicates(result, vals, set)

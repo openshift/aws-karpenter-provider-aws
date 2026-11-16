@@ -5,10 +5,10 @@ package eks
 import (
 	"context"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/service/eks/schemas"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
-	smithy "github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // Updates an Amazon EKS managed node group configuration. Your node group
@@ -67,60 +67,7 @@ type UpdateNodegroupConfigInput struct {
 	// The node group update configuration.
 	UpdateConfig *types.NodegroupUpdateConfig
 
-	// The warm pool configuration to apply to the node group. You can use this to add
-	// a warm pool to an existing node group or modify the settings of an existing warm
-	// pool.
-	WarmPoolConfig *types.WarmPoolConfig
-
 	noSmithyDocumentSerde
-}
-
-func (v *UpdateNodegroupConfigInput) Serialize(s smithy.ShapeSerializer) {
-	s.WriteStruct(schemas.UpdateNodegroupConfigRequest)
-	v.SerializeMembers(s)
-	s.CloseStruct()
-}
-
-func (v *UpdateNodegroupConfigInput) SerializeMembers(s smithy.ShapeSerializer) {
-	if v.ClientRequestToken != nil {
-		s.WriteString(schemas.UpdateNodegroupConfigRequest_clientRequestToken, *v.ClientRequestToken)
-	}
-	if v.ClusterName != nil {
-		s.WriteString(schemas.UpdateNodegroupConfigRequest_clusterName, *v.ClusterName)
-	}
-	if v.Labels != nil {
-		s.WriteStruct(schemas.UpdateNodegroupConfigRequest_labels)
-		v.Labels.SerializeMembers(s)
-		s.CloseStruct()
-	}
-	if v.NodeRepairConfig != nil {
-		s.WriteStruct(schemas.UpdateNodegroupConfigRequest_nodeRepairConfig)
-		v.NodeRepairConfig.SerializeMembers(s)
-		s.CloseStruct()
-	}
-	if v.NodegroupName != nil {
-		s.WriteString(schemas.UpdateNodegroupConfigRequest_nodegroupName, *v.NodegroupName)
-	}
-	if v.ScalingConfig != nil {
-		s.WriteStruct(schemas.UpdateNodegroupConfigRequest_scalingConfig)
-		v.ScalingConfig.SerializeMembers(s)
-		s.CloseStruct()
-	}
-	if v.Taints != nil {
-		s.WriteStruct(schemas.UpdateNodegroupConfigRequest_taints)
-		v.Taints.SerializeMembers(s)
-		s.CloseStruct()
-	}
-	if v.UpdateConfig != nil {
-		s.WriteStruct(schemas.UpdateNodegroupConfigRequest_updateConfig)
-		v.UpdateConfig.SerializeMembers(s)
-		s.CloseStruct()
-	}
-	if v.WarmPoolConfig != nil {
-		s.WriteStruct(schemas.UpdateNodegroupConfigRequest_warmPoolConfig)
-		v.WarmPoolConfig.SerializeMembers(s)
-		s.CloseStruct()
-	}
 }
 
 type UpdateNodegroupConfigOutput struct {
@@ -134,44 +81,68 @@ type UpdateNodegroupConfigOutput struct {
 	noSmithyDocumentSerde
 }
 
-func (v *UpdateNodegroupConfigOutput) Serialize(s smithy.ShapeSerializer) {
-	s.WriteStruct(schemas.UpdateNodegroupConfigResponse)
-	v.SerializeMembers(s)
-	s.CloseStruct()
-}
-
-func (v *UpdateNodegroupConfigOutput) SerializeMembers(s smithy.ShapeSerializer) {
-	if v.Update != nil {
-		s.WriteStruct(schemas.UpdateNodegroupConfigResponse_update)
-		v.Update.SerializeMembers(s)
-		s.CloseStruct()
-	}
-}
-func (v *UpdateNodegroupConfigOutput) Deserialize(d smithy.ShapeDeserializer) error {
-	return smithy.ReadStruct(d, schemas.UpdateNodegroupConfigResponse, func(s *smithy.Schema) error {
-		switch s {
-		case schemas.UpdateNodegroupConfigResponse_update:
-			v.Update = &types.Update{}
-			return v.Update.Deserialize(d)
-		}
-		return nil
-	})
-}
 func (c *Client) addOperationUpdateNodegroupConfigMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&serializeRequestMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.UpdateNodegroupConfig, schemas.UpdateNodegroupConfigRequest, schemas.UpdateNodegroupConfigResponse)}, middleware.After); err != nil {
+	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
 		return err
 	}
-	if err := stack.Deserialize.Add(&deserializeResponseMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.UpdateNodegroupConfig, schemas.UpdateNodegroupConfigRequest, schemas.UpdateNodegroupConfigResponse), output: &UpdateNodegroupConfigOutput{}}, middleware.After); err != nil {
+	err = stack.Serialize.Add(&awsRestjson1_serializeOpUpdateNodegroupConfig{}, middleware.After)
+	if err != nil {
 		return err
+	}
+	err = stack.Deserialize.Add(&awsRestjson1_deserializeOpUpdateNodegroupConfig{}, middleware.After)
+	if err != nil {
+		return err
+	}
+	if err := addProtocolFinalizerMiddlewares(stack, options, "UpdateNodegroupConfig"); err != nil {
+		return fmt.Errorf("add protocol finalizers: %v", err)
 	}
 
+	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
+		return err
+	}
+	if err = addSetLoggerMiddleware(stack, options); err != nil {
+		return err
+	}
+	if err = addClientRequestID(stack); err != nil {
+		return err
+	}
+	if err = addComputeContentLength(stack); err != nil {
+		return err
+	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRecordResponseTiming(stack, options); err != nil {
+	if err = addRetry(stack, options); err != nil {
+		return err
+	}
+	if err = addRawResponseToMetadata(stack); err != nil {
+		return err
+	}
+	if err = addRecordResponseTiming(stack); err != nil {
+		return err
+	}
+	if err = addSpanRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addClientUserAgent(stack, options); err != nil {
+		return err
+	}
+	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
+		return err
+	}
+	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
+		return err
+	}
+	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
 	if err = addCredentialSource(stack, options); err != nil {
@@ -181,6 +152,12 @@ func (c *Client) addOperationUpdateNodegroupConfigMiddlewares(stack *middleware.
 		return err
 	}
 	if err = addOpUpdateNodegroupConfigValidationMiddleware(stack); err != nil {
+		return err
+	}
+	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opUpdateNodegroupConfig(options.Region), middleware.Before); err != nil {
+		return err
+	}
+	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -193,6 +170,12 @@ func (c *Client) addOperationUpdateNodegroupConfigMiddlewares(stack *middleware.
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAttempt(stack, options); err != nil {
 		return err
 	}
 	if err = addInterceptors(stack, options); err != nil {
@@ -232,4 +215,12 @@ func (m *idempotencyToken_initializeOpUpdateNodegroupConfig) HandleInitialize(ct
 }
 func addIdempotencyToken_opUpdateNodegroupConfigMiddleware(stack *middleware.Stack, cfg Options) error {
 	return stack.Initialize.Add(&idempotencyToken_initializeOpUpdateNodegroupConfig{tokenProvider: cfg.IdempotencyTokenProvider}, middleware.Before)
+}
+
+func newServiceMetadataMiddleware_opUpdateNodegroupConfig(region string) *awsmiddleware.RegisterServiceMetadata {
+	return &awsmiddleware.RegisterServiceMetadata{
+		Region:        region,
+		ServiceID:     ServiceID,
+		OperationName: "UpdateNodegroupConfig",
+	}
 }

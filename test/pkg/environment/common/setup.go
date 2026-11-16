@@ -31,7 +31,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
-	autoscalingv1beta1 "sigs.k8s.io/karpenter/pkg/apis/autoscaling/v1beta1"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/apis/v1alpha1"
 	"sigs.k8s.io/karpenter/pkg/test"
@@ -50,33 +49,22 @@ const TestingFinalizer = "testing/finalizer"
 
 var (
 	CleanableObjects = []client.Object{
-		// apps
-		&appsv1.DaemonSet{},
+		&corev1.Pod{},
 		&appsv1.Deployment{},
 		&appsv1.StatefulSet{},
-		// autoscaling.x-k8s.io
-		&autoscalingv1beta1.CapacityBuffer{},
-		// core
-		&corev1.LimitRange{},
-		&corev1.Node{},
-		&corev1.PersistentVolume{},
-		&corev1.PersistentVolumeClaim{},
-		&corev1.Pod{},
-		&corev1.PodTemplate{},
-		// karpenter.k8s.aws
-		&v1.EC2NodeClass{},
-		// karpenter.sh
-		&karpv1.NodeClaim{},
-		&karpv1.NodePool{},
-		&v1alpha1.NodeOverlay{},
-		// policy
+		&appsv1.DaemonSet{},
 		&policyv1.PodDisruptionBudget{},
-		// scheduling.k8s.io
-		&schedulingv1.PriorityClass{},
-		// storage.k8s.io
+		&corev1.PersistentVolumeClaim{},
+		&corev1.PersistentVolume{},
 		&storagev1.StorageClass{},
-		// vpcresources.k8s.aws
+		&karpv1.NodePool{},
+		&corev1.LimitRange{},
+		&schedulingv1.PriorityClass{},
+		&corev1.Node{},
+		&karpv1.NodeClaim{},
+		&v1.EC2NodeClass{},
 		&v1beta1.SecurityGroupPolicy{},
+		&v1alpha1.NodeOverlay{},
 	}
 )
 

@@ -15,19 +15,14 @@ limitations under the License.
 package main
 
 import (
-	"github.com/samber/lo"
-
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 	"github.com/aws/karpenter-provider-aws/pkg/cloudprovider"
-	"github.com/aws/karpenter-provider-aws/pkg/cloudprovider/registrationhooks"
 	"github.com/aws/karpenter-provider-aws/pkg/controllers"
 	"github.com/aws/karpenter-provider-aws/pkg/operator"
-	"github.com/aws/karpenter-provider-aws/pkg/operator/options"
 
 	"sigs.k8s.io/karpenter/pkg/cloudprovider/metrics"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider/overlay"
 	corecontrollers "sigs.k8s.io/karpenter/pkg/controllers"
-	"sigs.k8s.io/karpenter/pkg/controllers/node/health"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	coreoperator "sigs.k8s.io/karpenter/pkg/operator"
 	karpoptions "sigs.k8s.io/karpenter/pkg/operator/options"
@@ -44,16 +39,11 @@ func main() {
 		op.AMIProvider,
 		op.SecurityGroupProvider,
 		op.CapacityReservationProvider,
-		op.PlacementGroupProvider,
 		op.InstanceTypeStore,
-		op.CABundle,
-		cloudprovider.WithLegacyRepairPolicies(karpoptions.FromContext(ctx).LegacyNodeRepair),
-		cloudprovider.WithRebootForRepair(options.FromContext(ctx).FeatureGates.RebootForRepair),
 	)
 	overlayUndecoratedCloudProvider := metrics.Decorate(awsCloudProvider)
 	cloudProvider := overlay.Decorate(overlayUndecoratedCloudProvider, op.GetClient(), op.InstanceTypeStore)
-	repairPolicyMatcher := lo.Must(health.NewRepairPolicyMatcher(ctx, cloudProvider))
-	clusterState := state.NewCluster(op.Clock, op.GetClient(), cloudProvider, state.WithRepairPolicyMatcher(repairPolicyMatcher))
+	clusterState := state.NewCluster(op.Clock, op.GetClient(), cloudProvider)
 
 	if karpoptions.FromContext(ctx).FeatureGates.ReservedCapacity {
 		v1.CapacityReservationsEnabled = true
@@ -70,8 +60,6 @@ func main() {
 			overlayUndecoratedCloudProvider,
 			clusterState,
 			op.InstanceTypeStore,
-			op.PredictionStore,
-			corecontrollers.WithRegistrationHook(registrationhooks.NewPlacementGroupRegistrationHook(op.InstanceProvider)),
 		)...).
 		WithControllers(ctx, controllers.NewControllers(
 			ctx,
@@ -96,12 +84,7 @@ func main() {
 			op.VersionProvider,
 			op.InstanceTypesProvider,
 			op.CapacityReservationProvider,
-			op.PlacementGroupProvider,
 			op.AMIResolver,
-			op.ZonalShiftProvider,
-			op.InstanceStatusProvider,
-			op.CABundle,
-			op.CELEnvironment,
 		)...).
 		Start(ctx)
 }

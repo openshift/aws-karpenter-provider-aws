@@ -21,9 +21,7 @@ import (
 	"time"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/awslabs/operatorpkg/status"
 	"github.com/samber/lo"
-	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
@@ -32,13 +30,11 @@ import (
 
 type SecurityGroup struct {
 	securityGroupProvider securitygroup.Provider
-	clk                   clock.Clock
 }
 
-func NewSecurityGroupReconciler(clk clock.Clock, securityGroupProvider securitygroup.Provider) *SecurityGroup {
+func NewSecurityGroupReconciler(securityGroupProvider securitygroup.Provider) *SecurityGroup {
 	return &SecurityGroup{
 		securityGroupProvider: securityGroupProvider,
-		clk:                   clk,
 	}
 }
 
@@ -49,7 +45,7 @@ func (sg *SecurityGroup) Reconcile(ctx context.Context, nodeClass *v1.EC2NodeCla
 	}
 	if len(securityGroups) == 0 && len(nodeClass.Spec.SecurityGroupSelectorTerms) > 0 {
 		nodeClass.Status.SecurityGroups = nil
-		nodeClass.StatusConditions(status.WithClock(sg.clk)).SetFalse(v1.ConditionTypeSecurityGroupsReady, "SecurityGroupsNotFound", "SecurityGroupSelector did not match any SecurityGroups")
+		nodeClass.StatusConditions().SetFalse(v1.ConditionTypeSecurityGroupsReady, "SecurityGroupsNotFound", "SecurityGroupSelector did not match any SecurityGroups")
 		// If users have omitted the necessary tags from their SecurityGroups and later add them, we need to reprocess the information.
 		// Returning 'ok' in this case means that the nodeclass will remain in an unready state until the component is restarted.
 		return reconcile.Result{RequeueAfter: time.Minute}, nil
@@ -63,6 +59,6 @@ func (sg *SecurityGroup) Reconcile(ctx context.Context, nodeClass *v1.EC2NodeCla
 			Name: *securityGroup.GroupName,
 		}
 	})
-	nodeClass.StatusConditions(status.WithClock(sg.clk)).SetTrue(v1.ConditionTypeSecurityGroupsReady)
+	nodeClass.StatusConditions().SetTrue(v1.ConditionTypeSecurityGroupsReady)
 	return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil
 }

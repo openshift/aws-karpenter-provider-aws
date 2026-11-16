@@ -78,8 +78,6 @@ const (
 	awsDisableRequestCompressionEnv      = "AWS_DISABLE_REQUEST_COMPRESSION"
 	awsRequestMinCompressionSizeBytesEnv = "AWS_REQUEST_MIN_COMPRESSION_SIZE_BYTES"
 
-	awsDisableClockSkewCorrectionEnv = "AWS_DISABLE_CLOCK_SKEW_CORRECTION"
-
 	awsS3DisableExpressSessionAuthEnv = "AWS_S3_DISABLE_EXPRESS_SESSION_AUTH"
 
 	awsAccountIDEnv             = "AWS_ACCOUNT_ID"
@@ -89,8 +87,6 @@ const (
 	awsResponseChecksumValidation = "AWS_RESPONSE_CHECKSUM_VALIDATION"
 
 	awsAuthSchemePreferenceEnv = "AWS_AUTH_SCHEME_PREFERENCE"
-
-	awsRestrictFilePermissionsEnv = "AWS_RESTRICT_FILE_PERMISSIONS"
 )
 
 var (
@@ -295,10 +291,6 @@ type EnvConfig struct {
 	// retrieved from env var AWS_REQUEST_MIN_COMPRESSION_SIZE_BYTES
 	RequestMinCompressSizeBytes *int64
 
-	// determine if clock skew correction is disabled, default to false
-	// retrieved from env var AWS_DISABLE_CLOCK_SKEW_CORRECTION
-	DisableClockSkewCorrection *bool
-
 	// Whether S3Express auth is disabled.
 	//
 	// This will NOT prevent requests from being made to S3Express buckets, it
@@ -317,10 +309,6 @@ type EnvConfig struct {
 
 	// Priority list of preferred auth scheme names (e.g. sigv4a).
 	AuthSchemePreference []string
-
-	// Controls whether the SDK restricts file permissions on credential
-	// cache files it creates.
-	RestrictFilePermissions aws.RestrictFilePermissions
 }
 
 // loadEnvConfig reads configuration values from the OS's environment variables.
@@ -368,9 +356,6 @@ func NewEnvConfig() (EnvConfig, error) {
 		return cfg, err
 	}
 	if err := setInt64PtrFromEnvVal(&cfg.RequestMinCompressSizeBytes, []string{awsRequestMinCompressionSizeBytesEnv}, smithyrequestcompression.MaxRequestMinCompressSizeBytes); err != nil {
-		return cfg, err
-	}
-	if err := setBoolPtrFromEnvVal(&cfg.DisableClockSkewCorrection, []string{awsDisableClockSkewCorrectionEnv}); err != nil {
 		return cfg, err
 	}
 
@@ -437,10 +422,6 @@ func NewEnvConfig() (EnvConfig, error) {
 
 	cfg.AuthSchemePreference = toAuthSchemePreferenceList(os.Getenv(awsAuthSchemePreferenceEnv))
 
-	if err := setRestrictFilePermissionsFromEnvVal(&cfg.RestrictFilePermissions, []string{awsRestrictFilePermissionsEnv}); err != nil {
-		return cfg, err
-	}
-
 	return cfg, nil
 }
 
@@ -460,13 +441,6 @@ func (c EnvConfig) getDisableRequestCompression(context.Context) (bool, bool, er
 		return false, false, nil
 	}
 	return *c.DisableRequestCompression, true, nil
-}
-
-func (c EnvConfig) getDisableClockSkewCorrection(context.Context) (bool, bool, error) {
-	if c.DisableClockSkewCorrection == nil {
-		return false, false, nil
-	}
-	return *c.DisableClockSkewCorrection, true, nil
 }
 
 func (c EnvConfig) getRequestMinCompressSizeBytes(context.Context) (int64, bool, error) {
@@ -955,28 +929,4 @@ func (c EnvConfig) getAuthSchemePreference() ([]string, bool) {
 		return c.AuthSchemePreference, true
 	}
 	return nil, false
-}
-
-func (c EnvConfig) getRestrictFilePermissions(context.Context) (aws.RestrictFilePermissions, bool, error) {
-	return c.RestrictFilePermissions, len(c.RestrictFilePermissions) > 0, nil
-}
-
-func setRestrictFilePermissionsFromEnvVal(m *aws.RestrictFilePermissions, keys []string) error {
-	for _, k := range keys {
-		value := os.Getenv(k)
-		if len(value) == 0 {
-			continue
-		}
-
-		switch strings.ToLower(value) {
-		case "user_read_write":
-			*m = aws.RestrictFilePermissionsUserReadWrite
-		case "unrestricted":
-			*m = aws.RestrictFilePermissionsUnrestricted
-		default:
-			return fmt.Errorf("invalid value for environment variable, %s=%s, must be user_read_write/unrestricted", k, value)
-		}
-		break
-	}
-	return nil
 }

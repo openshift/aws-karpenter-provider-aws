@@ -21,7 +21,6 @@ import (
 	"math"
 	"math/rand"
 	"strconv"
-	"sync/atomic"
 
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
@@ -32,7 +31,7 @@ import (
 
 //go:generate go tool -modfile=../../go.tools.mod controller-gen object:headerFile="../../hack/boilerplate.go.txt" paths="."
 
-// Requirement is an efficient representation of corev1.NodeSelectorRequirement
+// Requirement is an efficient represenatation of corev1.NodeSelectorRequirement
 // +k8s:deepcopy-gen=true
 type Requirement struct {
 	Key        string
@@ -40,29 +39,15 @@ type Requirement struct {
 	values     sets.Set[string]
 	gte        *int // inclusive lower bound (Gt is converted to Gte)
 	lte        *int // inclusive upper bound (Lt is converted to Lte)
-	minValues  *int
-	asString   atomic.Pointer[string] // Cached result of String() to avoid repeated allocations
+	MinValues  *int
 }
 
 // NewRequirementWithFlexibility constructs new requirement from the combination of key, values, minValues and the operator that
 // connects the keys and values. GT and LT operators are canonicalized to GTE and LTE respectively.
 // nolint:gocyclo
-func NewRequirementWithFlexibility(
-	key string,
-	operator corev1.NodeSelectorOperator,
-	minValues *int,
-	values ...string,
-) *Requirement {
+func NewRequirementWithFlexibility(key string, operator corev1.NodeSelectorOperator, minValues *int, values ...string) *Requirement {
 	if normalized, ok := v1.NormalizedLabels[key]; ok {
 		key = normalized
-	}
-	// Apply value normalization if registered for this (already-normalized) key.
-	if valueMap, ok := v1.NormalizedLabelValues[key]; ok && len(valueMap) > 0 {
-		for i, val := range values {
-			if mapped, exists := valueMap[val]; exists {
-				values[i] = mapped
-			}
-		}
 	}
 
 	// This is a super-common case, so optimize for it an inline everything.
@@ -75,7 +60,7 @@ func NewRequirementWithFlexibility(
 			Key:        key,
 			values:     s,
 			complement: false,
-			minValues:  minValues,
+			MinValues:  minValues,
 		}
 	}
 
@@ -83,7 +68,7 @@ func NewRequirementWithFlexibility(
 		Key:        key,
 		values:     sets.New[string](),
 		complement: true,
-		minValues:  minValues,
+		MinValues:  minValues,
 	}
 	if operator == corev1.NodeSelectorOpIn || operator == corev1.NodeSelectorOpDoesNotExist {
 		r.complement = false
@@ -127,8 +112,8 @@ func NewRequirement(key string, operator corev1.NodeSelectorOperator, values ...
 // in the common case where only one bound exists.
 func (r *Requirement) BoundedNodeSelectorRequirements() []v1.NodeSelectorRequirementWithMinValues {
 	return []v1.NodeSelectorRequirementWithMinValues{
-		{Key: r.Key, Operator: v1.NodeSelectorOpGte, Values: []string{strconv.FormatInt(int64(*r.gte), 10)}, MinValues: r.minValues},
-		{Key: r.Key, Operator: v1.NodeSelectorOpLte, Values: []string{strconv.FormatInt(int64(*r.lte), 10)}, MinValues: r.minValues},
+		{Key: r.Key, Operator: v1.NodeSelectorOpGte, Values: []string{strconv.FormatInt(int64(*r.gte), 10)}, MinValues: r.MinValues},
+		{Key: r.Key, Operator: v1.NodeSelectorOpLte, Values: []string{strconv.FormatInt(int64(*r.lte), 10)}, MinValues: r.MinValues},
 	}
 }
 
@@ -139,14 +124,14 @@ func (r *Requirement) NodeSelectorRequirement() v1.NodeSelectorRequirementWithMi
 			Key:       r.Key,
 			Operator:  v1.NodeSelectorOpGte,
 			Values:    []string{strconv.FormatInt(int64(lo.FromPtr(r.gte)), 10)},
-			MinValues: r.minValues,
+			MinValues: r.MinValues,
 		}
 	case r.lte != nil:
 		return v1.NodeSelectorRequirementWithMinValues{
 			Key:       r.Key,
 			Operator:  v1.NodeSelectorOpLte,
 			Values:    []string{strconv.FormatInt(int64(lo.FromPtr(r.lte)), 10)},
-			MinValues: r.minValues,
+			MinValues: r.MinValues,
 		}
 	case r.complement:
 		switch {
@@ -155,13 +140,13 @@ func (r *Requirement) NodeSelectorRequirement() v1.NodeSelectorRequirementWithMi
 				Key:       r.Key,
 				Operator:  corev1.NodeSelectorOpNotIn,
 				Values:    sets.List(r.values),
-				MinValues: r.minValues,
+				MinValues: r.MinValues,
 			}
 		default:
 			return v1.NodeSelectorRequirementWithMinValues{
 				Key:       r.Key,
 				Operator:  corev1.NodeSelectorOpExists,
-				MinValues: r.minValues,
+				MinValues: r.MinValues,
 			}
 		}
 	default:
@@ -171,13 +156,13 @@ func (r *Requirement) NodeSelectorRequirement() v1.NodeSelectorRequirementWithMi
 				Key:       r.Key,
 				Operator:  corev1.NodeSelectorOpIn,
 				Values:    sets.List(r.values),
-				MinValues: r.minValues,
+				MinValues: r.MinValues,
 			}
 		default:
 			return v1.NodeSelectorRequirementWithMinValues{
 				Key:       r.Key,
 				Operator:  corev1.NodeSelectorOpDoesNotExist,
-				MinValues: r.minValues,
+				MinValues: r.MinValues,
 			}
 		}
 	}
@@ -192,7 +177,7 @@ func (r *Requirement) Intersection(requirement *Requirement) *Requirement {
 	// Boundaries
 	gte := maxIntPtr(r.gte, requirement.gte)
 	lte := minIntPtr(r.lte, requirement.lte)
-	minValues := maxIntPtr(r.minValues, requirement.minValues)
+	minValues := maxIntPtr(r.MinValues, requirement.MinValues)
 	if gte != nil && lte != nil && *gte > *lte {
 		return NewRequirementWithFlexibility(r.Key, corev1.NodeSelectorOpDoesNotExist, minValues)
 	}
@@ -217,14 +202,7 @@ func (r *Requirement) Intersection(requirement *Requirement) *Requirement {
 	if !complement {
 		gte, lte = nil, nil
 	}
-	return &Requirement{
-		Key:        r.Key,
-		values:     values,
-		complement: complement,
-		gte:        gte,
-		lte:        lte,
-		minValues:  minValues,
-	}
+	return &Requirement{Key: r.Key, values: values, complement: complement, gte: gte, lte: lte, MinValues: minValues}
 }
 
 // nolint:gocyclo
@@ -299,7 +277,6 @@ func (r *Requirement) Values() []string {
 
 func (r *Requirement) Insert(items ...string) {
 	r.values.Insert(items...)
-	r.asString.Store(nil) // Invalidate cached string representation
 }
 
 func (r *Requirement) Operator() corev1.NodeSelectorOperator {
@@ -322,22 +299,7 @@ func (r *Requirement) Len() int {
 	return r.values.Len()
 }
 
-func (r *Requirement) MinValues() *int {
-	return r.minValues
-}
-
-func (r *Requirement) SetMinValues(minValues int) {
-	r.minValues = &minValues
-	r.asString.Store(nil) // Invalidate cached string representation
-}
-
 func (r *Requirement) String() string {
-	// Fast path if the string representation has already been computed
-	if s := r.asString.Load(); s != nil {
-		return *s
-	}
-
-	// Compute the string representation
 	var s string
 	switch r.Operator() {
 	case corev1.NodeSelectorOpExists, corev1.NodeSelectorOpDoesNotExist:
@@ -355,50 +317,10 @@ func (r *Requirement) String() string {
 	if r.lte != nil {
 		s += fmt.Sprintf(" <=%d", *r.lte)
 	}
-	if r.minValues != nil {
-		s += fmt.Sprintf(" minValues %d", *r.minValues)
+	if r.MinValues != nil {
+		s += fmt.Sprintf(" minValues %d", *r.MinValues)
 	}
-
-	r.asString.Store(&s) // Cache the result
-
 	return s
-}
-
-// DeepCopyInto is a deep-copy function, copying the receiver, writing into out. r must be non-nil.
-// This is hand written because of the presence of the sync.Mutex, which cannot be copied.
-func (r *Requirement) DeepCopyInto(out *Requirement) {
-	// Start by zeroing the out struct to ensure no leftover data
-	*out = Requirement{}
-
-	// Copy simple fields
-
-	out.Key = r.Key
-	out.complement = r.complement
-	if r.gte != nil {
-		gte := *r.gte
-		out.gte = &gte
-	}
-
-	if r.lte != nil {
-		lte := *r.lte
-		out.lte = &lte
-	}
-
-	if r.minValues != nil {
-		minValues := *r.minValues
-		out.minValues = &minValues
-	}
-
-	// Deep copy the values set
-	if r.values != nil {
-		out.values = make(sets.Set[string], len(r.values))
-		for key, val := range r.values {
-			out.values[key] = val
-		}
-	}
-
-	// Note: We do not copy the mutex or the cached string representation.
-	// The mutex should be initialized in the new struct, and the cached string will be recomputed when needed.
 }
 
 func withinBounds(valueAsString string, gte, lte *int) bool {

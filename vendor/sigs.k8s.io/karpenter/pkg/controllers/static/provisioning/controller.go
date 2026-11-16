@@ -22,7 +22,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/awslabs/operatorpkg/status"
 	"github.com/samber/lo"
 	"k8s.io/utils/clock"
 	controllerruntime "sigs.k8s.io/controller-runtime"
@@ -35,13 +34,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"sigs.k8s.io/karpenter/pkg/controllers/dynamicresources/deviceallocation"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning/scheduling"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/events"
 	"sigs.k8s.io/karpenter/pkg/metrics"
-	"sigs.k8s.io/karpenter/pkg/state/virtualpods"
 
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 
@@ -58,12 +55,12 @@ type Controller struct {
 	cluster       *state.Cluster
 }
 
-func NewController(kubeClient client.Client, cluster *state.Cluster, recorder events.Recorder, cloudProvider cloudprovider.CloudProvider, provisioner *provisioning.Provisioner, clock clock.Clock, deviceAllocationController *deviceallocation.Controller, virtualPodCache *virtualpods.Cache) *Controller {
+func NewController(kubeClient client.Client, cluster *state.Cluster, recorder events.Recorder, cloudProvider cloudprovider.CloudProvider, provisioner *provisioning.Provisioner, clock clock.Clock) *Controller {
 	return &Controller{
 		kubeClient:    kubeClient,
 		cloudProvider: cloudProvider,
 		cluster:       cluster,
-		provisioner:   provisioning.NewProvisioner(kubeClient, recorder, cloudProvider, cluster, clock, deviceAllocationController, virtualPodCache),
+		provisioner:   provisioning.NewProvisioner(kubeClient, recorder, cloudProvider, cluster, clock),
 	}
 }
 
@@ -76,7 +73,7 @@ func (c *Controller) Name() string {
 func (c *Controller) Reconcile(ctx context.Context, np *v1.NodePool) (reconcile.Result, error) {
 	ctx = injection.WithControllerName(ctx, c.Name())
 
-	if !nodepoolutils.IsManaged(np, c.cloudProvider) || !np.StatusConditions().Root().IsTrue() || np.Spec.Replicas == nil || !np.DeletionTimestamp.IsZero() {
+	if !nodepoolutils.IsManaged(np, c.cloudProvider) || !np.StatusConditions().Root().IsTrue() || np.Spec.Replicas == nil {
 		return reconcile.Result{}, nil
 	}
 
@@ -164,18 +161,5 @@ func (c *Controller) Register(_ context.Context, m manager.Manager) error {
 }
 
 func HasNodePoolReplicaOrStatusChanged(oldNP, newNP *v1.NodePool) bool {
-	if lo.FromPtr(oldNP.Spec.Replicas) != lo.FromPtr(newNP.Spec.Replicas) {
-		return true
-	}
-	// np.StatusConditions.Root() may mutate the np which is unsafe when operating directly against the informer cache
-	isReady := func(np *v1.NodePool) bool {
-		for i := range np.Status.Conditions {
-			if np.Status.Conditions[i].Type != status.ConditionReady {
-				continue
-			}
-			return np.Status.Conditions[i].IsTrue()
-		}
-		return false
-	}
-	return !isReady(oldNP) && isReady(newNP)
+	return lo.FromPtr(oldNP.Spec.Replicas) != lo.FromPtr(newNP.Spec.Replicas) || (!oldNP.StatusConditions().Root().IsTrue() && newNP.StatusConditions().Root().IsTrue())
 }

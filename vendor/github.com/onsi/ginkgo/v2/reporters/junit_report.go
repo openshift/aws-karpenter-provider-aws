@@ -11,14 +11,11 @@ The schema used for the generated JUnit xml file was adapted from https://llg.cu
 package reporters
 
 import (
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"maps"
 	"os"
 	"path"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/onsi/ginkgo/v2/config"
@@ -41,9 +38,6 @@ type JunitReportConfig struct {
 
 	// Enable OmitSpecSemVerConstraints to prevent semantic version constraints from appearing in the spec name
 	OmitSpecSemVerConstraints bool
-
-	// Enable OmitSpecComponentSemVerConstraints to prevent component semantic version constraints from appearing in the spec name
-	OmitSpecComponentSemVerConstraints bool
 
 	// Enable OmitLeafNodeType to prevent the spec leaf node type from appearing in the spec name
 	OmitLeafNodeType bool
@@ -137,8 +131,6 @@ type JUnitTestCase struct {
 	SystemOut string `xml:"system-out,omitempty"`
 	//SystemOut maps onto any captured GinkgoWriter output - maps onto SpecReport.CapturedGinkgoWriterOutput
 	SystemErr string `xml:"system-err,omitempty"`
-	//Properties captures any ReportEntries attached to the spec via AddReportEntry, as key/value pairs with the JSON dump of the value as value.
-	Properties *JUnitProperties `xml:"properties,omitempty"`
 }
 
 type JUnitSkipped struct {
@@ -181,7 +173,6 @@ func GenerateJUnitReportWithConfig(report types.Report, dst string, config Junit
 				{"SpecialSuiteFailureReason", strings.Join(report.SpecialSuiteFailureReasons, ",")},
 				{"SuiteLabels", fmt.Sprintf("[%s]", strings.Join(report.SuiteLabels, ","))},
 				{"SuiteSemVerConstraints", fmt.Sprintf("[%s]", strings.Join(report.SuiteSemVerConstraints, ","))},
-				{"SuiteComponentSemVerConstraints", fmt.Sprintf("[%s]", formatComponentSemVerConstraintsToString(report.SuiteComponentSemVerConstraints))},
 				{"RandomSeed", fmt.Sprintf("%d", report.SuiteConfig.RandomSeed)},
 				{"RandomizeAllSpecs", fmt.Sprintf("%t", report.SuiteConfig.RandomizeAllSpecs)},
 				{"LabelFilter", report.SuiteConfig.LabelFilter},
@@ -225,10 +216,6 @@ func GenerateJUnitReportWithConfig(report types.Report, dst string, config Junit
 		if len(semVerConstraints) > 0 && !config.OmitSpecSemVerConstraints {
 			name = name + " [" + strings.Join(semVerConstraints, ", ") + "]"
 		}
-		componentSemVerConstraints := spec.ComponentSemVerConstraints()
-		if len(componentSemVerConstraints) > 0 && !config.OmitSpecComponentSemVerConstraints {
-			name = name + " [" + formatComponentSemVerConstraintsToString(componentSemVerConstraints) + "]"
-		}
 		name = strings.TrimSpace(name)
 
 		test := JUnitTestCase{
@@ -243,20 +230,6 @@ func GenerateJUnitReportWithConfig(report types.Report, dst string, config Junit
 		}
 		if !config.OmitCapturedStdOutErr {
 			test.SystemOut = systemOutForUnstructuredReporters(spec)
-		}
-		if len(spec.ReportEntries) > 0 {
-			properties := JUnitProperties{}
-			for _, entry := range spec.ReportEntries {
-				value, err := json.Marshal(entry.GetRawValue())
-				if err != nil {
-					value = []byte(fmt.Sprintf("%q", err.Error()))
-				}
-				properties.Properties = append(properties.Properties, JUnitProperty{
-					Name:  entry.Name,
-					Value: string(value),
-				})
-			}
-			test.Properties = &properties
 		}
 		suite.Tests += 1
 
@@ -412,16 +385,6 @@ func RenderTimeline(spec types.SpecReport, noColor bool) string {
 
 func systemOutForUnstructuredReporters(spec types.SpecReport) string {
 	return spec.CapturedStdOutErr
-}
-
-func formatComponentSemVerConstraintsToString(componentSemVerConstraints map[string][]string) string {
-	var tmpStr string
-	for _, key := range slices.Sorted(maps.Keys(componentSemVerConstraints)) {
-		tmpStr = tmpStr + fmt.Sprintf("%s: %s, ", key, componentSemVerConstraints[key])
-	}
-
-	tmpStr = strings.TrimSuffix(tmpStr, ", ")
-	return tmpStr
 }
 
 // Deprecated JUnitReporter (so folks can still compile their suites)

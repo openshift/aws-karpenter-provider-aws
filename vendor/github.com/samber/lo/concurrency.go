@@ -10,9 +10,9 @@ type synchronize struct {
 	locker sync.Locker
 }
 
-func (s *synchronize) Do(callback func()) {
+func (s *synchronize) Do(cb func()) {
 	s.locker.Lock()
-	Try0(callback)
+	Try0(cb)
 	s.locker.Unlock()
 }
 
@@ -52,13 +52,13 @@ func Async0(f func()) <-chan struct{} {
 }
 
 // Async1 is an alias to Async.
-// Play: https://go.dev/play/p/RBQWtIn4PsF
+// Play: https://go.dev/play/p/uo35gosuTLw
 func Async1[A any](f func() A) <-chan A {
 	return Async(f)
 }
 
 // Async2 has the same behavior as Async, but returns the 2 results as a tuple inside the channel.
-// Play: https://go.dev/play/p/5SzzDjssXOH
+// Play: https://go.dev/play/p/7W7mKQi0AhA
 func Async2[A, B any](f func() (A, B)) <-chan Tuple2[A, B] {
 	ch := make(chan Tuple2[A, B], 1)
 	go func() {
@@ -68,7 +68,7 @@ func Async2[A, B any](f func() (A, B)) <-chan Tuple2[A, B] {
 }
 
 // Async3 has the same behavior as Async, but returns the 3 results as a tuple inside the channel.
-// Play: https://go.dev/play/p/cZpZsDXNmlx
+// Play: https://go.dev/play/p/L1d6o6l6q0d
 func Async3[A, B, C any](f func() (A, B, C)) <-chan Tuple3[A, B, C] {
 	ch := make(chan Tuple3[A, B, C], 1)
 	go func() {
@@ -78,7 +78,7 @@ func Async3[A, B, C any](f func() (A, B, C)) <-chan Tuple3[A, B, C] {
 }
 
 // Async4 has the same behavior as Async, but returns the 4 results as a tuple inside the channel.
-// Play: https://go.dev/play/p/9X5O2VrLzkR
+// Play: https://go.dev/play/p/1X7q6oL0TqF
 func Async4[A, B, C, D any](f func() (A, B, C, D)) <-chan Tuple4[A, B, C, D] {
 	ch := make(chan Tuple4[A, B, C, D], 1)
 	go func() {
@@ -88,7 +88,7 @@ func Async4[A, B, C, D any](f func() (A, B, C, D)) <-chan Tuple4[A, B, C, D] {
 }
 
 // Async5 has the same behavior as Async, but returns the 5 results as a tuple inside the channel.
-// Play: https://go.dev/play/p/MqnUJpkmopA
+// Play: https://go.dev/play/p/2W7q4oL1TqG
 func Async5[A, B, C, D, E any](f func() (A, B, C, D, E)) <-chan Tuple5[A, B, C, D, E] {
 	ch := make(chan Tuple5[A, B, C, D, E], 1)
 	go func() {
@@ -98,7 +98,7 @@ func Async5[A, B, C, D, E any](f func() (A, B, C, D, E)) <-chan Tuple5[A, B, C, 
 }
 
 // Async6 has the same behavior as Async, but returns the 6 results as a tuple inside the channel.
-// Play: https://go.dev/play/p/kM1X67JPdSP
+// Play: https://go.dev/play/p/3X8q5pM2UrH
 func Async6[A, B, C, D, E, F any](f func() (A, B, C, D, E, F)) <-chan Tuple6[A, B, C, D, E, F] {
 	ch := make(chan Tuple6[A, B, C, D, E, F], 1)
 	go func() {

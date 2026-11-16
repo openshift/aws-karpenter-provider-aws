@@ -22,6 +22,7 @@ builds:
       - linux_riscv64
       - windows_amd64
       - windows_arm64
+      - windows_arm
       - darwin_amd64
       - darwin_arm64
   - id: tomljson
@@ -41,6 +42,7 @@ builds:
       - linux_riscv64
       - windows_amd64
       - windows_arm64
+      - windows_arm
       - darwin_amd64
       - darwin_arm64
   - id: jsontoml
@@ -60,6 +62,7 @@ builds:
       - linux_arm
       - windows_amd64
       - windows_arm64
+      - windows_arm
       - darwin_amd64
       - darwin_arm64
 universal_binaries:
@@ -74,43 +77,39 @@ universal_binaries:
     name_template: jsontoml
 archives:
 - id: jsontoml
-  formats:
-    - tar.xz
-  ids:
+  format: tar.xz
+  builds:
     - jsontoml
   files:
   - none*
   name_template: "{{ .Binary }}_{{.Version}}_{{ .Os }}_{{ .Arch }}"
 - id: tomljson
-  formats:
-    - tar.xz
-  ids:
+  format: tar.xz
+  builds:
     - tomljson
   files:
   - none*
   name_template: "{{ .Binary }}_{{.Version}}_{{ .Os }}_{{ .Arch }}"
 - id: tomll
-  formats:
-    - tar.xz
-  ids:
+  format: tar.xz
+  builds:
     - tomll
   files:
   - none*
   name_template: "{{ .Binary }}_{{.Version}}_{{ .Os }}_{{ .Arch }}"
-dockers_v2:
+dockers:
   - id: tools
+    goos: linux
+    goarch: amd64
     ids:
       - jsontoml
       - tomljson
       - tomll
-    images:
-      - "ghcr.io/pelletier/go-toml"
-    tags:
-      - "latest"
-      - "{{ .Tag }}"
-      - "v{{ .Major }}"
-    platforms:
-      - linux/amd64
+    image_templates:
+      - "ghcr.io/pelletier/go-toml:latest"
+      - "ghcr.io/pelletier/go-toml:{{ .Tag }}"
+      - "ghcr.io/pelletier/go-toml:v{{ .Major }}"
+    skip_push: false
 checksum:
   name_template: 'sha256sums.txt'
 snapshot:

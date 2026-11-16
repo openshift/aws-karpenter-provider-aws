@@ -4,9 +4,10 @@ package sqs
 
 import (
 	"context"
-	"github.com/aws/aws-sdk-go-v2/service/sqs/schemas"
-	smithy "github.com/aws/smithy-go"
+	"fmt"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // List all cost allocation tags added to the specified Amazon SQS queue. For an
@@ -42,18 +43,6 @@ type ListQueueTagsInput struct {
 	noSmithyDocumentSerde
 }
 
-func (v *ListQueueTagsInput) Serialize(s smithy.ShapeSerializer) {
-	s.WriteStruct(schemas.ListQueueTagsRequest)
-	v.SerializeMembers(s)
-	s.CloseStruct()
-}
-
-func (v *ListQueueTagsInput) SerializeMembers(s smithy.ShapeSerializer) {
-	if v.QueueUrl != nil {
-		s.WriteString(schemas.ListQueueTagsRequest_QueueUrl, *v.QueueUrl)
-	}
-}
-
 type ListQueueTagsOutput struct {
 
 	// The list of all tags added to the specified queue.
@@ -65,45 +54,80 @@ type ListQueueTagsOutput struct {
 	noSmithyDocumentSerde
 }
 
-func (v *ListQueueTagsOutput) Serialize(s smithy.ShapeSerializer) {
-	s.WriteStruct(schemas.ListQueueTagsResult)
-	v.SerializeMembers(s)
-	s.CloseStruct()
-}
-
-func (v *ListQueueTagsOutput) SerializeMembers(s smithy.ShapeSerializer) {
-	serializeTagMap(s, schemas.ListQueueTagsResult_Tags, v.Tags)
-}
-func (v *ListQueueTagsOutput) Deserialize(d smithy.ShapeDeserializer) error {
-	return smithy.ReadStruct(d, schemas.ListQueueTagsResult, func(s *smithy.Schema) error {
-		switch s {
-		case schemas.ListQueueTagsResult_Tags:
-			return deserializeTagMap(d, schemas.ListQueueTagsResult_Tags, &v.Tags)
-		}
-		return nil
-	})
-}
 func (c *Client) addOperationListQueueTagsMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&serializeRequestMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.ListQueueTags, schemas.ListQueueTagsRequest, schemas.ListQueueTagsResult)}, middleware.After); err != nil {
+	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
 		return err
 	}
-	if err := stack.Deserialize.Add(&deserializeResponseMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.ListQueueTags, schemas.ListQueueTagsRequest, schemas.ListQueueTagsResult), output: &ListQueueTagsOutput{}}, middleware.After); err != nil {
+	err = stack.Serialize.Add(&awsAwsjson10_serializeOpListQueueTags{}, middleware.After)
+	if err != nil {
 		return err
+	}
+	err = stack.Deserialize.Add(&awsAwsjson10_deserializeOpListQueueTags{}, middleware.After)
+	if err != nil {
+		return err
+	}
+	if err := addProtocolFinalizerMiddlewares(stack, options, "ListQueueTags"); err != nil {
+		return fmt.Errorf("add protocol finalizers: %v", err)
 	}
 
+	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
+		return err
+	}
+	if err = addSetLoggerMiddleware(stack, options); err != nil {
+		return err
+	}
+	if err = addClientRequestID(stack); err != nil {
+		return err
+	}
+	if err = addComputeContentLength(stack); err != nil {
+		return err
+	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRecordResponseTiming(stack, options); err != nil {
+	if err = addRetry(stack, options); err != nil {
+		return err
+	}
+	if err = addRawResponseToMetadata(stack); err != nil {
+		return err
+	}
+	if err = addRecordResponseTiming(stack); err != nil {
+		return err
+	}
+	if err = addSpanRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addClientUserAgent(stack, options); err != nil {
+		return err
+	}
+	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
+		return err
+	}
+	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
+		return err
+	}
+	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
 	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpListQueueTagsValidationMiddleware(stack); err != nil {
+		return err
+	}
+	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opListQueueTags(options.Region), middleware.Before); err != nil {
+		return err
+	}
+	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -118,8 +142,22 @@ func (c *Client) addOperationListQueueTagsMiddlewares(stack *middleware.Stack, o
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAttempt(stack, options); err != nil {
+		return err
+	}
 	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil
+}
+
+func newServiceMetadataMiddleware_opListQueueTags(region string) *awsmiddleware.RegisterServiceMetadata {
+	return &awsmiddleware.RegisterServiceMetadata{
+		Region:        region,
+		ServiceID:     ServiceID,
+		OperationName: "ListQueueTags",
+	}
 }

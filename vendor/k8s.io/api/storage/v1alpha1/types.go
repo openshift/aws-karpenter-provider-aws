@@ -28,24 +28,21 @@ import (
 // +k8s:prerelease-lifecycle-gen:introduced=1.9
 // +k8s:prerelease-lifecycle-gen:deprecated=1.21
 // +k8s:prerelease-lifecycle-gen:replacement=storage.k8s.io,v1,VolumeAttachment
-// +k8s:supportsSubresource="/status"
 
 // VolumeAttachment captures the intent to attach or detach the specified volume
 // to/from the specified node.
 //
 // VolumeAttachment objects are non-namespaced.
 type VolumeAttachment struct {
-	metav1.TypeMeta `json:""`
+	metav1.TypeMeta `json:",inline"`
 
-	// metadata is the standard object metadata.
+	// Standard object metadata.
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// spec represents specification of the desired attach/detach volume behavior.
 	// Populated by the Kubernetes system.
-	// +k8s:beta(since: "1.37")=+k8s:immutable
-	// +required
 	Spec VolumeAttachmentSpec `json:"spec" protobuf:"bytes,2,opt,name=spec"`
 
 	// status represents status of the VolumeAttachment request.
@@ -62,7 +59,7 @@ type VolumeAttachment struct {
 
 // VolumeAttachmentList is a collection of VolumeAttachment objects.
 type VolumeAttachmentList struct {
-	metav1.TypeMeta `json:""`
+	metav1.TypeMeta `json:",inline"`
 
 	// Standard list metadata
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
@@ -77,10 +74,6 @@ type VolumeAttachmentList struct {
 type VolumeAttachmentSpec struct {
 	// attacher indicates the name of the volume driver that MUST handle this
 	// request. This is the name returned by GetPluginName().
-	// +required
-	// +k8s:beta(since: "1.37")=+k8s:required
-	// +k8s:beta(since: "1.37")=+k8s:format="k8s-long-name-caseless"
-	// +k8s:beta(since: "1.37")=+k8s:maxLength=63
 	Attacher string `json:"attacher" protobuf:"bytes,1,opt,name=attacher"`
 
 	// source represents the volume that should be attached.
@@ -189,9 +182,9 @@ type VolumeError struct {
 // the scheduler assumes that capacity is insufficient and tries some other
 // node.
 type CSIStorageCapacity struct {
-	metav1.TypeMeta `json:""`
+	metav1.TypeMeta `json:",inline"`
 
-	// metadata is the standard object metadata. The name has no particular meaning. It must be
+	// Standard object's metadata. The name has no particular meaning. It must be
 	// be a DNS subdomain (dots allowed, 253 characters). To ensure that
 	// there are no conflicts with other CSI drivers on the cluster, the recommendation
 	// is to use csisc-<uuid>, a generated name, or a reverse-domain name which ends
@@ -254,7 +247,7 @@ type CSIStorageCapacity struct {
 
 // CSIStorageCapacityList is a collection of CSIStorageCapacity objects.
 type CSIStorageCapacityList struct {
-	metav1.TypeMeta `json:""`
+	metav1.TypeMeta `json:",inline"`
 
 	// Standard list metadata
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
@@ -276,14 +269,14 @@ type CSIStorageCapacityList struct {
 // defined by the CSI driver. The class can be specified during dynamic provisioning
 // of PersistentVolumeClaims, and changed in the PersistentVolumeClaim spec after provisioning.
 type VolumeAttributesClass struct {
-	metav1.TypeMeta `json:""`
+	metav1.TypeMeta `json:",inline"`
 
-	// metadata is the standard object metadata.
+	// Standard object's metadata.
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
-	// driverName is the name of the CSI driver
+	// Name of the CSI driver
 	// This field is immutable.
 	DriverName string `json:"driverName" protobuf:"bytes,2,opt,name=driverName"`
 
@@ -310,7 +303,7 @@ type VolumeAttributesClass struct {
 
 // VolumeAttributesClassList is a collection of VolumeAttributesClass objects.
 type VolumeAttributesClassList struct {
-	metav1.TypeMeta `json:""`
+	metav1.TypeMeta `json:",inline"`
 
 	// Standard list metadata
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata

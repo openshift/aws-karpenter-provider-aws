@@ -18,7 +18,6 @@ package node
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"time"
 
@@ -45,16 +44,6 @@ import (
 const (
 	nodeName  = "node_name"
 	nodePhase = "phase"
-	managed   = "managed"
-)
-
-// Fixed node metric dimensions. The remaining dimensions are the cloud
-// provider's well-known labels, which are self-describing and wrapped without
-// help text (see nodeLabelNames).
-var (
-	nodeNameLabel  = opmetrics.Label{Name: nodeName, Help: "The name of the node."}
-	nodePhaseLabel = opmetrics.Label{Name: nodePhase, Help: "The node's lifecycle phase, e.g. `Pending`, `Running`."}
-	managedLabel   = opmetrics.Label{Name: managed, Help: "Whether the node is managed by Karpenter.", Values: metrics.BoolValues}
 )
 
 var (
@@ -80,7 +69,6 @@ func initializeMetrics() {
 			Help:      "Node allocatable are the resources allocatable by nodes.",
 		},
 		nodeLabelNamesWithResourceType(),
-		opmetrics.Beta,
 	)
 	TotalPodRequests = opmetrics.NewPrometheusGauge(
 		crmetrics.Registry,
@@ -91,7 +79,6 @@ func initializeMetrics() {
 			Help:      "Node total pod requests are the resources requested by pods bound to nodes, including the DaemonSet pods.",
 		},
 		nodeLabelNamesWithResourceType(),
-		opmetrics.Beta,
 	)
 	TotalPodLimits = opmetrics.NewPrometheusGauge(
 		crmetrics.Registry,
@@ -102,7 +89,6 @@ func initializeMetrics() {
 			Help:      "Node total pod limits are the resources specified by pod limits, including the DaemonSet pods.",
 		},
 		nodeLabelNamesWithResourceType(),
-		opmetrics.Beta,
 	)
 	TotalDaemonRequests = opmetrics.NewPrometheusGauge(
 		crmetrics.Registry,
@@ -113,7 +99,6 @@ func initializeMetrics() {
 			Help:      "Node total daemon requests are the resource requested by DaemonSet pods bound to nodes.",
 		},
 		nodeLabelNamesWithResourceType(),
-		opmetrics.Beta,
 	)
 	TotalDaemonLimits = opmetrics.NewPrometheusGauge(
 		crmetrics.Registry,
@@ -124,7 +109,6 @@ func initializeMetrics() {
 			Help:      "Node total daemon limits are the resources specified by DaemonSet pod limits.",
 		},
 		nodeLabelNamesWithResourceType(),
-		opmetrics.Beta,
 	)
 	SystemOverhead = opmetrics.NewPrometheusGauge(
 		crmetrics.Registry,
@@ -135,7 +119,6 @@ func initializeMetrics() {
 			Help:      "Node system daemon overhead are the resources reserved for system overhead, the difference between the node's capacity and allocatable values are reported by the status.",
 		},
 		nodeLabelNamesWithResourceType(),
-		opmetrics.Beta,
 	)
 	Lifetime = opmetrics.NewPrometheusGauge(
 		crmetrics.Registry,
@@ -146,7 +129,6 @@ func initializeMetrics() {
 			Help:      "Node age in seconds",
 		},
 		nodeLabelNames(),
-		opmetrics.Alpha,
 	)
 	ClusterUtilization = opmetrics.NewPrometheusGauge(
 		crmetrics.Registry,
@@ -156,29 +138,24 @@ func initializeMetrics() {
 			Name:      "utilization_percent",
 			Help:      "Utilization of allocatable resources by pod requests",
 		},
-		[]opmetrics.Label{metrics.ResourceType},
-		opmetrics.Alpha,
+		[]string{metrics.ResourceTypeLabel},
 	)
 }
 
-func nodeLabelNamesWithResourceType() []opmetrics.Label {
+func nodeLabelNamesWithResourceType() []string {
 	return append(
 		nodeLabelNames(),
-		metrics.ResourceType,
+		metrics.ResourceTypeLabel,
 	)
 }
 
-func nodeLabelNames() []opmetrics.Label {
+func nodeLabelNames() []string {
 	return append(
 		// WellKnownLabels includes the nodepool label, so we don't need to add it as its own item here.
 		// If we do, prometheus will panic since there would be duplicate labels.
-		// The well-known labels are self-describing, so they are wrapped without help text.
-		lo.Map(sets.New(lo.Values(getWellKnownLabels())...).UnsortedList(), func(l string, _ int) opmetrics.Label {
-			return opmetrics.Label{Name: l}
-		}),
-		nodeNameLabel,
-		nodePhaseLabel,
-		managedLabel,
+		sets.New(lo.Values(getWellKnownLabels())...).UnsortedList(),
+		nodeName,
+		nodePhase,
 	)
 }
 
@@ -276,7 +253,7 @@ func buildMetrics(n *state.StateNode) (res []*metrics.StoreMetric) {
 			res = append(res, &metrics.StoreMetric{
 				GaugeMetric: gaugeMetric,
 				Value:       lo.Ternary(resourceName == corev1.ResourceCPU, float64(quantity.MilliValue())/float64(1000), float64(quantity.Value())),
-				Labels:      getNodeLabelsWithResourceType(n, resourceNameToString(resourceName)),
+				Labels:      getNodeLabelsWithResourceType(n.Node, resourceNameToString(resourceName)),
 			})
 		}
 	}
@@ -284,22 +261,20 @@ func buildMetrics(n *state.StateNode) (res []*metrics.StoreMetric) {
 		&metrics.StoreMetric{
 			GaugeMetric: Lifetime,
 			Value:       time.Since(n.Node.GetCreationTimestamp().Time).Seconds(),
-			Labels:      getNodeLabels(n),
+			Labels:      getNodeLabels(n.Node),
 		})
 }
 
-func getNodeLabelsWithResourceType(n *state.StateNode, resourceTypeName string) prometheus.Labels {
-	metricLabels := getNodeLabels(n)
+func getNodeLabelsWithResourceType(node *corev1.Node, resourceTypeName string) prometheus.Labels {
+	metricLabels := getNodeLabels(node)
 	metricLabels[metrics.ResourceTypeLabel] = resourceTypeName
 	return metricLabels
 }
 
-func getNodeLabels(n *state.StateNode) prometheus.Labels {
-	node := n.Node
+func getNodeLabels(node *corev1.Node) prometheus.Labels {
 	metricLabels := map[string]string{}
 	metricLabels[nodeName] = node.Name
 	metricLabels[nodePhase] = string(node.Status.Phase)
-	metricLabels[managed] = strconv.FormatBool(n.Managed())
 
 	// Populate well known labels
 	for wellKnownLabel, label := range getWellKnownLabels() {

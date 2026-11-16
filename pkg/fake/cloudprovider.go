@@ -82,10 +82,6 @@ func (c *CloudProvider) Delete(context.Context, *karpv1.NodeClaim) error {
 	return nil
 }
 
-func (c *CloudProvider) Reboot(context.Context, *karpv1.NodeClaim, string) error {
-	return nil
-}
-
 func (c *CloudProvider) DisruptionReasons() []karpv1.DisruptionReason {
 	return nil
 }

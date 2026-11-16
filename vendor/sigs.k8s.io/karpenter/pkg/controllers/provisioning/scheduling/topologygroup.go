@@ -125,16 +125,14 @@ func NewTopologyGroup(
 	}
 }
 
-func (t *TopologyGroup) Get(pod *corev1.Pod, podDomains, nodeDomains *scheduling.Requirement) (*scheduling.Requirement, sets.Set[string]) {
+func (t *TopologyGroup) Get(pod *corev1.Pod, podDomains, nodeDomains *scheduling.Requirement) *scheduling.Requirement {
 	switch t.Type {
 	case TopologyTypeSpread:
 		return t.nextDomainTopologySpread(pod, podDomains, nodeDomains)
 	case TopologyTypePodAffinity:
-		req := t.nextDomainAffinity(pod, podDomains, nodeDomains)
-		return req, sets.New[string](req.Values()...)
+		return t.nextDomainAffinity(pod, podDomains, nodeDomains)
 	case TopologyTypePodAntiAffinity:
-		req := t.nextDomainAntiAffinity(podDomains, nodeDomains)
-		return req, sets.New[string](req.Values()...)
+		return t.nextDomainAntiAffinity(podDomains, nodeDomains)
 	default:
 		panic(fmt.Sprintf("Unrecognized topology group type: %s", t.Type))
 	}
@@ -218,22 +216,20 @@ func hashSelector(selector *metav1.LabelSelector) uint64 {
 		}
 		selectorHash = lo.Must(hashstructure.Hash(selector.MatchLabels, hashstructure.FormatV2, nil))
 	}
-	return lo.Must(hashstructure.Hash([]any{expressionHashes, selectorHash}, hashstructure.FormatV2, nil))
+	return lo.Must(hashstructure.Hash([]interface{}{expressionHashes, selectorHash}, hashstructure.FormatV2, nil))
 }
 
-// nextDomainTopologySpread returns a scheduling.Requirement that includes a node domain that a pod should be scheduled to,
-// along with the number of valid domains that satisfied the maxSkew constraint.
+// nextDomainTopologySpread returns a scheduling.Requirement that includes a node domain that a pod should be scheduled to.
 // If there are multiple eligible domains, we return any random domain that satisfies the `maxSkew` configuration.
 // If there are no eligible domains, we return a `DoesNotExist` requirement, implying that we could not satisfy the topologySpread requirement.
 // nolint:gocyclo
-func (t *TopologyGroup) nextDomainTopologySpread(pod *corev1.Pod, podDomains, nodeDomains *scheduling.Requirement) (*scheduling.Requirement, sets.Set[string]) {
+func (t *TopologyGroup) nextDomainTopologySpread(pod *corev1.Pod, podDomains, nodeDomains *scheduling.Requirement) *scheduling.Requirement {
 	// min count is calculated across all domains
 	min := t.domainMinCount(podDomains)
 	selfSelecting := t.selects(pod)
 
 	minDomain := ""
 	minCount := int32(math.MaxInt32)
-	validDomains := sets.New[string]()
 
 	// We special-case kubernetes.io/hostname primarily for new NodeClaims since their domain won't be registered until we Add() them
 	if t.Key == corev1.LabelHostname && len(nodeDomains.Values()) == 1 {
@@ -245,10 +241,9 @@ func (t *TopologyGroup) nextDomainTopologySpread(pod *corev1.Pod, podDomains, no
 		// Because Karpenter can always create a new domain for hostname, we assume the global miniumum is always zero
 		// This means we can just check whether our current count is less than or equal to the skew to check if the domain is valid
 		if count <= t.maxSkew {
-			validDomains.Insert(hostName)
-			return scheduling.NewRequirement(t.Key, corev1.NodeSelectorOpIn, hostName), validDomains
+			return scheduling.NewRequirement(t.Key, corev1.NodeSelectorOpIn, hostName)
 		}
-		return scheduling.NewRequirement(t.Key, corev1.NodeSelectorOpDoesNotExist), validDomains
+		return scheduling.NewRequirement(t.Key, corev1.NodeSelectorOpDoesNotExist)
 	}
 
 	// If we are explicitly selecting on specific node domains ("In" requirement),
@@ -261,12 +256,9 @@ func (t *TopologyGroup) nextDomainTopologySpread(pod *corev1.Pod, podDomains, no
 				if selfSelecting {
 					count++
 				}
-				if count-min <= t.maxSkew {
-					validDomains.Insert(domain)
-					if count < minCount {
-						minDomain = domain
-						minCount = count
-					}
+				if count-min <= t.maxSkew && count < minCount {
+					minDomain = domain
+					minCount = count
 				}
 			}
 		}
@@ -280,21 +272,18 @@ func (t *TopologyGroup) nextDomainTopologySpread(pod *corev1.Pod, podDomains, no
 				if selfSelecting {
 					count++
 				}
-				if count-min <= t.maxSkew {
-					validDomains.Insert(domain)
-					if count < minCount {
-						minDomain = domain
-						minCount = count
-					}
+				if count-min <= t.maxSkew && count < minCount {
+					minDomain = domain
+					minCount = count
 				}
 			}
 		}
 	}
 	if minDomain == "" {
 		// avoids an error message about 'zone in [""]', preferring 'zone in []'
-		return scheduling.NewRequirement(t.Key, corev1.NodeSelectorOpDoesNotExist), validDomains
+		return scheduling.NewRequirement(t.Key, corev1.NodeSelectorOpDoesNotExist)
 	}
-	return scheduling.NewRequirement(t.Key, corev1.NodeSelectorOpIn, minDomain), validDomains
+	return scheduling.NewRequirement(t.Key, corev1.NodeSelectorOpIn, minDomain)
 }
 
 func (t *TopologyGroup) domainMinCount(domains *scheduling.Requirement) int32 {

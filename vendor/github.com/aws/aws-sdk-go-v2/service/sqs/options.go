@@ -44,11 +44,6 @@ type Options struct {
 	// clients initial default settings.
 	DefaultsMode aws.DefaultsMode
 
-	// Disables SDK clock skew correction. When set, the SDK will not adjust request
-	// signing timestamps to compensate for clock drift between the client and the
-	// service.
-	DisableClockSkewCorrection bool
-
 	// Allows you to disable the client's validation of response message checksums.
 	// Enabled by default. Used by SendMessage, SendMessageBatch, and ReceiveMessage.
 	DisableMessageChecksumValidation bool
@@ -67,7 +62,8 @@ type Options struct {
 	// the client option BaseEndpoint instead.
 	EndpointResolver EndpointResolver
 
-	// Resolves the endpoint used for a particular service operation.
+	// Resolves the endpoint used for a particular service operation. This should be
+	// used over the deprecated EndpointResolver.
 	EndpointResolverV2 EndpointResolverV2
 
 	// Signature Version 4 (SigV4) Signer
@@ -122,8 +118,6 @@ type Options struct {
 	//
 	// Currently does not support per operation call overrides, may in the future.
 	resolvedDefaultsMode aws.DefaultsMode
-
-	Protocol smithyhttp.ClientProtocol
 
 	// The HTTP client to invoke API calls with. Defaults to client's default HTTP
 	// implementation if nil.

@@ -33,21 +33,7 @@ const (
 	ConditionTypeInstanceTerminating  = "InstanceTerminating"
 	ConditionTypeConsistentStateFound = "ConsistentStateFound"
 	ConditionTypeDisruptionReason     = "DisruptionReason"
-	ConditionTypeRebooting            = "Rebooting"
 )
-
-// Reboot lifecycle phases, carried as the reason on the Rebooting condition. RebootRequested is set
-// by the consumer at commitment; the reboot controller handles the rest.
-const (
-	RebootReasonRequested = "RebootRequested"
-	RebootReasonIssued    = "RebootIssued"
-	RebootReasonSucceeded = "RebootSucceeded"
-	RebootReasonFailed    = "RebootFailed"
-)
-
-// Rebooting is used as the Initialized reason once reboot is issued,
-// since Initialized becomes Unknown during reboot.
-const RebootReasonRebooting = "Rebooting"
 
 // NodeClaimStatus defines the observed state of NodeClaim
 type NodeClaimStatus struct {
@@ -71,11 +57,9 @@ type NodeClaimStatus struct {
 	// Allocatable is the estimated allocatable capacity of the node
 	// +optional
 	Allocatable v1.ResourceList `json:"allocatable,omitempty"`
+	//nolint:kubeapilinter
 	// Conditions contains signals for health and readiness
 	// +optional
-	// +listType=map
-	// +listMapKey=type
-	//nolint:kubeapilinter
 	Conditions []status.Condition `json:"conditions,omitempty"`
 	//nolint:kubeapilinter
 	// LastPodEventTime is updated with the last time a pod was scheduled
@@ -85,12 +69,12 @@ type NodeClaimStatus struct {
 	LastPodEventTime metav1.Time `json:"lastPodEventTime,omitempty"`
 }
 
-func (in *NodeClaim) StatusConditions(opts ...status.ForOption) status.ConditionSet {
+func (in *NodeClaim) StatusConditions() status.ConditionSet {
 	return status.NewReadyConditions(
 		ConditionTypeLaunched,
 		ConditionTypeRegistered,
 		ConditionTypeInitialized,
-	).For(in, opts...)
+	).For(in)
 }
 
 func (in *NodeClaim) GetConditions() []status.Condition {

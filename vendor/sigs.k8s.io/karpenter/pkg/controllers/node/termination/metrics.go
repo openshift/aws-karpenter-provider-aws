@@ -38,8 +38,7 @@ var (
 			Help:       "The time taken between a node's deletion request and the removal of its finalizer",
 			Objectives: metrics.SummaryObjectives(),
 		},
-		[]opmetrics.Label{metrics.NodePool},
-		opmetrics.Beta,
+		[]string{metrics.NodePoolLabel},
 	)
 	NodesDrainedTotal = opmetrics.NewPrometheusCounter(
 		crmetrics.Registry,
@@ -49,8 +48,7 @@ var (
 			Name:      "drained_total",
 			Help:      "The total number of nodes drained by Karpenter",
 		},
-		[]opmetrics.Label{metrics.NodePool},
-		opmetrics.Alpha,
+		[]string{metrics.NodePoolLabel},
 	)
 	NodeLifetimeDurationSeconds = opmetrics.NewPrometheusHistogram(
 		crmetrics.Registry,
@@ -86,7 +84,6 @@ var (
 				(dayDuration * 30).Seconds(),
 			},
 		},
-		[]opmetrics.Label{metrics.NodePool},
-		opmetrics.Alpha,
+		[]string{metrics.NodePoolLabel},
 	)
 )

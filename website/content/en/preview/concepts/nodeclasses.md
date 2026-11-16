@@ -57,7 +57,7 @@ spec:
     cpuCFSQuota: true
     clusterDNS: ["10.0.1.100"]
   # Optional, dictates UserData generation and default block device mappings.
-  # May be omitted when using an `alias` amiSelectorTerm, otherwise required.
+  # May be ommited when using an `alias` amiSelectorTerm, otherwise required.
   amiFamily: AL2
 
   # Required, discovers subnets to attach to instances
@@ -115,15 +115,6 @@ spec:
     - id: cr-123
     - instanceMatchCriteria: open
 
-  # Optional, enables Nitro Enclaves on launched instances
-  enclaveOptions:
-    enabled: true
-
-  # Optional, the terms are exclusive
-  placementGroupSelector:
-    name: my-pg
-    id: pg-123
-
   # Optional, propagates tags to underlying EC2 resources
   tags:
     team: team-a
@@ -135,16 +126,6 @@ spec:
     httpProtocolIPv6: disabled
     httpPutResponseHopLimit: 1 # This is changed to disable IMDS access from containers not on the host network
     httpTokens: required
-
-  # Optional, configures ENI Connection Tracking timeouts.
-  # Omit entirely to use EC2 defaults. Only set fields you want to override.
-  connectionTracking:
-    # Optional, configures timeout (in seconds) for idle TCP connections.
-    tcpEstablishedTimeout: 300 # lower than the EC2 default of 432000 (5 days)
-    # Optional, configures timeout (in seconds) for idle UDP stream flows.
-    udpStreamTimeout: 120
-    # Optional, configures timeout (in seconds) for idle unidirectional or single-transaction UDP flows.
-    udpTimeout: 45
 
   # Optional, configures storage devices for the instance
   blockDeviceMappings:
@@ -159,15 +140,6 @@ spec:
         throughput: 125
         snapshotID: snap-0123456789
         volumeInitializationRate: 100
-
-  # Optional, configures the network interfaces for the instance
-  networkInterfaces:
-    - networkCardIndex: 0
-      deviceIndex: 0
-      interfaceType: "interface"
-    - networkCardIndex: 0
-      deviceIndex: 1
-      interfaceType: "interface"
 
   # Optional, use instance-store volumes for node ephemeral-storage
   instanceStorePolicy: RAID0
@@ -228,7 +200,6 @@ status:
       id: cr-01234567890123456
       instanceMatchCriteria: targeted
       instanceType: g6.48xlarge
-      interruptible: false
       ownerID: "012345678901"
       reservationType: capacity-block
       state: expiring
@@ -236,7 +207,6 @@ status:
       id: cr-12345678901234567
       instanceMatchCriteria: open
       instanceType: g6.48xlarge
-      interruptible: true
       ownerID: "98765432109"
       reservationType: default
       state: active
@@ -265,25 +235,11 @@ Refer to the [NodePool docs]({{<ref "./nodepools" >}}) for settings applicable t
 
 ## spec.kubelet
 
-Karpenter provides the ability to configure the kubelet on provisioned nodes.
+Karpenter provides the ability to specify a few additional Kubelet arguments.
 These are all optional and provide support for additional customization and use cases.
 Adjust these only if you know you need to do so.
 For more details on kubelet settings, see the [KubeletConfiguration reference](https://kubernetes.io/docs/reference/config-api/kubelet-config.v1/).
-
-Any `KubeletConfiguration` field from the Kubernetes library bundled with this Karpenter version are configurable. Karpenter reads the fields relevant to scheduling (`maxPods`, `podsPerCore`,
-`kubeReserved`, `systemReserved`, and `evictionHard`) and passes all others through to the node
-unchanged. Passing arbitrary fields through requires an AMI family that accepts a full kubelet
-configuration; see [AMI Family Support]({{< ref "#ami-family-support" >}}) below.
-
-Field names and values are validated by Karpenter, so an invalid
-configuration is accepted on apply and reported on the EC2NodeClass afterwards:
-
-```sh
-kubectl get ec2nodeclass default -o jsonpath='{.status.conditions[?(@.type=="ValidationSucceeded")]}'
-```
-
-A NodeClass that fails this check does not become `Ready`, so no nodes launch from it until the
-configuration is corrected.
+The implemented fields are a subset of the full list of upstream kubelet configuration arguments.
 
 ```yaml
 kubelet:
@@ -317,8 +273,9 @@ kubelet:
 ```
 
 {{% alert title="Note" color="primary" %}}
-Fields beyond those shown above may be set directly in `spec.kubelet`. For example, `maxPods` and
-`registryPullQPS` can both be configured there:
+If you need to specify a field that isn't present in `spec.kubelet`, you can set it via custom [UserData]({{< ref "#specuserdata" >}}).
+For example, if you wanted to configure `maxPods` and `registryPullQPS` you would set the former through `spec.kubelet` and the latter through UserData.
+The following example achieves this with AL2023:
 
 ```yaml
 apiVersion: karpenter.k8s.aws/v1
@@ -328,27 +285,18 @@ spec:
     - alias: al2023@v20240807
   kubelet:
     maxPods: 42
-    registryPullQPS: 10
+  userData: |
+    apiVersion: node.eks.aws/v1alpha1
+    kind: NodeConfig
+    spec:
+      kubelet:
+        config:
+          # Configured through UserData since unavailable in `spec.kubelet`
+          registryPullQPS: 10
 ```
-
-If you need a field newer than the kubelet version Karpenter was built against, set it via custom
-[UserData]({{< ref "#specuserdata" >}}) instead.
 
 Note that when using the `Custom` AMIFamily you will need to specify fields **both** in `spec.kubelet` and `spec.userData`.
 {{% /alert %}}
-
-#### AMI Family Support
-
-Only the `AL2023` AMI family bootstraps nodes with a full kubelet configuration document, so it is the only family that can apply arbitrary `spec.kubelet` fields. The other managed families (`AL2`, `Bottlerocket`, `Windows2019`, `Windows2022`, `Windows2025`) bootstrap the kubelet through a fixed set of parameters, and are therefore limited to the 12 fields Karpenter maps explicitly:
-
-`clusterDNS`, `maxPods`, `podsPerCore`, `systemReserved`, `kubeReserved`, `evictionHard`, `evictionSoft`, `evictionSoftGracePeriod`, `evictionMaxPodGracePeriod`, `imageGCHighThresholdPercent`, `imageGCLowThresholdPercent`, `cpuCFSQuota`
-
-Any other field set on those families is rejected rather than silently dropped: the `ValidationSucceeded` status condition is set to `False` with reason `UnsupportedKubeletConfiguration`, and no nodes launch from the NodeClass until the unsupported fields are removed. Two field-level restrictions are enforced the same way, for the same reason:
-
-* `podsPerCore` is not applied by the `Bottlerocket` family.
-* `clusterDNS` accepts only one entry on these non-AL2023 families, not a list.
-
-The `Custom` AMI family is exempt from these checks. It ships without default userData, so Karpenter cannot know which fields your bootstrapping honors and applies none of them on your behalf. Set them in [`spec.userData`]({{< ref "#specuserdata" >}}) as well.
 
 #### Pods Per Core
 
@@ -384,103 +332,6 @@ If `kubeReserved` is not specified, Karpenter will compute the default reserved 
 These defaults are based on the defaults on Karpenter's supported AMI families, which are not the same as the kubelet defaults.
 You should be aware of the CPU and memory default calculation when using Custom AMI Families. If they don't align, there may be a difference in Karpenter's computed allocatable ephemeral storage and the actually ephemeral storage available on the node.
 {{% /alert %}}
-
-### Dynamic Kubelet Configuration via Expressions
-
-<i class="fa-solid fa-circle-info"></i> <b>Feature State: </b> [Alpha]({{<ref "../reference/settings#aws-specific-feature-gates" >}})
-
-`maxPods`, `kubeReserved`, and `systemReserved` can be set to a [CEL (Common Expression Language)](https://kubernetes.io/docs/reference/using-api/cel/) expression that Karpenter evaluates per instance type, instead of a static value that applies uniformly to every node launched from the NodeClass. This lets a single NodeClass span a heterogeneous fleet. For example, `maxPods` can scale with each instance type's ENI capacity or `kubeReserved` scale with vCPU count without fracturing into a separate NodeClass per instance size.
-
-{{% alert title="Feature Gate Required" color="warning" %}}
-Expression support is behind the AWS-specific `NodeClassCEL` [feature gate]({{<ref "../reference/settings#aws-specific-feature-gates" >}}), which is disabled by default. Enable it with `--aws-feature-gates NodeClassCEL=true` (Helm: `settings.awsFeatureGates.nodeClassCEL: true`).
-
-While the gate is disabled, a NodeClass that carries an expression is rejected. Its `ValidationSucceeded` status condition is set to `False` with reason `KubeletExpressionsDisabled`, and no nodes launch from it. A NodeClass whose kubelet fields are all static literals is unaffected.
-{{% /alert %}}
-
-Each field independently accepts either its usual static value or an expression string, there is no separate expression field.
-
-When none of these fields is set, Karpenter applies its internal defaults (ENI-limited `maxPods`, graduated `kubeReserved`) exactly as it does today.
-
-#### Example
-
-```yaml
-apiVersion: karpenter.k8s.aws/v1
-kind: EC2NodeClass
-metadata:
-  name: general-purpose
-spec:
-  kubelet:
-    # Scale maxPods with each instance type's ENI capacity
-    maxPods: "((default_enis - 1) * (ips_per_eni - 1)) + 2"
-    # Scale reservations with instance size, and with the maxPods resolved above
-    kubeReserved:
-      cpu: "max(60, vcpus * 30)"
-      memory: "11 * max_pods + 255"
-    systemReserved:
-      cpu: "max(20, vcpus * 10)"
-      memory: "max(100, memory_mib / 64)"
-  amiSelectorTerms:
-    - alias: al2023@latest
-```
-
-Every node launched from this single NodeClass is configured from the instance type it landed on.
-
-#### Available variables
-
-The following variables are populated from each instance type's information and are available in all kubelet expressions:
-
-| Variable        | Type   | Description                                            |
-|-----------------|--------|--------------------------------------------------------|
-| `instance_type` | string | The EC2 instance type name                             |
-| `vcpus`         | int    | Number of vCPUs                                        |
-| `memory_mib`    | int    | Memory in MiB                                          |
-| `default_enis`  | int    | Maximum network interfaces on the default network card  |
-| `ips_per_eni`   | int    | IPv4 addresses per ENI                                 |
-| `max_pods`      | int    | The resolved `maxPods` for this instance type           |
-
-`max_pods` lets `kubeReserved` and `systemReserved` expressions reference the resolved `maxPods` (whether that came from a `maxPods` expression, a static `maxPods` value, or Karpenter's default).
-
-#### Result units and rounding
-
-Expressions return a bare number. Karpenter attaches the unit that the field's static quantities already use, so a formula reads like the value it replaces:
-
-| Key                 | Unit          | Example        | Rounding                    |
-|---------------------|---------------|----------------|-----------------------------|
-| `cpu`               | millicores    | `480` → `480m` | up to a multiple of 10m     |
-| `memory`            | mebibytes     | `630` → `630Mi`| up to a multiple of 16Mi    |
-| `ephemeral-storage` | gibibytes     | `3` → `3Gi`    | none                        |
-| `pid`               | process count | `4096` → `4096`| none                        |
-
-Rounding is always *up*, so a reservation is never smaller than the expression asked for. Doubles are truncated to an integer, and non-finite results (`+Inf`, `-Inf`, `NaN`) are rejected.
-
-#### Supported functions
-
-* Arithmetic: `+`, `-`, `*`, `/`, `%`
-* Comparison: `<`, `<=`, `>`, `>=`, `==`, `!=`
-* Logical: `&&`, `||`, `!`
-* Built-in: `max(a, b)`, `min(a, b)`, `int()`, `double()`
-* Conditional: `condition ? trueValue : falseValue`
-
-`max` and `min` are two-argument overloads only. For example, `max(a, b, c)` is not supported. User-defined variables and custom functions are not available, so only the built-in instance-type variables above may be referenced.
-
-#### Common expressions
-
-| Use Case                                          | Field              | Expression                                                              |
-|---------------------------------------------------|--------------------|-------------------------------------------------------------------------|
-| ENI-limited maxPods (default formula)             | `maxPods`          | `((default_enis - 1) * (ips_per_eni - 1)) + 2`                          |
-| ENI-limited with prefix delegation (16 IPs/prefix)| `maxPods`          | `min(250, ((default_enis - 1) * (ips_per_eni - 1)) * 16 + 2)`           |
-| Fixed pods cap                                    | `maxPods`          | `min(110, max_pods)`                                                    |
-| Memory reservation scaled by pod count            | `kubeReserved.memory` | `11 * max_pods + 255`                                                |
-| System memory as percentage of total             | `systemReserved.memory` | `max(100, memory_mib / 64)`                                        |
-
-#### Validation
-
-Expressions are validated on the EC2NodeClass and surfaced on the `ValidationSucceeded` status condition. They are not rejected at admission. Validation happens in two stages:
-
-1. **Compile-time**, per expression: the expression must parse, type-check against the available variables, and return an int or double. Failures set reason `KubeletExpressionInvalid`.
-2. **Evaluation-time**, per expression *per known instance type*: the expression must evaluate without error and produce a usable value (non-negative, and within int32 range for `maxPods`). Failures set reason `KubeletExpressionEvalFailed`. This stage catches errors that depend on an instance type's actual values, such as a subtraction that only goes negative on small instances.
-
-A NodeClass with a failing expression goes `NotReady` and launches no nodes until it is corrected. Validation confirms that an expression compiles and evaluates, but it cannot tell whether an expression produces the values you *intended*. Ensure to test expressions against your target instance types before applying them to a live cluster.
 
 ### Eviction Thresholds
 
@@ -861,7 +712,7 @@ You can provision and assign a role to an IAM instance profile using [CloudForma
 
 {{% alert title="Note" color="primary" %}}
 
-For [private clusters](https://docs.aws.amazon.com/eks/latest/userguide/private-clusters.html) without access to their AWS region's IAM API endpoint, using `spec.instanceProfile` is required. `spec.role` cannot be used since Karpenter needs to access IAM endpoints to manage a generated instance profile. IAM [doesn't support private endpoints](https://docs.aws.amazon.com/vpc/latest/privatelink/aws-services-privatelink-support.html) to enable accessing the service without going to the public internet.
+For [private clusters](https://docs.aws.amazon.com/eks/latest/userguide/private-clusters.html) that do not have access to the public internet, using `spec.instanceProfile` is required. `spec.role` cannot be used since Karpenter needs to access IAM endpoints to manage a generated instance profile. IAM [doesn't support private endpoints](https://docs.aws.amazon.com/vpc/latest/privatelink/aws-services-privatelink-support.html) to enable accessing the service without going to the public internet.
 
 {{% /alert %}}
 
@@ -915,7 +766,7 @@ alias: bottlerocket@v1.20.4
 ```
 The Windows family does not support pinning, so only `latest` is supported.
 
-The following commands can be used to determine the versions available for an alias in your region:
+The following commands can be used to determine the versions availble for an alias in your region:
 
 {{< tabpane text=true right=false >}}
   {{% tab "AL2023" %}}
@@ -1109,39 +960,6 @@ spec:
       key: foo
 ```
 
-## spec.placementGroupSelector
-
-Placement Group Selector allows you to select a [placement group](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/placement-groups.html) for instances launched by this EC2NodeClass. Each EC2NodeClass maps to exactly one placement group — all instances launched from that EC2NodeClass are placed into the resolved placement group.
-
-Placement groups can be selected by either name or ID. Only one of `name` or `id` may be specified.
-
-Karpenter supports all three placement group strategies:
-- **Cluster** — instances are placed in a single AZ on the same network segment for low-latency, high-throughput networking (e.g., EFA workloads)
-- **Partition** — instances are distributed across isolated partitions (up to 7 per AZ) for hardware fault isolation. Applications can use `topologySpreadConstraints` with the `karpenter.k8s.aws/placement-group-partition` label to spread workloads across partitions.
-- **Spread** — each instance is placed on distinct hardware (up to 7 instances per AZ per group) for maximum fault isolation
-
-{{% alert title="Note" color="primary" %}}
-The IAM role Karpenter assumes must have permissions for the [ec2:DescribePlacementGroups](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribePlacementGroups.html) action to discover placement groups and the [ec2:RunInstances](https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonec2.html#amazonec2-RunInstances) / [ec2:CreateFleet](https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonec2.html#amazonec2-CreateFleet) actions to launch instances into the placement group.
-{{% /alert %}}
-
-#### Examples
-
-Select the placement group with the given ID:
-
-```yaml
-spec:
-  placementGroupSelector:
-    id: pg-123
-```
-
-Select the placement group with the given name:
-
-```yaml
-spec:
-  placementGroupSelector:
-    name: my-pg-a
-```
-
 ## spec.tags
 
 Karpenter adds tags to all resources it creates, including EC2 Instances, EBS volumes, and Launch Templates. The default set of tags are listed below.
@@ -1184,39 +1002,6 @@ spec:
     httpPutResponseHopLimit: 1
     httpTokens: required
 ```
-
-## spec.connectionTracking
-
-Configure [Connection Tracking Timeouts](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/security-group-connection-tracking.html#connection-tracking-timeouts)
-on the ENIs Karpenter provisions in the launch template: the primary ENI, any EFA ENIs, and user-configured `interface`
-type network interfaces. EFA-only (`efa-only`) interfaces do not receive connection tracking settings. Secondary ENIs
-created at runtime by your CNI (e.g. VPC-CNI, Cilium in ENI IPAM mode) are out of scope and must be configured through
-the CNI. For VPC-CNI, see [aws/amazon-vpc-cni-k8s#3666](https://github.com/aws/amazon-vpc-cni-k8s/pull/3666) for
-support replicating connection tracking settings to secondary ENIs.
-
-{{% alert title="Note" color="primary" %}}
-Connection tracking timeout configuration requires instances built on the [Nitro System](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-types.html#ec2-nitro-instances). When this field is set, Karpenter automatically excludes non-Nitro instance types from consideration.
-{{% /alert %}}
-
-Idle connections left too long can exhaust the security group's connection tracking table and lead to dropped packets.
-
-All timeout values are specified in seconds as integers.
-Any field left unset falls back to the EC2 default for that timeout.
-
-### TCP Established Timeout
-Timeout for idle TCP connections in an established state.
-Value must be between 60 and 432,000 seconds (5 days). The default is 350 seconds for Nitro v6 instance types (excluding P6e-GB200) and 432,000 seconds for other instance types.
-Setting a lower timeout helps free up tracking slots sooner at the cost of tearing down longer-lived TCP flows.
-
-### UDP Stream Timeout
-Timeout for idle UDP "stream" flows that have seen more than one request-response transaction.
-Value must be between 60 and 180 seconds. AWS API defaults to 180 seconds.
-Use a lower timeout to reclaim slots for true streaming traffic that stalls frequently.
-
-### UDP Timeout
-Timeout for idle UDP flows that have seen traffic only in a single direction or a single request-response transaction.
-Value must be between 30 and 60 seconds. AWS API defaults to 30 seconds.
-For high volume short-lived, stateless UDP transactions it may be preferable to use a lower timeout.
 
 ## spec.blockDeviceMappings
 
@@ -1269,7 +1054,7 @@ spec:
     # Root device
     - deviceName: /dev/xvda
       ebs:
-        volumeSize: 6Gi
+        volumeSize: 4Gi
         volumeType: gp3
         encrypted: true
     # Data device: Container resources such as images and logs
@@ -1294,28 +1079,6 @@ spec:
 ### Custom
 
 The `Custom` AMIFamily ships without any default `blockDeviceMappings`.
-
-## spec.networkInterfaces
-
-The `networkInterfaces` field allows you to configure network interface attachments for instances, including support for EFA (Elastic Fabric Adapter) devices for high-performance computing and machine learning workloads. For more information see the [AWS EFA docs](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa.html).
-
-Configure network interfaces by specifying the network card index, device index, and interface type:
-
-```yaml
-spec:
-  networkInterfaces:
-    - networkCardIndex: 0
-      deviceIndex: 0
-      interfaceType: "interface"
-    - networkCardIndex: 0
-      deviceIndex: 1
-      interfaceType: "efa-only"
-```
-
-### Interface Types
-
-- __interface__: Standard ENA (Elastic Network Adapter) interface providing IP connectivity
-- __efa-only__: EFA interface that provides only the EFA device for RDMA communication without consuming an IP address
 
 ## spec.instanceStorePolicy
 
@@ -1418,12 +1181,6 @@ aws ssm get-parameter --name "<parameter-name>" --region <region> --with-decrypt
 For more examples on configuring fields for different AMI families, see the [examples here](https://github.com/aws/karpenter/blob/main/examples/v1).
 
 Karpenter will merge the userData you specify with the default userData for that AMIFamily. See the [AMIFamily]({{< ref "#specamifamily" >}}) section for more details on these defaults. View the sections below to understand the different merge strategies for each AMIFamily.
-
-{{% alert title="Warning" color="warning" %}}
-During an [EKS cluster certificate authority (CA) rotation](https://docs.aws.amazon.com/eks/latest/userguide/certificate-authority-rotation.html#_updating_your_kubernetes_clients), your cluster goes through a dual trust period where its trust bundle contains two CA certificates: the outgoing CA and the successor CA. Karpenter embeds your cluster's CA data in the UserData it generates, so your total user data grows while both CAs are trusted.
-
-If your `spec.userData` is close to the [EC2 user data limit](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/user-data.html), the addition of the successor CA can cause launch template creation to fail, which prevents Karpenter from provisioning new nodes. Karpenter does not compress user data, so reduce the size of your `spec.userData` before the dual trust period begins &mdash; for example, by baking configuration into your AMI or having your script fetch its contents at boot instead of inlining them.
-{{% /alert %}}
 
 ### AL2
 
@@ -1811,60 +1568,6 @@ If a `NodeClaim` requests `vpc.amazonaws.com/efa` resources, `spec.associatePubl
 requires that the field is only set to true when configuring an instance with a single ENI at launch. When using this field, it is advised that users segregate their EFA workload to use a separate `NodePool` / `EC2NodeClass` pair.
 {{% /alert %}}
 
-## spec.enclaveOptions
-
-The `enclaveOptions` field controls whether Karpenter enables AWS Nitro Enclaves in the generated EC2 launch template.
-
-```yaml
-spec:
-  enclaveOptions:
-    enabled: true
-```
-
-{{% alert title="Note" color="primary" %}}
-The behavior depends on whether `enclaveOptions` is specified:
-
-- When omitted or `enabled` is `false`, Nitro Enclaves are disabled.
-- When specified, `enabled` is required.
-- When `enabled` is `true`, Karpenter enables Nitro Enclaves and excludes instance types whose EC2 `NitroEnclavesSupport` value is not `supported`.
-
-Adding, removing, or changing `enclaveOptions` participates in EC2NodeClass drift, so it replaces affected NodeClaims according to the NodePool's disruption settings.
-{{% /alert %}}
-
-{{% alert title="Warning" color="warning" %}}
-Karpenter does not install the Nitro Enclaves CLI or device plugin, configure the allocator, or reserve enclave CPU, memory, or hugepages. Configure these on the node and keep the `NodeOverlay` capacity consistent with the resources advertised by the device plugin and kubelet; see [Using Nitro Enclaves]({{< ref "../tasks/nitro-enclaves" >}}) for details.
-{{% /alert %}}
-
-{{% alert title="Warning" color="warning" %}}
-[Nitro Enclaves are not supported in AWS Local Zones, AWS Wavelength Zones, or AWS Outposts](https://docs.aws.amazon.com/enclaves/latest/user/nitro-enclave.html). Configure `subnetSelectorTerms` to resolve only subnets in standard Availability Zones. Karpenter filters instance types based on EC2's `NitroEnclavesSupport` value, but does not filter these unsupported locations. EC2 can reject launch attempts that target them. If only unsupported locations match, the workload remains pending.
-{{% /alert %}}
-
-### Example
-
-```yaml
-apiVersion: karpenter.k8s.aws/v1
-kind: EC2NodeClass
-metadata:
-  name: enclave-enabled
-spec:
-  amiFamily: AL2023
-  enclaveOptions:
-    enabled: true
-  amiSelectorTerms:
-    - alias: al2023@latest
-  subnetSelectorTerms:
-    - tags:
-        karpenter.sh/discovery: "${CLUSTER_NAME}"
-  securityGroupSelectorTerms:
-    - tags:
-        karpenter.sh/discovery: "${CLUSTER_NAME}"
-  role: "KarpenterNodeRole-${CLUSTER_NAME}"
-```
-
-The example uses `@latest` for brevity; follow the [AMI pinning guidance]({{< ref "../tasks/managing-amis#pinning-amis" >}}) for production.
-
-For detailed configuration examples, including the default device-plugin label and expected extended resources, see [Using Nitro Enclaves]({{< ref "../tasks/nitro-enclaves" >}}).
-
 ## spec.ipPrefixCount
 
 This value is a integer field that controls how many ip prefixes will be assigned to `NodeClaim`. See the [EC2 Launch Template Network Interface Spec](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-ec2-launchtemplate-networkinterface.html) for more information. Sets ipv4PrefixCount if you are using an IPv4 Cluster, or ipv6PrefixCount if you are using IPv6.
@@ -2009,7 +1712,6 @@ status:
 | `ownerID`               | `459763720645`         | The account ID that owns the capacity reservation                                    |
 | `reservationType`       | `default`              | The type of the capacity reservation. Can be `default` or `capacity-block`.          |
 | `state`                 | `active`               | The state of the capacity reservation. Can be `active` or `expiring`.                |
-| `interruptible`         | `true` or `false`      | Whether the capacity reservation is interruptible.                                   |
 
 #### Examples
 
@@ -2020,7 +1722,6 @@ status:
     id: cr-01234567890123456
     instanceMatchCriteria: targeted
     instanceType: g6.48xlarge
-    interruptible: false
     ownerID: "012345678901"
     reservationType: capacity-block
     state: expiring
@@ -2028,7 +1729,6 @@ status:
     id: cr-12345678901234567
     instanceMatchCriteria: open
     instanceType: g6.48xlarge
-    interruptible: true
     ownerID: "98765432109"
     reservationType: default
     state: active
@@ -2056,10 +1756,7 @@ NodeClasses have the following status conditions:
 | SubnetsReady         | Subnets are discovered.                                                                                                                                                                                                           |
 | SecurityGroupsReady  | Security Groups are discovered.                                                                                                                                                                                                   |
 | InstanceProfileReady | Instance Profile is discovered.                                                                                                                                                                                                   |
-| AMIsReady            | AMIs are discovered.                                                                                                                                                                                                              |
-| ValidationSucceeded  | EC2NodeClass validation succeeded.                                                                                                                                                                                                |
-| PlacementGroupReady  | Referenced placement groups are discovered.                                                                                                                                                                                       |
-| CapacityReservationsReady | Referenced capacity reservations are discovered. Only present when the capacity reservation feature is enabled.                                                                                                                   |
+| AMIsReady            | AMIs are discovered.                                                |
 | Ready                | Top level condition that indicates if the nodeClass is ready. If any of the underlying conditions is `False` then this condition is set to `False` and `Message` on the condition indicates the dependency that was not resolved. |
 
 If a NodeClass is not ready, NodePools that reference it through their `nodeClassRef` will not be considered for scheduling.

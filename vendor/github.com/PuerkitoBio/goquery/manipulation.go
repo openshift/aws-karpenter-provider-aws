@@ -166,16 +166,8 @@ func (s *Selection) Clone() *Selection {
 // Empty removes all children nodes from the set of matched elements.
 // It returns the children nodes in a new Selection.
 func (s *Selection) Empty() *Selection {
-	// Count the children first so nodes can be presized, avoiding append's
-	// repeated reallocations.
-	count := 0
-	for _, n := range s.Nodes {
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			count++
-		}
-	}
+	var nodes []*html.Node
 
-	nodes := make([]*html.Node, 0, count)
 	for _, n := range s.Nodes {
 		for c := n.FirstChild; c != nil; c = n.FirstChild {
 			n.RemoveChild(c)
@@ -382,14 +374,20 @@ func (s *Selection) WrapSelection(sel *Selection) *Selection {
 //
 // It returns the original set of elements.
 func (s *Selection) WrapHtml(htmlStr string) *Selection {
-	cache := make(map[string][]*html.Node)
-	for _, n := range s.Nodes {
-		parent := n.Parent
-		if parent == nil {
+	nodesMap := make(map[string][]*html.Node)
+	for _, context := range s.Nodes {
+		var parent *html.Node
+		if context.Parent != nil {
+			parent = context.Parent
+		} else {
 			parent = &html.Node{Type: html.ElementNode}
 		}
-		nodes := cachedParseHtmlWithContext(cache, htmlStr, parent)
-		newSingleSelection(n, s.document).wrapAllNodes(cloneNodes(nodes)...)
+		nodes, found := nodesMap[nodeName(parent)]
+		if !found {
+			nodes = parseHtmlWithContext(htmlStr, parent)
+			nodesMap[nodeName(parent)] = nodes
+		}
+		newSingleSelection(context, s.document).wrapAllNodes(cloneNodes(nodes)...)
 	}
 	return s
 }
@@ -524,10 +522,14 @@ func (s *Selection) WrapInnerSelection(sel *Selection) *Selection {
 //
 // It returns the original set of elements.
 func (s *Selection) WrapInnerHtml(htmlStr string) *Selection {
-	cache := make(map[string][]*html.Node)
-	for _, n := range s.Nodes {
-		nodes := cachedParseHtmlWithContext(cache, htmlStr, n)
-		newSingleSelection(n, s.document).wrapInnerNodes(cloneNodes(nodes)...)
+	nodesMap := make(map[string][]*html.Node)
+	for _, context := range s.Nodes {
+		nodes, found := nodesMap[nodeName(context)]
+		if !found {
+			nodes = parseHtmlWithContext(htmlStr, context)
+			nodesMap[nodeName(context)] = nodes
+		}
+		newSingleSelection(context, s.document).wrapInnerNodes(cloneNodes(nodes)...)
 	}
 	return s
 }
@@ -560,7 +562,13 @@ func (s *Selection) wrapInnerNodes(ns ...*html.Node) *Selection {
 }
 
 func parseHtml(h string) []*html.Node {
-	return parseHtmlWithContext(h, &html.Node{Type: html.ElementNode})
+	// Errors are only returned when the io.Reader returns any error besides
+	// EOF, but strings.Reader never will
+	nodes, err := html.ParseFragment(strings.NewReader(h), &html.Node{Type: html.ElementNode})
+	if err != nil {
+		panic("goquery: failed to parse HTML: " + err.Error())
+	}
+	return nodes
 }
 
 func parseHtmlWithContext(h string, context *html.Node) []*html.Node {
@@ -646,9 +654,10 @@ func (s *Selection) manipulateNodes(ns []*html.Node, reverse bool,
 // isParent can be used to indicate that the elements of the selection should be treated as the parent for the parsed html.
 // A cache is used to avoid parsing the html multiple times should the elements of the selection result in the same context.
 func (s *Selection) eachNodeHtml(htmlStr string, isParent bool, mergeFn func(n *html.Node, nodes []*html.Node)) *Selection {
-	cache := make(map[string][]*html.Node)
+	// cache to avoid parsing the html for the same context multiple times
+	nodeCache := make(map[string][]*html.Node)
+	var context *html.Node
 	for _, n := range s.Nodes {
-		var context *html.Node
 		if isParent {
 			context = n.Parent
 		} else {
@@ -657,24 +666,14 @@ func (s *Selection) eachNodeHtml(htmlStr string, isParent bool, mergeFn func(n *
 			}
 			context = n
 		}
-		if context == nil {
-			continue
+		if context != nil {
+			nodes, found := nodeCache[nodeName(context)]
+			if !found {
+				nodes = parseHtmlWithContext(htmlStr, context)
+				nodeCache[nodeName(context)] = nodes
+			}
+			mergeFn(n, cloneNodes(nodes))
 		}
-		nodes := cachedParseHtmlWithContext(cache, htmlStr, context)
-		mergeFn(n, cloneNodes(nodes))
 	}
 	return s
-}
-
-// cachedParseHtmlWithContext returns parseHtmlWithContext(htmlStr, context), reusing a prior
-// result when context's nodeName has already been seen. Callers pass their own
-// cache map so the cache lifetime matches the caller's loop scope.
-func cachedParseHtmlWithContext(cache map[string][]*html.Node, htmlStr string, context *html.Node) []*html.Node {
-	key := nodeName(context)
-	if nodes, ok := cache[key]; ok {
-		return nodes
-	}
-	nodes := parseHtmlWithContext(htmlStr, context)
-	cache[key] = nodes
-	return nodes
 }

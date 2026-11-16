@@ -19,6 +19,7 @@ package disruption
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,7 +33,9 @@ import (
 
 var SingleNodeConsolidationTimeoutDuration = 3 * time.Minute
 
-// SingleNodeConsolidation evaluates one node at a time for consolidation.
+const SingleNodeConsolidationType = "single"
+
+// SingleNodeConsolidation is the consolidation controller that performs single-node consolidation.
 type SingleNodeConsolidation struct {
 	consolidation
 	PreviouslyUnseenNodePools sets.Set[string]
@@ -65,7 +68,7 @@ func (s *SingleNodeConsolidation) ComputeCommands(ctx context.Context, disruptio
 	for i, candidate := range candidates {
 		if s.clock.Now().After(timeout) {
 			ConsolidationTimeoutsTotal.Inc(map[string]string{ConsolidationTypeLabel: s.ConsolidationType()})
-			log.FromContext(ctx).V(1).Info("abandoning single-node consolidation due to timeout", "candidates_evaluated", i)
+			log.FromContext(ctx).V(1).Info(fmt.Sprintf("abandoning single-node consolidation due to timeout after evaluating %d candidates", i))
 
 			s.PreviouslyUnseenNodePools = unseenNodePools
 
@@ -81,9 +84,10 @@ func (s *SingleNodeConsolidation) ComputeCommands(ctx context.Context, disruptio
 			constrainedByBudgets = true
 			continue
 		}
-		// Skip candidates whose best-case score (delete ratio) cannot pass the
-		// threshold. A DELETE is the upper bound; if it fails, no REPLACE will pass.
-		if !s.evaluator.CanPassThreshold(candidate) {
+		// Filter out empty candidates. If there was an empty node that wasn't consolidated before this, we should
+		// assume that it was due to budgets. If we don't filter out budgets, users who set a budget for `empty`
+		// can find their nodes disrupted here.
+		if len(candidate.reschedulablePods) == 0 {
 			continue
 		}
 
@@ -96,11 +100,7 @@ func (s *SingleNodeConsolidation) ComputeCommands(ctx context.Context, disruptio
 		if cmd.Decision() == NoOpDecision {
 			continue
 		}
-		// Score the move: Balanced pools may reject; other policies pass through.
-		if approved, _ := s.evaluator.ApproveCommand(ctx, cmd); !approved {
-			continue
-		}
-		if _, err = s.validator.Validate(ctx, cmd, commandValidationDelay); err != nil {
+		if _, err = s.validator.Validate(ctx, cmd, consolidationTTL); err != nil {
 			if IsValidationError(err) {
 				reason := getValidationFailureReason(err)
 				cmd.EmitRejectedEvents(s.recorder, reason)
@@ -132,12 +132,18 @@ func (s *SingleNodeConsolidation) Class() string {
 }
 
 func (s *SingleNodeConsolidation) ConsolidationType() string {
-	return SingleNodeConsolidationType.Name
+	return SingleNodeConsolidationType
 }
 
-// SortCandidates applies the consolidation sort, then interweaves by NodePool.
+// sortCandidates interweaves candidates from different nodepools and prioritizes nodepools
+// that timed out in previous runs
 func (s *SingleNodeConsolidation) SortCandidates(ctx context.Context, candidates []*Candidate) []*Candidate {
-	candidates = s.sortCandidates(ctx, candidates)
+
+	// First sort by disruption cost as the base ordering
+	sort.Slice(candidates, func(i int, j int) bool {
+		return candidates[i].DisruptionCost < candidates[j].DisruptionCost
+	})
+
 	return s.shuffleCandidates(ctx, lo.GroupBy(candidates, func(c *Candidate) string { return c.NodePool.Name }))
 }
 
@@ -145,7 +151,7 @@ func (s *SingleNodeConsolidation) shuffleCandidates(ctx context.Context, nodePoo
 	var result []*Candidate
 	// Log any timed out nodepools that we're prioritizing
 	if s.PreviouslyUnseenNodePools.Len() != 0 {
-		log.FromContext(ctx).V(1).Info("prioritizing nodepools that have not yet been considered due to timeouts in previous runs", "nodepools", strings.Join(s.PreviouslyUnseenNodePools.UnsortedList(), ", "))
+		log.FromContext(ctx).V(1).Info(fmt.Sprintf("prioritizing nodepools that have not yet been considered due to timeouts in previous runs: %s", strings.Join(s.PreviouslyUnseenNodePools.UnsortedList(), ", ")))
 	}
 	sortedNodePools := s.PreviouslyUnseenNodePools.UnsortedList()
 	sortedNodePools = append(sortedNodePools, lo.Filter(lo.Keys(nodePoolCandidates), func(nodePoolName string, _ int) bool {

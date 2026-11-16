@@ -26,7 +26,6 @@ import (
 const (
 	DisruptedTaintKey    = apis.Group + "/disrupted"
 	UnregisteredTaintKey = apis.Group + "/unregistered"
-	RebootingTaintKey    = apis.Group + "/rebooting"
 )
 
 var (
@@ -39,10 +38,5 @@ var (
 	UnregisteredNoExecuteTaint = v1.Taint{
 		Key:    UnregisteredTaintKey,
 		Effect: v1.TaintEffectNoExecute,
-	}
-	// `RebootingNoScheduleTaint` fences new scheduling until the node boots with a new bootID.
-	RebootingNoScheduleTaint = v1.Taint{
-		Key:    RebootingTaintKey,
-		Effect: v1.TaintEffectNoSchedule,
 	}
 )

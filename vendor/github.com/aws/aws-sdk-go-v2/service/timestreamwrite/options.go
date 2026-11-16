@@ -44,11 +44,6 @@ type Options struct {
 	// clients initial default settings.
 	DefaultsMode aws.DefaultsMode
 
-	// Disables SDK clock skew correction. When set, the SDK will not adjust request
-	// signing timestamps to compensate for clock drift between the client and the
-	// service.
-	DisableClockSkewCorrection bool
-
 	// Allows configuring endpoint discovery
 	EndpointDiscovery EndpointDiscoveryOptions
 
@@ -66,7 +61,8 @@ type Options struct {
 	// the client option BaseEndpoint instead.
 	EndpointResolver EndpointResolver
 
-	// Resolves the endpoint used for a particular service operation.
+	// Resolves the endpoint used for a particular service operation. This should be
+	// used over the deprecated EndpointResolver.
 	EndpointResolverV2 EndpointResolverV2
 
 	// Signature Version 4 (SigV4) Signer

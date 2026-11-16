@@ -38,12 +38,11 @@ var (
 			Name:      "created_total",
 			Help:      "Number of nodeclaims created in total by Karpenter. Labeled by reason the nodeclaim was created, the owning nodepool, and if min values was relaxed for this nodeclaim.",
 		},
-		[]opmetrics.Label{
-			NodeClaimCreatedReason,
-			NodePool,
-			MinValuesRelaxed,
+		[]string{
+			ReasonLabel,
+			NodePoolLabel,
+			MinValuesRelaxedLabel,
 		},
-		opmetrics.GA,
 	)
 	NodeClaimsTerminatedTotal = opmetrics.NewPrometheusCounter(
 		crmetrics.Registry,
@@ -51,14 +50,12 @@ var (
 			Namespace: Namespace,
 			Subsystem: NodeClaimSubsystem,
 			Name:      "terminated_total",
-			Help:      "Number of nodeclaims terminated in total by Karpenter. Labeled by the owning nodepool, capacity type, and zone.",
+			Help:      "Number of nodeclaims terminated in total by Karpenter. Labeled by the owning nodepool.",
 		},
-		[]opmetrics.Label{
-			NodePool,
-			CapacityType,
-			Zone,
+		[]string{
+			NodePoolLabel,
+			CapacityTypeLabel,
 		},
-		opmetrics.GA,
 	)
 	NodeClaimsDisruptedTotal = opmetrics.NewPrometheusCounter(
 		crmetrics.Registry,
@@ -66,33 +63,13 @@ var (
 			Namespace: Namespace,
 			Subsystem: NodeClaimSubsystem,
 			Name:      "disrupted_total",
-			Help:      "Number of nodeclaims disrupted in total by Karpenter. Labeled by reason the nodeclaim was disrupted, the owning nodepool, the capacity type, the consolidation policy, and the termination mode.",
+			Help:      "Number of nodeclaims disrupted in total by Karpenter. Labeled by reason the nodeclaim was disrupted and the owning nodepool.",
 		},
-		[]opmetrics.Label{
-			NodeClaimDisruptedReason,
-			NodePool,
-			CapacityType,
-			ConsolidationPolicy,
-			TerminationMode,
+		[]string{
+			ReasonLabel,
+			NodePoolLabel,
+			CapacityTypeLabel,
 		},
-		opmetrics.Alpha,
-	)
-	PodsDisruptionInitiatedTotal = opmetrics.NewPrometheusCounter(
-		crmetrics.Registry,
-		prometheus.CounterOpts{
-			Namespace: Namespace,
-			Subsystem: PodSubsystem,
-			Name:      "disruption_initiated_total",
-			Help:      "Number of pod disruptions initiated in total by Karpenter, incremented by the reschedulable pod count whenever the underlying nodeclaim is disrupted. Labeled by reason the nodeclaim was disrupted, the owning nodepool, the capacity type, the consolidation policy, and the termination mode. Pods owned by DaemonSets and mirror pods are excluded.",
-		},
-		[]opmetrics.Label{
-			NodeClaimDisruptedReason,
-			NodePool,
-			CapacityType,
-			ConsolidationPolicy,
-			TerminationMode,
-		},
-		opmetrics.Alpha,
 	)
 	NodesCreatedTotal = opmetrics.NewPrometheusCounter(
 		crmetrics.Registry,
@@ -100,13 +77,11 @@ var (
 			Namespace: Namespace,
 			Subsystem: NodeSubsystem,
 			Name:      "created_total",
-			Help:      "Number of nodes created in total by Karpenter. Labeled by owning nodepool and zone.",
+			Help:      "Number of nodes created in total by Karpenter. Labeled by owning nodepool.",
 		},
-		[]opmetrics.Label{
-			NodePool,
-			Zone,
+		[]string{
+			NodePoolLabel,
 		},
-		opmetrics.GA,
 	)
 	NodesTerminatedTotal = opmetrics.NewPrometheusCounter(
 		crmetrics.Registry,
@@ -114,12 +89,10 @@ var (
 			Namespace: Namespace,
 			Subsystem: NodeSubsystem,
 			Name:      "terminated_total",
-			Help:      "Number of nodes terminated in total by Karpenter. Labeled by owning nodepool and zone.",
+			Help:      "Number of nodes terminated in total by Karpenter. Labeled by owning nodepool.",
 		},
-		[]opmetrics.Label{
-			NodePool,
-			Zone,
+		[]string{
+			NodePoolLabel,
 		},
-		opmetrics.GA,
 	)
 )

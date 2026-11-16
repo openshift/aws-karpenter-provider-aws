@@ -5,10 +5,10 @@ package eks
 import (
 	"context"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/service/eks/schemas"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
-	smithy "github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // Updates a EKS Pod Identity association. In an update, you can change the IAM
@@ -82,23 +82,6 @@ type UpdatePodIdentityAssociationInput struct {
 	// [List of session tags added by EKS Pod Identity]: https://docs.aws.amazon.com/eks/latest/userguide/pod-id-abac.html#pod-id-abac-tags
 	DisableSessionTags *bool
 
-	// An optional IAM policy in JSON format (as an escaped string) that applies
-	// additional restrictions to this pod identity association beyond the IAM policies
-	// attached to the IAM role. This policy is applied as the intersection of the
-	// role's policies and this policy, allowing you to reduce the permissions that
-	// applications in the pods can use. Use this policy to enforce least privilege
-	// access while still leveraging a shared IAM role across multiple applications.
-	//
-	// Important considerations
-	//
-	//   - Session tags: When using this policy, disableSessionTags must be set to true
-	//   .
-	//
-	//   - Target role permissions: If you specify both a TargetRoleArn and a policy,
-	//   the policy restrictions apply only to the target role's permissions, not to the
-	//   initial role used for assuming the target role.
-	Policy *string
-
 	// The new IAM role to change in the association.
 	RoleArn *string
 
@@ -123,36 +106,6 @@ type UpdatePodIdentityAssociationInput struct {
 	noSmithyDocumentSerde
 }
 
-func (v *UpdatePodIdentityAssociationInput) Serialize(s smithy.ShapeSerializer) {
-	s.WriteStruct(schemas.UpdatePodIdentityAssociationRequest)
-	v.SerializeMembers(s)
-	s.CloseStruct()
-}
-
-func (v *UpdatePodIdentityAssociationInput) SerializeMembers(s smithy.ShapeSerializer) {
-	if v.AssociationId != nil {
-		s.WriteString(schemas.UpdatePodIdentityAssociationRequest_associationId, *v.AssociationId)
-	}
-	if v.ClientRequestToken != nil {
-		s.WriteString(schemas.UpdatePodIdentityAssociationRequest_clientRequestToken, *v.ClientRequestToken)
-	}
-	if v.ClusterName != nil {
-		s.WriteString(schemas.UpdatePodIdentityAssociationRequest_clusterName, *v.ClusterName)
-	}
-	if v.DisableSessionTags != nil {
-		s.WriteBool(schemas.UpdatePodIdentityAssociationRequest_disableSessionTags, *v.DisableSessionTags)
-	}
-	if v.Policy != nil {
-		s.WriteString(schemas.UpdatePodIdentityAssociationRequest_policy, *v.Policy)
-	}
-	if v.RoleArn != nil {
-		s.WriteString(schemas.UpdatePodIdentityAssociationRequest_roleArn, *v.RoleArn)
-	}
-	if v.TargetRoleArn != nil {
-		s.WriteString(schemas.UpdatePodIdentityAssociationRequest_targetRoleArn, *v.TargetRoleArn)
-	}
-}
-
 type UpdatePodIdentityAssociationOutput struct {
 
 	// The full description of the association that was updated.
@@ -164,44 +117,68 @@ type UpdatePodIdentityAssociationOutput struct {
 	noSmithyDocumentSerde
 }
 
-func (v *UpdatePodIdentityAssociationOutput) Serialize(s smithy.ShapeSerializer) {
-	s.WriteStruct(schemas.UpdatePodIdentityAssociationResponse)
-	v.SerializeMembers(s)
-	s.CloseStruct()
-}
-
-func (v *UpdatePodIdentityAssociationOutput) SerializeMembers(s smithy.ShapeSerializer) {
-	if v.Association != nil {
-		s.WriteStruct(schemas.UpdatePodIdentityAssociationResponse_association)
-		v.Association.SerializeMembers(s)
-		s.CloseStruct()
-	}
-}
-func (v *UpdatePodIdentityAssociationOutput) Deserialize(d smithy.ShapeDeserializer) error {
-	return smithy.ReadStruct(d, schemas.UpdatePodIdentityAssociationResponse, func(s *smithy.Schema) error {
-		switch s {
-		case schemas.UpdatePodIdentityAssociationResponse_association:
-			v.Association = &types.PodIdentityAssociation{}
-			return v.Association.Deserialize(d)
-		}
-		return nil
-	})
-}
 func (c *Client) addOperationUpdatePodIdentityAssociationMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&serializeRequestMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.UpdatePodIdentityAssociation, schemas.UpdatePodIdentityAssociationRequest, schemas.UpdatePodIdentityAssociationResponse)}, middleware.After); err != nil {
+	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
 		return err
 	}
-	if err := stack.Deserialize.Add(&deserializeResponseMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.UpdatePodIdentityAssociation, schemas.UpdatePodIdentityAssociationRequest, schemas.UpdatePodIdentityAssociationResponse), output: &UpdatePodIdentityAssociationOutput{}}, middleware.After); err != nil {
+	err = stack.Serialize.Add(&awsRestjson1_serializeOpUpdatePodIdentityAssociation{}, middleware.After)
+	if err != nil {
 		return err
+	}
+	err = stack.Deserialize.Add(&awsRestjson1_deserializeOpUpdatePodIdentityAssociation{}, middleware.After)
+	if err != nil {
+		return err
+	}
+	if err := addProtocolFinalizerMiddlewares(stack, options, "UpdatePodIdentityAssociation"); err != nil {
+		return fmt.Errorf("add protocol finalizers: %v", err)
 	}
 
+	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
+		return err
+	}
+	if err = addSetLoggerMiddleware(stack, options); err != nil {
+		return err
+	}
+	if err = addClientRequestID(stack); err != nil {
+		return err
+	}
+	if err = addComputeContentLength(stack); err != nil {
+		return err
+	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRecordResponseTiming(stack, options); err != nil {
+	if err = addRetry(stack, options); err != nil {
+		return err
+	}
+	if err = addRawResponseToMetadata(stack); err != nil {
+		return err
+	}
+	if err = addRecordResponseTiming(stack); err != nil {
+		return err
+	}
+	if err = addSpanRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addClientUserAgent(stack, options); err != nil {
+		return err
+	}
+	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
+		return err
+	}
+	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
+		return err
+	}
+	if err = addTimeOffsetBuild(stack, c); err != nil {
+		return err
+	}
+	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
 	if err = addCredentialSource(stack, options); err != nil {
@@ -211,6 +188,12 @@ func (c *Client) addOperationUpdatePodIdentityAssociationMiddlewares(stack *midd
 		return err
 	}
 	if err = addOpUpdatePodIdentityAssociationValidationMiddleware(stack); err != nil {
+		return err
+	}
+	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opUpdatePodIdentityAssociation(options.Region), middleware.Before); err != nil {
+		return err
+	}
+	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -223,6 +206,12 @@ func (c *Client) addOperationUpdatePodIdentityAssociationMiddlewares(stack *midd
 		return err
 	}
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
+		return err
+	}
+	if err = addInterceptAttempt(stack, options); err != nil {
 		return err
 	}
 	if err = addInterceptors(stack, options); err != nil {
@@ -262,4 +251,12 @@ func (m *idempotencyToken_initializeOpUpdatePodIdentityAssociation) HandleInitia
 }
 func addIdempotencyToken_opUpdatePodIdentityAssociationMiddleware(stack *middleware.Stack, cfg Options) error {
 	return stack.Initialize.Add(&idempotencyToken_initializeOpUpdatePodIdentityAssociation{tokenProvider: cfg.IdempotencyTokenProvider}, middleware.Before)
+}
+
+func newServiceMetadataMiddleware_opUpdatePodIdentityAssociation(region string) *awsmiddleware.RegisterServiceMetadata {
+	return &awsmiddleware.RegisterServiceMetadata{
+		Region:        region,
+		ServiceID:     ServiceID,
+		OperationName: "UpdatePodIdentityAssociation",
+	}
 }

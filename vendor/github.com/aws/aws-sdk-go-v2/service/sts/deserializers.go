@@ -38,17 +38,14 @@ func (m *awsAwsquery_deserializeOpAssumeRole) HandleDeserialize(ctx context.Cont
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsquery_deserializeOpErrorAssumeRole(response, &metadata)
@@ -162,17 +159,14 @@ func (m *awsAwsquery_deserializeOpAssumeRoleWithSAML) HandleDeserialize(ctx cont
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsquery_deserializeOpErrorAssumeRoleWithSAML(response, &metadata)
@@ -292,17 +286,14 @@ func (m *awsAwsquery_deserializeOpAssumeRoleWithWebIdentity) HandleDeserialize(c
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsquery_deserializeOpErrorAssumeRoleWithWebIdentity(response, &metadata)
@@ -425,17 +416,14 @@ func (m *awsAwsquery_deserializeOpAssumeRoot) HandleDeserialize(ctx context.Cont
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsquery_deserializeOpErrorAssumeRoot(response, &metadata)
@@ -543,17 +531,14 @@ func (m *awsAwsquery_deserializeOpDecodeAuthorizationMessage) HandleDeserialize(
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsquery_deserializeOpErrorDecodeAuthorizationMessage(response, &metadata)
@@ -658,17 +643,14 @@ func (m *awsAwsquery_deserializeOpGetAccessKeyInfo) HandleDeserialize(ctx contex
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsquery_deserializeOpErrorGetAccessKeyInfo(response, &metadata)
@@ -770,17 +752,14 @@ func (m *awsAwsquery_deserializeOpGetCallerIdentity) HandleDeserialize(ctx conte
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsquery_deserializeOpErrorGetCallerIdentity(response, &metadata)
@@ -882,17 +861,14 @@ func (m *awsAwsquery_deserializeOpGetDelegatedAccessToken) HandleDeserialize(ctx
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsquery_deserializeOpErrorGetDelegatedAccessToken(response, &metadata)
@@ -1003,17 +979,14 @@ func (m *awsAwsquery_deserializeOpGetFederationToken) HandleDeserialize(ctx cont
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsquery_deserializeOpErrorGetFederationToken(response, &metadata)
@@ -1124,17 +1097,14 @@ func (m *awsAwsquery_deserializeOpGetSessionToken) HandleDeserialize(ctx context
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsquery_deserializeOpErrorGetSessionToken(response, &metadata)
@@ -1239,17 +1209,14 @@ func (m *awsAwsquery_deserializeOpGetWebIdentityToken) HandleDeserialize(ctx con
 		return out, metadata, err
 	}
 
-	response, ok := out.RawResponse.(*smithyhttp.Response)
-	if !ok {
-		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
-	}
-
-	defer func() { smithyhttp.CloseResponseBody(ctx, response, false, err) }()
-
 	_, span := tracing.StartSpan(ctx, "OperationDeserializer")
 	endTimer := startMetricTimer(ctx, "client.call.deserialization_duration")
 	defer endTimer()
 	defer span.End()
+	response, ok := out.RawResponse.(*smithyhttp.Response)
+	if !ok {
+		return out, metadata, &smithy.DeserializationError{Err: fmt.Errorf("unknown transport type %T", out.RawResponse)}
+	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return out, metadata, awsAwsquery_deserializeOpErrorGetWebIdentityToken(response, &metadata)
@@ -2728,40 +2695,6 @@ func awsAwsquery_deserializeOpDocumentAssumeRoleOutput(v **AssumeRoleOutput, dec
 				sv.PackedPolicySize = ptr.Int32(int32(i64))
 			}
 
-		case strings.EqualFold("SessionTokenSize", t.Name.Local):
-			val, err := decoder.Value()
-			if err != nil {
-				return err
-			}
-			if val == nil {
-				break
-			}
-			{
-				xtv := string(val)
-				i64, err := strconv.ParseInt(xtv, 10, 64)
-				if err != nil {
-					return err
-				}
-				sv.SessionTokenSize = ptr.Int32(int32(i64))
-			}
-
-		case strings.EqualFold("SessionTokenUtilization", t.Name.Local):
-			val, err := decoder.Value()
-			if err != nil {
-				return err
-			}
-			if val == nil {
-				break
-			}
-			{
-				xtv := string(val)
-				i64, err := strconv.ParseInt(xtv, 10, 64)
-				if err != nil {
-					return err
-				}
-				sv.SessionTokenUtilization = ptr.Int32(int32(i64))
-			}
-
 		case strings.EqualFold("SourceIdentity", t.Name.Local):
 			val, err := decoder.Value()
 			if err != nil {
@@ -2877,40 +2810,6 @@ func awsAwsquery_deserializeOpDocumentAssumeRoleWithSAMLOutput(v **AssumeRoleWit
 					return err
 				}
 				sv.PackedPolicySize = ptr.Int32(int32(i64))
-			}
-
-		case strings.EqualFold("SessionTokenSize", t.Name.Local):
-			val, err := decoder.Value()
-			if err != nil {
-				return err
-			}
-			if val == nil {
-				break
-			}
-			{
-				xtv := string(val)
-				i64, err := strconv.ParseInt(xtv, 10, 64)
-				if err != nil {
-					return err
-				}
-				sv.SessionTokenSize = ptr.Int32(int32(i64))
-			}
-
-		case strings.EqualFold("SessionTokenUtilization", t.Name.Local):
-			val, err := decoder.Value()
-			if err != nil {
-				return err
-			}
-			if val == nil {
-				break
-			}
-			{
-				xtv := string(val)
-				i64, err := strconv.ParseInt(xtv, 10, 64)
-				if err != nil {
-					return err
-				}
-				sv.SessionTokenUtilization = ptr.Int32(int32(i64))
 			}
 
 		case strings.EqualFold("SourceIdentity", t.Name.Local):
@@ -3043,40 +2942,6 @@ func awsAwsquery_deserializeOpDocumentAssumeRoleWithWebIdentityOutput(v **Assume
 				sv.Provider = ptr.String(xtv)
 			}
 
-		case strings.EqualFold("SessionTokenSize", t.Name.Local):
-			val, err := decoder.Value()
-			if err != nil {
-				return err
-			}
-			if val == nil {
-				break
-			}
-			{
-				xtv := string(val)
-				i64, err := strconv.ParseInt(xtv, 10, 64)
-				if err != nil {
-					return err
-				}
-				sv.SessionTokenSize = ptr.Int32(int32(i64))
-			}
-
-		case strings.EqualFold("SessionTokenUtilization", t.Name.Local):
-			val, err := decoder.Value()
-			if err != nil {
-				return err
-			}
-			if val == nil {
-				break
-			}
-			{
-				xtv := string(val)
-				i64, err := strconv.ParseInt(xtv, 10, 64)
-				if err != nil {
-					return err
-				}
-				sv.SessionTokenUtilization = ptr.Int32(int32(i64))
-			}
-
 		case strings.EqualFold("SourceIdentity", t.Name.Local):
 			val, err := decoder.Value()
 			if err != nil {
@@ -3143,40 +3008,6 @@ func awsAwsquery_deserializeOpDocumentAssumeRootOutput(v **AssumeRootOutput, dec
 			nodeDecoder := smithyxml.WrapNodeDecoder(decoder.Decoder, t)
 			if err := awsAwsquery_deserializeDocumentCredentials(&sv.Credentials, nodeDecoder); err != nil {
 				return err
-			}
-
-		case strings.EqualFold("SessionTokenSize", t.Name.Local):
-			val, err := decoder.Value()
-			if err != nil {
-				return err
-			}
-			if val == nil {
-				break
-			}
-			{
-				xtv := string(val)
-				i64, err := strconv.ParseInt(xtv, 10, 64)
-				if err != nil {
-					return err
-				}
-				sv.SessionTokenSize = ptr.Int32(int32(i64))
-			}
-
-		case strings.EqualFold("SessionTokenUtilization", t.Name.Local):
-			val, err := decoder.Value()
-			if err != nil {
-				return err
-			}
-			if val == nil {
-				break
-			}
-			{
-				xtv := string(val)
-				i64, err := strconv.ParseInt(xtv, 10, 64)
-				if err != nil {
-					return err
-				}
-				sv.SessionTokenUtilization = ptr.Int32(int32(i64))
 			}
 
 		case strings.EqualFold("SourceIdentity", t.Name.Local):
@@ -3502,40 +3333,6 @@ func awsAwsquery_deserializeOpDocumentGetFederationTokenOutput(v **GetFederation
 				sv.PackedPolicySize = ptr.Int32(int32(i64))
 			}
 
-		case strings.EqualFold("SessionTokenSize", t.Name.Local):
-			val, err := decoder.Value()
-			if err != nil {
-				return err
-			}
-			if val == nil {
-				break
-			}
-			{
-				xtv := string(val)
-				i64, err := strconv.ParseInt(xtv, 10, 64)
-				if err != nil {
-					return err
-				}
-				sv.SessionTokenSize = ptr.Int32(int32(i64))
-			}
-
-		case strings.EqualFold("SessionTokenUtilization", t.Name.Local):
-			val, err := decoder.Value()
-			if err != nil {
-				return err
-			}
-			if val == nil {
-				break
-			}
-			{
-				xtv := string(val)
-				i64, err := strconv.ParseInt(xtv, 10, 64)
-				if err != nil {
-					return err
-				}
-				sv.SessionTokenUtilization = ptr.Int32(int32(i64))
-			}
-
 		default:
 			// Do nothing and ignore the unexpected tag element
 			err = decoder.Decoder.Skip()
@@ -3576,40 +3373,6 @@ func awsAwsquery_deserializeOpDocumentGetSessionTokenOutput(v **GetSessionTokenO
 			nodeDecoder := smithyxml.WrapNodeDecoder(decoder.Decoder, t)
 			if err := awsAwsquery_deserializeDocumentCredentials(&sv.Credentials, nodeDecoder); err != nil {
 				return err
-			}
-
-		case strings.EqualFold("SessionTokenSize", t.Name.Local):
-			val, err := decoder.Value()
-			if err != nil {
-				return err
-			}
-			if val == nil {
-				break
-			}
-			{
-				xtv := string(val)
-				i64, err := strconv.ParseInt(xtv, 10, 64)
-				if err != nil {
-					return err
-				}
-				sv.SessionTokenSize = ptr.Int32(int32(i64))
-			}
-
-		case strings.EqualFold("SessionTokenUtilization", t.Name.Local):
-			val, err := decoder.Value()
-			if err != nil {
-				return err
-			}
-			if val == nil {
-				break
-			}
-			{
-				xtv := string(val)
-				i64, err := strconv.ParseInt(xtv, 10, 64)
-				if err != nil {
-					return err
-				}
-				sv.SessionTokenUtilization = ptr.Int32(int32(i64))
 			}
 
 		default:

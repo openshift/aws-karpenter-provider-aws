@@ -27,12 +27,6 @@ const (
 	instanceTypeLabel      = "instance_type"
 )
 
-// shared instance_type dimension, reused across the provider's cloudprovider metrics.
-var InstanceType = opmetrics.Label{
-	Name: instanceTypeLabel,
-	Help: "The EC2 instance type, e.g. `m5.large`. See https://docs.aws.amazon.com/ec2/latest/instancetypes/.",
-}
-
 var (
 	InstanceTypeVCPU = opmetrics.NewPrometheusGauge(
 		crmetrics.Registry,
@@ -42,10 +36,9 @@ var (
 			Name:      "instance_type_cpu_cores",
 			Help:      "VCPUs cores for a given instance type.",
 		},
-		[]opmetrics.Label{
-			InstanceType,
+		[]string{
+			instanceTypeLabel,
 		},
-		opmetrics.Beta,
 	)
 	InstanceTypeMemory = opmetrics.NewPrometheusGauge(
 		crmetrics.Registry,
@@ -55,9 +48,8 @@ var (
 			Name:      "instance_type_memory_bytes",
 			Help:      "Memory, in bytes, for a given instance type.",
 		},
-		[]opmetrics.Label{
-			InstanceType,
+		[]string{
+			instanceTypeLabel,
 		},
-		opmetrics.Beta,
 	)
 )

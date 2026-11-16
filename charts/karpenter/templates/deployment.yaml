@@ -1,4 +1,3 @@
-{{- $dra := include "karpenter.dra" . | fromJson }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -127,9 +126,7 @@ spec:
                   divisor: "0"
                   resource: limits.memory
             - name: FEATURE_GATES
-              value: "ReservedCapacity={{ .Values.settings.featureGates.reservedCapacity }},SpotToSpotConsolidation={{ .Values.settings.featureGates.spotToSpotConsolidation }},NodeRepair={{ .Values.settings.featureGates.nodeRepair }},NodeOverlay={{ .Values.settings.featureGates.nodeOverlay }},StaticCapacity={{ .Values.settings.featureGates.staticCapacity }},CapacityBuffer={{ .Values.settings.featureGates.capacityBuffer }},TerminateFirstDrift={{ .Values.settings.featureGates.terminateFirstDrift }},TerminateFirstRepair={{ .Values.settings.featureGates.terminateFirstRepair }},PodDeletionCostManagement={{ .Values.settings.featureGates.podDeletionCostManagement }}"
-            - name: AWS_FEATURE_GATES
-              value: "NodeClassCEL={{ .Values.settings.awsFeatureGates.nodeClassCEL }},DRANVIDIAGPU={{ $dra.draNVIDIAGPU }},DRAEFA={{ $dra.draEFA }},RebootForRepair={{ .Values.settings.awsFeatureGates.rebootForRepair }}"
+              value: "ReservedCapacity={{ .Values.settings.featureGates.reservedCapacity }},SpotToSpotConsolidation={{ .Values.settings.featureGates.spotToSpotConsolidation }},NodeRepair={{ .Values.settings.featureGates.nodeRepair }},NodeOverlay={{ .Values.settings.featureGates.nodeOverlay }},StaticCapacity={{ .Values.settings.featureGates.staticCapacity }}"
           {{- with .Values.settings.batchMaxDuration }}
             - name: BATCH_MAX_DURATION
               value: "{{ tpl (toString .) $ }}"
@@ -172,23 +169,12 @@ spec:
             - name: INTERRUPTION_QUEUE
               value: "{{ tpl (toString .) $ }}"
           {{- end }}
-          {{- with .Values.settings.enableZonalShift }}
-            - name: ENABLE_ZONAL_SHIFT
-              value: "{{ tpl (toString .) $ }}"
-          {{- end }}
           {{- with .Values.settings.reservedENIs }}
             - name: RESERVED_ENIS
               value: "{{ tpl (toString .) $ }}"
           {{- end }}
-          {{- /* Always rendered: `with` would drop an explicit false, leaving core's default of true in place. See
-          karpenter.dra for how enableDRA and the DRA driver gates resolve it. */}}
+          {{- with .Values.settings.ignoreDRARequests }}
             - name: IGNORE_DRA_REQUESTS
-              value: "{{ $dra.ignoreDRARequests }}"
-          {{- if and .Values.settings.legacyNodeRepair .Values.settings.featureGates.terminateFirstRepair }}
-          {{- fail "settings.legacyNodeRepair can't be combined with settings.featureGates.terminateFirstRepair: the legacy node repair controller doesn't support terminate-first repair" }}
-          {{- end }}
-          {{- with .Values.settings.legacyNodeRepair }}
-            - name: LEGACY_NODE_REPAIR
               value: "{{ tpl (toString .) $ }}"
           {{- end }}
           {{- with .Values.settings.disableClusterStateObservability }}
@@ -197,18 +183,6 @@ spec:
           {{- end }}
           {{- with .Values.settings.disableDryRun }}
             - name: DISABLE_DRY_RUN
-              value: "{{ tpl (toString .) $ }}"
-          {{- end }}
-          {{- with .Values.settings.amiRefreshInterval }}
-            - name: AMI_REFRESH_INTERVAL
-              value: "{{ tpl (toString .) $ }}"
-          {{- end }}
-          {{- with .Values.settings.subnetRefreshInterval }}
-            - name: SUBNET_REFRESH_INTERVAL
-              value: "{{ tpl (toString .) $ }}"
-          {{- end }}
-          {{- with .Values.settings.securityGroupRefreshInterval }}
-            - name: SECURITY_GROUP_REFRESH_INTERVAL
               value: "{{ tpl (toString .) $ }}"
           {{- end }}
           {{- with .Values.controller.env }}
