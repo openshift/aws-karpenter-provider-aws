@@ -35,18 +35,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
-	"github.com/aws/smithy-go"
 	"github.com/samber/lo"
-	"github.com/samber/lo/mutable"
 	"go.uber.org/multierr"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	coretest "sigs.k8s.io/karpenter/pkg/test"
 
 	awserrors "github.com/aws/karpenter-provider-aws/pkg/errors"
+	"github.com/aws/karpenter-provider-aws/pkg/utils"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -217,14 +214,6 @@ func (env *Environment) GetNetworkInterfaces(ids ...string) []ec2types.NetworkIn
 	dnio, err := env.EC2API.DescribeNetworkInterfaces(env.Context, &ec2.DescribeNetworkInterfacesInput{NetworkInterfaceIds: ids})
 	Expect(err).ToNot(HaveOccurred())
 	return dnio.NetworkInterfaces
-}
-
-func FindNetworkInterface(interfaces []ec2types.InstanceNetworkInterface, networkCardIndex, deviceIndex int32) (ec2types.InstanceNetworkInterface, bool) {
-	return lo.Find(interfaces, func(ni ec2types.InstanceNetworkInterface) bool {
-		return ni.Attachment != nil &&
-			ni.Attachment.NetworkCardIndex != nil && aws.ToInt32(ni.Attachment.NetworkCardIndex) == networkCardIndex &&
-			ni.Attachment.DeviceIndex != nil && aws.ToInt32(ni.Attachment.DeviceIndex) == deviceIndex
-	})
 }
 
 func (env *Environment) GetSpotInstance(id string) ec2types.SpotInstanceRequest {
@@ -414,62 +403,6 @@ func (env *Environment) GetAMIBySSMPath(ssmPath string) string {
 	return *parameter.Parameter.Value
 }
 
-// getPinnedAMIPath returns any one valid pinned AMI path which is a child of the SSM path supplied
-func (env *Environment) getPinnedAMIPath(ssmPath string) string {
-	GinkgoHelper()
-
-	paginator := ssm.NewGetParametersByPathPaginator(env.SSMAPI, &ssm.GetParametersByPathInput{
-		Path:      aws.String(ssmPath),
-		Recursive: aws.Bool(true),
-	})
-	var amiPath string
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(env.Context)
-		Expect(err).ToNot(HaveOccurred())
-		for _, param := range page.Parameters {
-			name := aws.ToString(param.Name)
-			// Get only the image_id path so we know what suffix to trim later
-			if !strings.Contains(name, "recommended") && !strings.Contains(name, "latest") && strings.HasSuffix(name, "/image_id") {
-				amiPath = name
-				break
-			}
-		}
-		if amiPath != "" {
-			break
-		}
-	}
-	Expect(amiPath).ToNot(BeEmpty(), "no pinned AMI version found under SSM path: %s", ssmPath)
-	amiPath = strings.TrimSuffix(amiPath, "/image_id")
-	return amiPath
-}
-
-// GetPinnedAMIVersion returns any one valid pinned AMI version for the AMI family supplied
-func (env *Environment) GetPinnedAMIVersion(amiFamily string) string {
-	GinkgoHelper()
-
-	k8sVersion := env.K8sVersion()
-	var ssmPath string
-	switch amiFamily {
-	case "al2023":
-		ssmPath = fmt.Sprintf("/aws/service/eks/optimized-ami/%s/amazon-linux-2023/x86_64/standard", k8sVersion)
-	case "al2":
-		ssmPath = fmt.Sprintf("/aws/service/eks/optimized-ami/%s/amazon-linux-2", k8sVersion)
-	case "bottlerocket":
-		ssmPath = fmt.Sprintf("/aws/service/bottlerocket/aws-k8s-%s/x86_64", k8sVersion)
-	}
-	amiPath := env.getPinnedAMIPath(ssmPath)
-	pathParts := strings.Split(amiPath, "/")
-	var amiVersion string
-	if strings.Contains(ssmPath, "bottlerocket") {
-		amiVersion = pathParts[len(pathParts)-1]
-	} else {
-		lastPathPart := pathParts[len(pathParts)-1]
-		parts := strings.Split(lastPathPart, "-")
-		amiVersion = parts[len(parts)-1]
-	}
-	return amiVersion
-}
-
 func (env *Environment) GetDeprecatedAMI(amiID string, amifamily string) string {
 	out, err := env.EC2API.DescribeImages(env.Context, &ec2.DescribeImagesInput{
 		Filters: []ec2types.Filter{
@@ -601,192 +534,35 @@ func ignoreAlreadyContainsRole(err error) error {
 	return err
 }
 
-// ExpectInterruptibleCapacityAllocationCreated allocates interruptible capacity from the source reservation and returns the
-// ID of the resulting interruptible reservation.
-func ExpectInterruptibleCapacityAllocationCreated(
+func ExpectCapacityReservationCreated(
 	ctx context.Context,
 	ec2api *ec2.Client,
-	sourceReservationID string,
-	interruptibleCapacity int32,
+	instanceType ec2types.InstanceType,
+	zone string,
+	capacity int32,
+	endDate *time.Time,
+	tags map[string]string,
 ) string {
 	GinkgoHelper()
-	_, err := ec2api.CreateInterruptibleCapacityReservationAllocation(ctx, &ec2.CreateInterruptibleCapacityReservationAllocationInput{
-		CapacityReservationId: &sourceReservationID,
-		InstanceCount:         lo.ToPtr(interruptibleCapacity),
-	})
-	Expect(err).ToNot(HaveOccurred())
-
-	// the create IODCR API doesn't return the IODCR ID, so we have to describe the source reservation
-	var out *ec2.DescribeCapacityReservationsOutput
-	Eventually(func(g Gomega) {
-		out, err = ec2api.DescribeCapacityReservations(ctx, &ec2.DescribeCapacityReservationsInput{
-			CapacityReservationIds: []string{sourceReservationID},
-		})
-		Expect(err).ToNot(HaveOccurred())
-		Expect(out).To(Not(BeNil()))
-		Expect(len(out.CapacityReservations)).To(Equal(1))
-		Expect(out.CapacityReservations[0].InterruptibleCapacityAllocation).To(Not(BeNil()))
-	}).WithTimeout(15 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
-
-	return *out.CapacityReservations[0].InterruptibleCapacityAllocation.InterruptibleCapacityReservationId
-}
-
-func ExpectModifyInterruptibleCapacity(
-	ctx context.Context,
-	ec2api *ec2.Client,
-	sourceReservationId string,
-	targetInterruptibleCapacity int32,
-) {
-	GinkgoHelper()
-	_, err := ec2api.UpdateInterruptibleCapacityReservationAllocation(ctx, &ec2.UpdateInterruptibleCapacityReservationAllocationInput{
-		CapacityReservationId: lo.ToPtr(sourceReservationId),
-		TargetInstanceCount:   lo.ToPtr(targetInterruptibleCapacity),
-	})
-	Expect(err).ToNot(HaveOccurred())
-}
-
-func ExpectInterruptibleAndSourceCapacityCanceled(
-	ctx context.Context,
-	ec2api *ec2.Client,
-	sourceReservationId string,
-	interrutibleReservationID string,
-) {
-	GinkgoHelper()
-	// the reservations were never created if the BeforeAll failed
-	if sourceReservationId == "" {
-		return
-	}
-	_, err := ec2api.UpdateInterruptibleCapacityReservationAllocation(ctx, &ec2.UpdateInterruptibleCapacityReservationAllocationInput{
-		CapacityReservationId: lo.ToPtr(sourceReservationId),
-		TargetInstanceCount:   aws.Int32(0),
-	})
-	Expect(err).To(Or(
-		BeNil(),
-		MatchError(ContainSubstring("doesn't have an active interruptible capacity allocation")),
-	))
-
-	// instances in IODCRs take 2 minutes to terminate and reclaim
-	Eventually(func(g Gomega) {
-		out, err := ec2api.DescribeCapacityReservations(ctx, &ec2.DescribeCapacityReservationsInput{
-			CapacityReservationIds: []string{interrutibleReservationID},
-		})
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(out).To(Not(BeNil()))
-		g.Expect(len(out.CapacityReservations)).To(Equal(1))
-		g.Expect(out.CapacityReservations[0].State).To(Equal(ec2types.CapacityReservationStateCancelled))
-	}).WithTimeout(4 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
-
-	// there can be transient delays in when IODCR capacity is fully reclaimed and when the source ODCR can be canceled
-	// if we directly try to cancel the source reservation we'll see error "has an active interruptible capacity allocation"
-	Eventually(func(g Gomega) {
-		_, err := ec2api.CancelCapacityReservation(ctx, &ec2.CancelCapacityReservationInput{
-			CapacityReservationId: &sourceReservationId,
-		})
-		g.Expect(err).ToNot(HaveOccurred())
-	}).WithTimeout(4 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
-}
-
-// capacityReservationFamilies are the instance families E2E capacity reservations are drawn from. Each contributes its large
-// and xlarge sizes, and all of them satisfy the default NodePool's requirements.
-var capacityReservationFamilies = []string{
-	"m5", "m5a", "m6i", "m6a", "m7i", "m7a", "m6g", "m7g",
-	"c5", "c6i", "c6a", "c7i", "c7g",
-	"r5", "r6i",
-}
-
-type CapacityReservation struct {
-	ID           string
-	InstanceType string
-	Zone         string
-}
-
-// ExpectCapacityReservationCreated creates a targeted ODCR for a random instance type and zone. Creating an ODCR for any
-// single offering is frequently ICE'd, so offerings are tried in a random order, which also keeps concurrent suites from
-// contending for the same one.
-func (env *Environment) ExpectCapacityReservationCreated(capacity int32) CapacityReservation {
-	GinkgoHelper()
-	type offering struct{ instanceType, zone string }
-	var offerings []offering
-	for _, family := range capacityReservationFamilies {
-		for _, size := range []string{"large", "xlarge"} {
-			for _, zone := range env.capacityReservationZones() {
-				offerings = append(offerings, offering{instanceType: fmt.Sprintf("%s.%s", family, size), zone: zone})
-			}
-		}
-	}
-	mutable.Shuffle(offerings)
-	for _, o := range offerings {
-		cr, err := env.tryCreateCapacityReservation(o.instanceType, o.zone, capacity)
-		Expect(err).ToNot(HaveOccurred())
-		if cr != nil {
-			return *cr
-		}
-	}
-	Fail("failed to create a capacity reservation, all offerings had insufficient capacity")
-	return CapacityReservation{}
-}
-
-// ExpectCapacityReservationPairCreated creates ODCRs for the large and xlarge sizes of a random instance family in the same
-// zone, for tests that rely on the large being the cheaper of the two.
-func (env *Environment) ExpectCapacityReservationPairCreated(largeCapacity, xlargeCapacity int32) (CapacityReservation, CapacityReservation) {
-	GinkgoHelper()
-	type offering struct{ family, zone string }
-	var offerings []offering
-	for _, family := range capacityReservationFamilies {
-		for _, zone := range env.capacityReservationZones() {
-			offerings = append(offerings, offering{family: family, zone: zone})
-		}
-	}
-	mutable.Shuffle(offerings)
-	for _, o := range offerings {
-		large, err := env.tryCreateCapacityReservation(o.family+".large", o.zone, largeCapacity)
-		Expect(err).ToNot(HaveOccurred())
-		if large == nil {
-			continue
-		}
-		xlarge, err := env.tryCreateCapacityReservation(o.family+".xlarge", o.zone, xlargeCapacity)
-		if err != nil || xlarge == nil {
-			ExpectCapacityReservationsCanceled(env.Context, env.EC2API, large.ID)
-		}
-		Expect(err).ToNot(HaveOccurred())
-		if xlarge != nil {
-			return *large, *xlarge
-		}
-	}
-	Fail("failed to create a pair of capacity reservations, all offerings had insufficient capacity")
-	return CapacityReservation{}, CapacityReservation{}
-}
-
-// capacityReservationZones returns the availability zones covered by the cluster's discovery subnets
-func (env *Environment) capacityReservationZones() []string {
-	return lo.Uniq(lo.FilterMap(env.GetSubnetInfo(map[string]string{"karpenter.sh/discovery": env.ClusterName}), func(s SubnetInfo, _ int) (string, bool) {
-		return s.Zone, s.ZoneType == "availability-zone"
-	}))
-}
-
-// tryCreateCapacityReservation returns a nil reservation if the offering can't currently be reserved
-func (env *Environment) tryCreateCapacityReservation(instanceType, zone string, capacity int32) (*CapacityReservation, error) {
-	out, err := env.EC2API.CreateCapacityReservation(env.Context, &ec2.CreateCapacityReservationInput{
+	out, err := ec2api.CreateCapacityReservation(ctx, &ec2.CreateCapacityReservationInput{
 		InstanceCount:         lo.ToPtr(capacity),
-		InstanceType:          lo.ToPtr(instanceType),
+		InstanceType:          lo.ToPtr(string(instanceType)),
 		InstancePlatform:      ec2types.CapacityReservationInstancePlatformLinuxUnix,
 		AvailabilityZone:      lo.ToPtr(zone),
+		EndDate:               endDate,
 		InstanceMatchCriteria: ec2types.InstanceMatchCriteriaTargeted,
+		TagSpecifications: lo.Ternary(len(tags) != 0, []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeCapacityReservation,
+			Tags:         utils.EC2MergeTags(tags),
+		}}, nil),
 	})
-	if apiErr, ok := lo.ErrorsAs[smithy.APIError](err); ok && lo.Contains([]string{"InsufficientInstanceCapacity", "Unsupported"}, apiErr.ErrorCode()) {
-		GinkgoWriter.Printf("Skipping capacity reservation for %s in %s: %s\n", instanceType, zone, apiErr.ErrorCode())
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	By(fmt.Sprintf("created capacity reservation %s for %s in %s", *out.CapacityReservation.CapacityReservationId, instanceType, zone))
-	return &CapacityReservation{ID: *out.CapacityReservation.CapacityReservationId, InstanceType: instanceType, Zone: zone}, nil
+	Expect(err).ToNot(HaveOccurred())
+	return *out.CapacityReservation.CapacityReservationId
 }
 
 func ExpectCapacityReservationsCanceled(ctx context.Context, ec2api *ec2.Client, reservationIDs ...string) {
 	GinkgoHelper()
-	for _, id := range lo.Compact(reservationIDs) {
+	for _, id := range reservationIDs {
 		_, err := ec2api.CancelCapacityReservation(ctx, &ec2.CancelCapacityReservationInput{
 			CapacityReservationId: &id,
 		})
@@ -900,132 +676,4 @@ func (env *Environment) ExpectNodeRoleDeleted(roleName string) {
 		RoleName: aws.String(roleName),
 	})
 	Expect(awserrors.IgnoreNotFound(err)).ToNot(HaveOccurred())
-}
-
-func (env *Environment) ExpectSecurityGroupDeleted(groupID *string) {
-	GinkgoHelper()
-	By("deleting security group created for test")
-	_, err := env.EC2API.DeleteSecurityGroup(env.Context, &ec2.DeleteSecurityGroupInput{
-		GroupId: groupID,
-	})
-	Expect(awserrors.IgnoreNotFound(err)).ToNot(HaveOccurred())
-}
-
-func (env *Environment) ExpectEFADevicePluginCreated() {
-	GinkgoHelper()
-	env.ExpectCreated(&appsv1.DaemonSet{
-		ObjectMeta: coretest.ObjectMeta(metav1.ObjectMeta{
-			Name:      "aws-efa-k8s-device-plugin-daemonset",
-			Namespace: "kube-system",
-		}),
-		Spec: appsv1.DaemonSetSpec{
-			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"name": "aws-efa-k8s-device-plugin",
-				},
-			},
-			UpdateStrategy: appsv1.DaemonSetUpdateStrategy{
-				Type: appsv1.RollingUpdateDaemonSetStrategyType,
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: coretest.ObjectMeta(metav1.ObjectMeta{
-					Annotations: map[string]string{
-						"scheduler.alpha.kubernetes.io/critical-pod": "",
-					},
-					Labels: map[string]string{
-						"name": "aws-efa-k8s-device-plugin",
-					},
-				}),
-				Spec: corev1.PodSpec{
-					NodeSelector: map[string]string{
-						"aws.amazon.com/efa": "true",
-					},
-					Tolerations: []corev1.Toleration{
-						{
-							Key:      "CriticalAddonsOnly",
-							Operator: corev1.TolerationOpExists,
-						},
-						{
-							Key:      "aws.amazon.com/efa",
-							Operator: corev1.TolerationOpExists,
-							Effect:   corev1.TaintEffectNoSchedule,
-						},
-					},
-					PriorityClassName: "system-node-critical",
-					HostNetwork:       true,
-					Containers: []corev1.Container{
-						{
-							Name:  "aws-efea-k8s-device-plugin",
-							Image: "602401143452.dkr.ecr.us-west-2.amazonaws.com/eks/aws-efa-k8s-device-plugin:v0.3.3",
-							SecurityContext: &corev1.SecurityContext{
-								AllowPrivilegeEscalation: lo.ToPtr(false),
-								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{"ALL"},
-								},
-								RunAsNonRoot: lo.ToPtr(false),
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "device-plugin",
-									MountPath: "/var/lib/kubelet/device-plugins",
-								},
-							},
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "device-plugin",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/var/lib/kubelet/device-plugins",
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	})
-}
-
-func ExpectPlacementGroupCreated(ctx context.Context, ec2api *ec2.Client, name string, strategy ec2types.PlacementStrategy, partitionCount ...int32) string {
-	GinkgoHelper()
-	input := &ec2.CreatePlacementGroupInput{
-		GroupName: lo.ToPtr(name),
-		Strategy:  strategy,
-	}
-	if len(partitionCount) > 0 {
-		input.PartitionCount = lo.ToPtr(partitionCount[0])
-	}
-	out, err := ec2api.CreatePlacementGroup(ctx, input)
-	Expect(err).ToNot(HaveOccurred())
-	return lo.FromPtr(out.PlacementGroup.GroupId)
-}
-
-func ExpectPlacementGroupDeleted(ctx context.Context, ec2api *ec2.Client, name string) {
-	GinkgoHelper()
-	_, err := ec2api.DeletePlacementGroup(ctx, &ec2.DeletePlacementGroupInput{
-		GroupName: lo.ToPtr(name),
-	})
-	Expect(err).ToNot(HaveOccurred())
-}
-
-func (env *Environment) EventuallyExpectClusterToZonalShift(zoneId string) {
-	GinkgoHelper()
-	By(fmt.Sprintf("expecting zonal shift on cluster %s away from %s", env.ClusterName, zoneId))
-	Eventually(func(g Gomega) {
-		g.Expect(env.ZonalShiftProvider.UpdateZonalShifts(env.Context)).To(Succeed())
-		shifted := env.ZonalShiftProvider.IsZonalShifted(env.Context, zoneId)
-		g.Expect(shifted).To(BeTrue())
-	}).WithTimeout(60 * time.Second).WithPolling(10 * time.Second).Should(Succeed())
-}
-
-func (env *Environment) EventuallyExpectClusterToNotHaveZonalShift(zoneId string) {
-	GinkgoHelper()
-	By(fmt.Sprintf("expecting no zonal shift on cluster %s away from %s", env.ClusterName, zoneId))
-	Eventually(func(g Gomega) {
-		g.Expect(env.ZonalShiftProvider.UpdateZonalShifts(env.Context)).To(Succeed())
-		shifted := env.ZonalShiftProvider.IsZonalShifted(env.Context, zoneId)
-		g.Expect(shifted).To(BeFalse())
-	}).WithTimeout(60 * time.Second).WithPolling(10 * time.Second).Should(Succeed())
 }

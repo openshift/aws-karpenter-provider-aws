@@ -22,7 +22,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -118,19 +117,16 @@ func (m *Monitor) Nodes() []*corev1.Node {
 	return lo.Values(st.nodes)
 }
 
-// CreatedNodes returns the nodes that have been created since the last reset (essentially Nodes - NodesAtReset).
-// Nodes are compared by UID rather than name since a replacement instance can reuse a deleted node's private IP, and
-// therefore its name.
+// CreatedNodes returns the nodes that have been created since the last reset (essentially Nodes - NodesAtReset)
 func (m *Monitor) CreatedNodes() []*corev1.Node {
-	resetNodeUIDs := sets.New(lo.Map(m.NodesAtReset(), func(n *corev1.Node, _ int) types.UID { return n.UID })...)
-	return lo.Filter(m.Nodes(), func(n *corev1.Node, _ int) bool { return !resetNodeUIDs.Has(n.UID) })
+	resetNodeNames := sets.NewString(lo.Map(m.NodesAtReset(), func(n *corev1.Node, _ int) string { return n.Name })...)
+	return lo.Filter(m.Nodes(), func(n *corev1.Node, _ int) bool { return !resetNodeNames.Has(n.Name) })
 }
 
-// DeletedNodes returns the nodes that have been deleted since the last reset (essentially NodesAtReset - Nodes).
-// Nodes are compared by UID for the same reason as CreatedNodes.
+// DeletedNodes returns the nodes that have been deleted since the last reset (essentially NodesAtReset - Nodes)
 func (m *Monitor) DeletedNodes() []*corev1.Node {
-	currentNodeUIDs := sets.New(lo.Map(m.Nodes(), func(n *corev1.Node, _ int) types.UID { return n.UID })...)
-	return lo.Filter(m.NodesAtReset(), func(n *corev1.Node, _ int) bool { return !currentNodeUIDs.Has(n.UID) })
+	currentNodeNames := sets.NewString(lo.Map(m.Nodes(), func(n *corev1.Node, _ int) string { return n.Name })...)
+	return lo.Filter(m.NodesAtReset(), func(n *corev1.Node, _ int) bool { return !currentNodeNames.Has(n.Name) })
 }
 
 // PendingPods returns the number of pending pods matching the given selector

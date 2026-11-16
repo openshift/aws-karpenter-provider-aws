@@ -33,9 +33,9 @@ via a ServiceAccount.
 
 Install these tools before proceeding:
 
-1. [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2-linux.html) (>= v2.36.21)
+1. [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2-linux.html)
 2. `kubectl` - [the Kubernetes CLI](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/)
-3. `eksctl` (>= v0.230.0) - [the CLI for AWS EKS](https://eksctl.io/installation)
+3. `eksctl` (>= v0.202.0) - [the CLI for AWS EKS](https://eksctl.io/installation)
 4. `helm` - [the package manager for Kubernetes](https://helm.sh/docs/intro/install/)
 
 [Configure the AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-quickstart.html)
@@ -61,7 +61,7 @@ If you open a new shell to run steps in this procedure, you need to set some or 
 To remind yourself of these values, type:
 
 ```bash
-echo "${KARPENTER_NAMESPACE}" "${KARPENTER_VERSION}" "${K8S_VERSION}" "${CLUSTER_NAME}" "${AWS_DEFAULT_REGION}" "${AWS_ACCOUNT_ID}" "${TEMPOUT}" "${ALIAS_VERSION}" ${ENABLE_ZONAL_SHIFT}
+echo "${KARPENTER_NAMESPACE}" "${KARPENTER_VERSION}" "${K8S_VERSION}" "${CLUSTER_NAME}" "${AWS_DEFAULT_REGION}" "${AWS_ACCOUNT_ID}" "${TEMPOUT}" "${ALIAS_VERSION}"
 ```
 
 {{% /alert %}}
@@ -78,7 +78,6 @@ The following cluster configuration will:
 * Use [AWS EKS managed node groups](https://docs.aws.amazon.com/eks/latest/userguide/managed-node-groups.html) for the kube-system and karpenter namespaces. Uncomment fargateProfiles settings (and comment out managedNodeGroups settings) to use Fargate for both namespaces instead.
 * Set KARPENTER_IAM_ROLE_ARN variables.
 * Create a role to allow spot instances.
-* Configure the cluster's `kube-scheduler` to use the `MostAllocated` scoring strategy so it packs pods onto fewer nodes, complementing Karpenter's bin-packing and consolidation for higher utilization and lower cost. See [kube-scheduler settings]({{<ref "../../concepts/scheduling#kube-scheduler-settings" >}}).
 * Run Helm to install Karpenter
 
 {{< tabpane text=true right=false >}}
@@ -155,19 +154,6 @@ Note: This NodePool will create capacity as long as the sum of all created capac
 
 Karpenter is now active and ready to begin provisioning nodes.
 
-{{% alert title="Note" color="primary" %}}
-NodePools, EC2NodeClasses, and NodeClaims are standard Kubernetes custom resources. You can list and inspect them with `kubectl` the same way you would any other cluster resource:
-
-```bash
-kubectl get nodepools
-kubectl describe nodepool default
-kubectl get ec2nodeclasses
-kubectl describe ec2nodeclass default
-kubectl get nodeclaims
-kubectl describe nodeclaim <nodeclaim-name>
-```
-{{% /alert %}}
-
 ### 6. Scale up deployment
 
 This deployment uses the [pause image](https://www.ianlewis.org/en/almighty-pause-container) and starts with zero replicas.
@@ -210,75 +196,6 @@ The Grafana instance may be accessed using port forwarding.
 The new stack has only one user, `admin`, and the password is stored in a secret. The following command will retrieve the password.
 
 {{% script file="./content/en/{VERSION}/getting-started/getting-started-with-karpenter/scripts/step11-grafana-get-password.sh" language="bash"%}}
-
-## Zonal Shift Onboarding (optional)
-
-You can optionally enable the Zonal Shift integration with Karpenter which provides additional improvements to your application environment's fault tolerance and application recovery. For more details on how Zonal Shift works with EKS, see [Learn about ARC zonal shift in Amazon EKS](https://docs.aws.amazon.com/eks/latest/userguide/zone-shift.html).
-
-To do this, the EKS cluster must first be enabled for Zonal Shift. This can be done through the AWS Console, AWS CLI, or `eksctl`. For step-by-step instructions, see [Enable EKS zonal shift](https://docs.aws.amazon.com/eks/latest/userguide/zone-shift-enable.html).
-
-```bash
-eksctl utils update-zonal-shift-config --cluster=${CLUSTER_NAME} --enable-zonal-shift=true
-```
-
-Once the cluster has been enabled for Zonal Shift, you can use Zonal Shift controls to shift traffic and scaling operations. For more details see the [guide on using Zonal Shift with EKS.](https://docs.aws.amazon.com/eks/latest/userguide/zone-shift.html) 
-
-If you are installing Karpenter for the first time, pass `--set "settings.enableZonalShift=true"` during the initial Helm install to enable the integration.
-
-### Onboarding an existing cluster to Zonal Shift
-
-If you are upgrading an existing Karpenter installation to v1.12.0+ and want to enable Zonal Shift, follow these steps:
-
-1. **Add the required IAM permission.** The Karpenter controller role needs the `arc-zonal-shift:GetManagedResource` permission. If you are using the [getting started guide's cloudformation template]({{<ref "../../reference/cloudformation/">}}), re-apply the template to pick up the new `KarpenterControllerZonalShiftPolicy`. If you manage IAM manually, add the following statement to your controller role policy:
-
-    ```json
-    {
-      "Sid": "AllowZonalShiftStatusReadOnly",
-      "Effect": "Allow",
-      "Resource": "*",
-      "Action": [
-        "arc-zonal-shift:GetManagedResource"
-      ],
-      "Condition": {
-        "StringEquals": {
-          "arc-zonal-shift:ResourceIdentifier": "arn:aws:eks:<region>:<account-id>:cluster/<cluster-name>"
-        }
-      }
-    }
-    ```
-
-    Karpenter also requires permission for `eks:DescribeCluster` when Zonal Shift is enabled. The standard onboarding's `KarpenterControllerEKSIntegrationPolicy` already grants this; if you manage IAM manually, make sure the controller role has `eks:DescribeCluster` on the cluster resource.
-
-2. **Enable Zonal Shift on the EKS cluster** if not already enabled:
-
-    ```bash
-    eksctl utils update-zonal-shift-config --cluster=${CLUSTER_NAME} --enable-zonal-shift=true
-    ```
-
-3. **Enable Zonal Shift in Karpenter** by upgrading the Helm release with the `settings.enableZonalShift` value:
-
-    ```bash
-    helm upgrade karpenter oci://public.ecr.aws/karpenter/karpenter --version "${KARPENTER_VERSION}" --namespace "${KARPENTER_NAMESPACE}" --reuse-values \
-      --set "settings.enableZonalShift=true"
-    ```
-
-    Alternatively, set the `ENABLE_ZONAL_SHIFT=true` environment variable on the Karpenter controller deployment.
-
-### Next Steps: Validate with a Zonal Shift
-
-After enabling the integration, test that Karpenter correctly avoids launching nodes in a shifted zone by starting a zonal shift on your cluster. You can do this in one of two ways:
-
-- **Manual zonal shift**: [Start a zonal shift](https://docs.aws.amazon.com/r53recovery/latest/dg/arc-zonal-shift.start-cancel.html) from the ARC console or CLI to temporarily shift traffic away from one AZ.
-- **FIS experiment**: Create an [AWS FIS experiment](https://docs.aws.amazon.com/fis/latest/userguide/fis-actions-reference.html#recovery) using the `aws:arc:start-zonal-autoshift` action to simulate a zonal autoshift.
-
-While the shift is active, scale up a workload to trigger new node provisioning and verify that Karpenter only launches nodes in non-shifted zones:
-
-```bash
-kubectl scale deployment/inflate --replicas=5
-kubectl get nodeclaims -o wide
-```
-
-For more details on designing your cluster for AZ resilience, see [Learn about ARC zonal shift in Amazon EKS](https://docs.aws.amazon.com/eks/latest/userguide/zone-shift.html).
 
 ## Advanced Installation
 

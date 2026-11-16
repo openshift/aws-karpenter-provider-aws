@@ -15,17 +15,14 @@ limitations under the License.
 package v1
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
 
-	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/google/uuid"
 	"github.com/mitchellh/hashstructure/v2"
 	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -55,11 +52,6 @@ type EC2NodeClassSpec struct {
 	// +kubebuilder:validation:MaxItems:=30
 	// +optional
 	CapacityReservationSelectorTerms []CapacityReservationSelectorTerm `json:"capacityReservationSelectorTerms" hash:"ignore"`
-	// PlacementGroupSelector defines the name or the id of the placement to resolve with the nodeclass.
-	// +kubebuilder:validation:XValidation:message="expected at least one, got none, ['name', 'id']",rule="has(self.name) || has(self.id)"
-	// +kubebuilder:validation:XValidation:message="'name' and 'id' are mutually exclusive",rule="!(has(self.name) && has(self.id))"
-	// +optional
-	PlacementGroupSelector *PlacementGroupSelector `json:"placementGroupSelector,omitempty"`
 	// AssociatePublicIPAddress controls if public IP addresses are assigned to instances that are launched with the nodeclass.
 	// +optional
 	AssociatePublicIPAddress *bool `json:"associatePublicIPAddress,omitempty"`
@@ -111,17 +103,14 @@ type EC2NodeClassSpec struct {
 	// +kubebuilder:validation:XValidation:message="tag contains a restricted tag matching karpenter.k8s.aws/ec2nodeclass",rule="self.all(k, k !='karpenter.k8s.aws/ec2nodeclass')"
 	// +optional
 	Tags map[string]string `json:"tags,omitempty"`
-	// Kubelet configures the kubelet on provisioned nodes. Any field of the upstream
-	// KubeletConfiguration for the Kubernetes version Karpenter was built against may be set;
-	// see the k8s.io/kubelet version in go.mod for the exact set.
-	// Karpenter reads the fields relevant to scheduling (maxPods, podsPerCore, kubeReserved,
-	// systemReserved, evictionHard) and passes all others through to UserData unchanged.
-	// Field names and types are validated by Karpenter, which reports a rejected configuration
-	// on status.conditions as ValidationSucceeded=False rather than failing the apply.
-	// +kubebuilder:pruning:PreserveUnknownFields
-	// +kubebuilder:validation:Type=object
+	// Kubelet defines args to be used when configuring kubelet on provisioned nodes.
+	// They are a subset of the upstream types, recognizing not all options may be supported.
+	// Wherever possible, the types and names should reflect the upstream kubelet types.
+	// +kubebuilder:validation:XValidation:message="imageGCHighThresholdPercent must be greater than imageGCLowThresholdPercent",rule="has(self.imageGCHighThresholdPercent) && has(self.imageGCLowThresholdPercent) ?  self.imageGCHighThresholdPercent > self.imageGCLowThresholdPercent  : true"
+	// +kubebuilder:validation:XValidation:message="evictionSoft OwnerKey does not have a matching evictionSoftGracePeriod",rule="has(self.evictionSoft) ? self.evictionSoft.all(e, (e in self.evictionSoftGracePeriod)):true"
+	// +kubebuilder:validation:XValidation:message="evictionSoftGracePeriod OwnerKey does not have a matching evictionSoft",rule="has(self.evictionSoftGracePeriod) ? self.evictionSoftGracePeriod.all(e, (e in self.evictionSoft)):true"
 	// +optional
-	Kubelet KubeletConfiguration `json:"kubelet,omitempty" hash:"ignore"`
+	Kubelet *KubeletConfiguration `json:"kubelet,omitempty"`
 	// BlockDeviceMappings to be applied to provisioned nodes.
 	// +kubebuilder:validation:XValidation:message="must have only one blockDeviceMappings with rootVolume",rule="self.filter(x, has(x.rootVolume)?x.rootVolume==true:false).size() <= 1"
 	// +kubebuilder:validation:MaxItems:=50
@@ -130,12 +119,6 @@ type EC2NodeClassSpec struct {
 	// InstanceStorePolicy specifies how to handle instance-store disks.
 	// +optional
 	InstanceStorePolicy *InstanceStorePolicy `json:"instanceStorePolicy,omitempty"`
-	// NetworkInterfaces specifies the network interface configurations to be attached to provisioned instances.
-	// +kubebuilder:validation:XValidation:message="networkInterfaces must include a primary interface with interfaceType='interface'",rule="self.size() == 0 || self.exists(x, x.deviceIndex == 0 && x.networkCardIndex == 0 && x.interfaceType == 'interface')"
-	// +kubebuilder:validation:XValidation:message="networkInterfaces must not have duplicate networkCardIndex and deviceIndex pairs, and can have at most one efa device per network card",rule="self.all(x, self.filter(y, x.networkCardIndex == y.networkCardIndex && x.deviceIndex == y.deviceIndex).size() == 1 && (x.interfaceType != 'efa-only' || self.filter(y, x.networkCardIndex == y.networkCardIndex && y.interfaceType == 'efa-only').size() == 1))"
-	// +kubebuilder:validation:MaxItems:=150
-	// +optional
-	NetworkInterfaces []*NetworkInterface `json:"networkInterfaces,omitempty"`
 	// DetailedMonitoring controls if detailed monitoring is enabled for instances that are launched
 	// +optional
 	DetailedMonitoring *bool `json:"detailedMonitoring,omitempty"`
@@ -156,26 +139,10 @@ type EC2NodeClassSpec struct {
 	// +kubebuilder:default={"httpEndpoint":"enabled","httpProtocolIPv6":"disabled","httpPutResponseHopLimit":1,"httpTokens":"required"}
 	// +optional
 	MetadataOptions *MetadataOptions `json:"metadataOptions,omitempty"`
-	// EnclaveOptions specifies whether the instance is enabled for Amazon Web Services Nitro Enclaves.
-	// When enabled, instance types are restricted to those that support Nitro Enclaves.
-	// When enclaveOptions is omitted or enabled is false, Nitro Enclaves are disabled.
-	// When enclaveOptions is specified, enabled is required.
-	// +optional
-	EnclaveOptions *EnclaveOptions `json:"enclaveOptions,omitempty"`
-
-	// ConnectionTracking configures idle connection tracking timeouts for
-	// ENIs Karpenter provisions in the launch template. EFA-only interfaces
-	// are excluded. See ConnectionTracking.
-	// +optional
-	ConnectionTracking *ConnectionTracking `json:"connectionTracking,omitempty"`
-
 	// Context is a Reserved field in EC2 APIs
 	// https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateFleet.html
 	// +optional
 	Context *string `json:"context,omitempty"`
-	// CPUOptions defines the CPU options for the instance.
-	// +optional
-	CPUOptions *CPUOptions `json:"cpuOptions,omitempty"`
 }
 
 // SubnetSelectorTerm defines selection logic for a subnet used by Karpenter to launch nodes.
@@ -232,17 +199,6 @@ type CapacityReservationSelectorTerm struct {
 	InstanceMatchCriteria string `json:"instanceMatchCriteria,omitempty"`
 }
 
-type PlacementGroupSelector struct {
-	// Name is the placement group name in EC2
-	// +kubebuilder:validation:MinLength:=1
-	// +optional
-	Name *string `json:"name,omitempty"`
-	// ID is the placement group id in EC2
-	// +kubebuilder:validation:Pattern:="^pg-[0-9a-z]+$"
-	// +optional
-	ID *string `json:"id,omitempty"`
-}
-
 // AMISelectorTerm defines selection logic for an ami used by Karpenter to launch nodes.
 // If multiple fields are used for selection, the requirements are ANDed.
 type AMISelectorTerm struct {
@@ -281,13 +237,74 @@ type AMISelectorTerm struct {
 	SSMParameter string `json:"ssmParameter,omitempty"`
 }
 
-// KubeletConfiguration mirrors the upstream kubelet KubeletConfiguration as an open map.
-//
-// The CRD schema for spec.kubelet is therefore an unconstrained object that the API server
-// can't validate. ValidateKubeletConfig does it instead, from the controller.
-// +kubebuilder:pruning:PreserveUnknownFields
-// +kubebuilder:validation:Type=object
-type KubeletConfiguration map[string]apiextensionsv1.JSON
+// KubeletConfiguration defines args to be used when configuring kubelet on provisioned nodes.
+// They are a subset of the upstream types, recognizing not all options may be supported.
+// Wherever possible, the types and names should reflect the upstream kubelet types.
+// https://pkg.go.dev/k8s.io/kubelet/config/v1beta1#KubeletConfiguration
+// https://github.com/kubernetes/kubernetes/blob/9f82d81e55cafdedab619ea25cabf5d42736dacf/cmd/kubelet/app/options/options.go#L53
+type KubeletConfiguration struct {
+	// clusterDNS is a list of IP addresses for the cluster DNS server.
+	// Note that not all providers may use all addresses.
+	//+optional
+	ClusterDNS []string `json:"clusterDNS,omitempty"`
+	// MaxPods is an override for the maximum number of pods that can run on
+	// a worker node instance.
+	// +kubebuilder:validation:Minimum:=0
+	// +optional
+	MaxPods *int32 `json:"maxPods,omitempty"`
+	// PodsPerCore is an override for the number of pods that can run on a worker node
+	// instance based on the number of cpu cores. This value cannot exceed MaxPods, so, if
+	// MaxPods is a lower value, that value will be used.
+	// +kubebuilder:validation:Minimum:=0
+	// +optional
+	PodsPerCore *int32 `json:"podsPerCore,omitempty"`
+	// SystemReserved contains resources reserved for OS system daemons and kernel memory.
+	// +kubebuilder:validation:XValidation:message="valid keys for systemReserved are ['cpu','memory','ephemeral-storage','pid']",rule="self.all(x, x=='cpu' || x=='memory' || x=='ephemeral-storage' || x=='pid')"
+	// +kubebuilder:validation:XValidation:message="systemReserved value cannot be a negative resource quantity",rule="self.all(x, !self[x].startsWith('-'))"
+	// +optional
+	SystemReserved map[string]string `json:"systemReserved,omitempty"`
+	// KubeReserved contains resources reserved for Kubernetes system components.
+	// +kubebuilder:validation:XValidation:message="valid keys for kubeReserved are ['cpu','memory','ephemeral-storage','pid']",rule="self.all(x, x=='cpu' || x=='memory' || x=='ephemeral-storage' || x=='pid')"
+	// +kubebuilder:validation:XValidation:message="kubeReserved value cannot be a negative resource quantity",rule="self.all(x, !self[x].startsWith('-'))"
+	// +optional
+	KubeReserved map[string]string `json:"kubeReserved,omitempty"`
+	// EvictionHard is the map of signal names to quantities that define hard eviction thresholds
+	// +kubebuilder:validation:XValidation:message="valid keys for evictionHard are ['memory.available','nodefs.available','nodefs.inodesFree','imagefs.available','imagefs.inodesFree','pid.available']",rule="self.all(x, x in ['memory.available','nodefs.available','nodefs.inodesFree','imagefs.available','imagefs.inodesFree','pid.available'])"
+	// +optional
+	EvictionHard map[string]string `json:"evictionHard,omitempty"`
+	// EvictionSoft is the map of signal names to quantities that define soft eviction thresholds
+	// +kubebuilder:validation:XValidation:message="valid keys for evictionSoft are ['memory.available','nodefs.available','nodefs.inodesFree','imagefs.available','imagefs.inodesFree','pid.available']",rule="self.all(x, x in ['memory.available','nodefs.available','nodefs.inodesFree','imagefs.available','imagefs.inodesFree','pid.available'])"
+	// +optional
+	EvictionSoft map[string]string `json:"evictionSoft,omitempty"`
+	// EvictionSoftGracePeriod is the map of signal names to quantities that define grace periods for each eviction signal
+	// +kubebuilder:validation:XValidation:message="valid keys for evictionSoftGracePeriod are ['memory.available','nodefs.available','nodefs.inodesFree','imagefs.available','imagefs.inodesFree','pid.available']",rule="self.all(x, x in ['memory.available','nodefs.available','nodefs.inodesFree','imagefs.available','imagefs.inodesFree','pid.available'])"
+	// +optional
+	EvictionSoftGracePeriod map[string]metav1.Duration `json:"evictionSoftGracePeriod,omitempty"`
+	// EvictionMaxPodGracePeriod is the maximum allowed grace period (in seconds) to use when terminating pods in
+	// response to soft eviction thresholds being met.
+	// +optional
+	EvictionMaxPodGracePeriod *int32 `json:"evictionMaxPodGracePeriod,omitempty"`
+	// ImageGCHighThresholdPercent is the percent of disk usage after which image
+	// garbage collection is always run. The percent is calculated by dividing this
+	// field value by 100, so this field must be between 0 and 100, inclusive.
+	// When specified, the value must be greater than ImageGCLowThresholdPercent.
+	// +kubebuilder:validation:Minimum:=0
+	// +kubebuilder:validation:Maximum:=100
+	// +optional
+	ImageGCHighThresholdPercent *int32 `json:"imageGCHighThresholdPercent,omitempty"`
+	// ImageGCLowThresholdPercent is the percent of disk usage before which image
+	// garbage collection is never run. Lowest disk usage to garbage collect to.
+	// The percent is calculated by dividing this field value by 100,
+	// so the field value must be between 0 and 100, inclusive.
+	// When specified, the value must be less than imageGCHighThresholdPercent
+	// +kubebuilder:validation:Minimum:=0
+	// +kubebuilder:validation:Maximum:=100
+	// +optional
+	ImageGCLowThresholdPercent *int32 `json:"imageGCLowThresholdPercent,omitempty"`
+	// CPUCFSQuota enables CPU CFS quota enforcement for containers that specify CPU limits.
+	// +optional
+	CPUCFSQuota *bool `json:"cpuCFSQuota,omitempty"`
+}
 
 // MetadataOptions contains parameters for specifying the exposure of the
 // Instance Metadata Service to provisioned EC2 nodes.
@@ -337,55 +354,6 @@ type MetadataOptions struct {
 	// +kubebuilder:validation:Enum:={required,optional}
 	// +optional
 	HTTPTokens *string `json:"httpTokens,omitempty"`
-}
-
-// CPUOptions contains parameters for specifying the CPU configuration for provisioned EC2 nodes.
-type CPUOptions struct {
-	// NestedVirtualization enables or disables nested virtualization on the instance.
-	// When enabled, Karpenter filters instance types to only those reporting
-	// "nested-virtualization" in ProcessorInfo.SupportedFeatures from DescribeInstanceTypes.
-	// +kubebuilder:validation:Enum:={enabled,disabled}
-	// +optional
-	NestedVirtualization *string `json:"nestedVirtualization,omitempty"`
-}
-
-// ConnectionTracking configures idle connection tracking timeouts on ENIs
-// provisioned by Karpenter in the launch template: the primary ENI, any EFA
-// ENIs, and user-configured "interface" type network interfaces. EFA-only
-// interfaces are excluded. Secondary ENIs created at runtime by the CNI are
-// out of scope and must be configured through the CNI.
-// Connection tracking timeout configuration requires instances built on the
-// Nitro System (https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-types.html#ec2-nitro-instances).
-// Idle connections left too long can exhaust the security group's connection
-// tracking table and lead to dropped packets.
-// +kubebuilder:validation:XValidation:message="at least one of tcpEstablishedTimeout, udpStreamTimeout, or udpTimeout must be set",rule="has(self.tcpEstablishedTimeout) || has(self.udpStreamTimeout) || has(self.udpTimeout)"
-type ConnectionTracking struct {
-	// TCPEstablishedTimeout is the timeout (in seconds) for idle TCP connections
-	// in an established state.
-	// Value must be between 60 and 432,000 (5 days).
-	// If unset, EC2 applies its default which is 350 seconds for Nitro v6
-	// instance types (excluding P6e-GB200) and 432,000 seconds for other
-	// instance types.
-	// +kubebuilder:validation:Minimum:=60
-	// +kubebuilder:validation:Maximum:=432000
-	// +optional
-	TCPEstablishedTimeout *int32 `json:"tcpEstablishedTimeout,omitempty"`
-	// UDPStreamTimeout is the timeout (in seconds) for idle UDP "stream" flows
-	// that have seen more than one request-response transaction.
-	// Value must be between 60 and 180.
-	// If unset, EC2 applies its default of 180 seconds.
-	// +kubebuilder:validation:Minimum:=60
-	// +kubebuilder:validation:Maximum:=180
-	// +optional
-	UDPStreamTimeout *int32 `json:"udpStreamTimeout,omitempty"`
-	// UDPTimeout is the timeout (in seconds) for idle UDP flows that have seen
-	// traffic only in a single direction or a single request-response transaction.
-	// Value must be between 30 and 60.
-	// If unset, EC2 applies its default of 30 seconds.
-	// +kubebuilder:validation:Minimum:=30
-	// +kubebuilder:validation:Maximum:=60
-	// +optional
-	UDPTimeout *int32 `json:"udpTimeout,omitempty"`
 }
 
 type BlockDeviceMapping struct {
@@ -478,12 +446,6 @@ type BlockDevice struct {
 	VolumeType *string `json:"volumeType,omitempty"`
 }
 
-type EnclaveOptions struct {
-	// Enabled indicates whether the instance is enabled for Amazon Web Services Nitro Enclaves.
-	// +required
-	Enabled bool `json:"enabled"`
-}
-
 // InstanceStorePolicy enumerates options for configuring instance store disks.
 // +kubebuilder:validation:Enum={RAID0}
 type InstanceStorePolicy string
@@ -495,30 +457,6 @@ const (
 	// pods that request ephemeral storage and container images that are downloaded to the node.
 	InstanceStorePolicyRAID0 InstanceStorePolicy = "RAID0"
 )
-
-// InterfaceType specifies the network interface type for a network interface.
-type InterfaceType string
-
-const (
-	// InterfaceTypeInterface indicates a standard Elastic Network Adapter (ENA) interface.
-	InterfaceTypeInterface InterfaceType = InterfaceType(ec2types.NetworkInterfaceTypeInterface)
-	// InterfaceTypeEFAOnly indicates an Elastic Fabric Adapter only (EFA-only) interface for high-performance networking.
-	InterfaceTypeEFAOnly InterfaceType = InterfaceType(ec2types.NetworkInterfaceTypeEfaOnly)
-)
-
-// NetworkInterface specifies the configuration for a network interface to be attached
-// to provisioned instances.
-type NetworkInterface struct {
-	// NetworkCardIndex is the index of the network card to attach the interface to.
-	// +kubebuilder:validation:Minimum:=0
-	NetworkCardIndex int32 `json:"networkCardIndex"`
-	// DeviceIndex is the device index for the network interface attachment.
-	// +kubebuilder:validation:Minimum:=0
-	DeviceIndex int32 `json:"deviceIndex"`
-	// InterfaceType is the type of network interface. Valid values are "interface" and "efa-only".
-	// +kubebuilder:validation:Enum:={interface,efa-only}
-	InterfaceType InterfaceType `json:"interfaceType"`
-}
 
 // EC2NodeClass is the Schema for the EC2NodeClass API
 // +kubebuilder:object:root=true
@@ -544,26 +482,19 @@ type EC2NodeClass struct {
 	Status EC2NodeClassStatus `json:"status,omitempty"`
 }
 
-// TODO(maxcao13): if we ever change any hashes downstream, we will have to bump this version ourselves, irrespective of upstream.
-
 // We need to bump the EC2NodeClassHashVersion when we make an update to the EC2NodeClass CRD under these conditions:
 // 1. A field changes its default value for an existing field that is already hashed
 // 2. A field is added to the hash calculation with an already-set value
 // 3. A field is removed from the hash calculations
-// 4. An already-hashed field changes its type, since that changes the hash of an unchanged value
-const EC2NodeClassHashVersion = "v6"
+const EC2NodeClassHashVersion = "v4"
 
-func (in *EC2NodeClass) Hash(caBundle *string) string {
-	spec := in.Spec
-	spec.UserData = in.UserDataHash()
-	return fmt.Sprint(lo.Must(hashstructure.Hash([]interface{}{
-		spec,
+func (in *EC2NodeClass) Hash() string {
+	return fmt.Sprint(lo.Must(hashstructure.Hash([]any{
+		in.Spec,
 		// AMIFamily should be hashed using the dynamically resolved value rather than the literal value of the field.
 		// This ensures that scenarios such as changing the field from nil to AL2023 with the alias "al2023@latest"
 		// doesn't trigger drift.
 		in.AMIFamily(),
-		lo.FromPtr(caBundle),
-		in.Spec.Kubelet.String(),
 	}, hashstructure.FormatV2, &hashstructure.HashOptions{
 		SlicesAsSets:    true,
 		IgnoreZeroValue: true,
@@ -600,28 +531,8 @@ func (in *EC2NodeClass) InstanceStorePolicy() *InstanceStorePolicy {
 	return in.Spec.InstanceStorePolicy
 }
 
-func (in *EC2NodeClass) NetworkInterfaces() []*NetworkInterface {
-	return in.Spec.NetworkInterfaces
-}
-
-func (in *EC2NodeClass) ConnectionTracking() *ConnectionTracking {
-	return in.Spec.ConnectionTracking
-}
-
-func (in *EC2NodeClass) PlacementGroupSelector() *PlacementGroupSelector {
-	return in.Spec.PlacementGroupSelector
-}
-
-func (in *EC2NodeClass) KubeletConfiguration() KubeletConfiguration {
+func (in *EC2NodeClass) KubeletConfiguration() *KubeletConfiguration {
 	return in.Spec.Kubelet
-}
-
-func (in *EC2NodeClass) CPUOptions() *CPUOptions {
-	return in.Spec.CPUOptions
-}
-
-func (in *EC2NodeClass) EnclaveOptions() *EnclaveOptions {
-	return in.Spec.EnclaveOptions
 }
 
 // AMIFamily returns the family for a NodePool based on the following items, in order of precdence:
@@ -693,50 +604,6 @@ func amiVersionFromAlias(alias string) string {
 		log.Fatalf("failed to parse AMI alias %q, invalid format", alias)
 	}
 	return components[1]
-}
-
-// UPSTREAM: <carry>: We need to specially hash our custom user data because we pass in a rotating token into the userData field
-// which unintentionally causes the hash to change and trigger drift. We specially handle any ignition userData by parsing it,
-// getting a special header we include in ignition server requests, and only return that header TargetConfigVersionHash's value.
-// The hash is unique and will act as a trigger for Drift rollout, similar to it's usage in HyperShift and the hyperv1.NodePool API.
-// https://github.com/openshift/hypershift/blob/07b5bf9a97d23d6c7a01164a385e5b9d6c513794/hypershift-operator/controllers/nodepool/config.go#L120
-//
-// comes from https://github.com/openshift/hypershift/blob/c6c65ef3a26243489477c984af93655a33c4167b/hypershift-operator/controllers/nodepool/token.go#L426
-const TargetConfigVersionHashHeader = "TargetConfigVersionHash"
-
-// Returns the TargetConfigVersionHash value from the userData's ignition payload, assuming it's a valid config.
-// If not valid, returns the raw userData, effectively bypassing this handling.
-func (in *EC2NodeClass) UserDataHash() *string {
-	if in.Spec.UserData == nil {
-		return nil
-	}
-	var ignitionConfig struct {
-		Ignition struct {
-			Config struct {
-				Merge []struct {
-					HTTPHeaders []struct {
-						Name  string  `json:"name"`
-						Value *string `json:"value"`
-					} `json:"httpHeaders"`
-				} `json:"merge"`
-			} `json:"config"`
-		} `json:"ignition"`
-	}
-
-	if err := json.Unmarshal([]byte(*in.Spec.UserData), &ignitionConfig); err != nil {
-		return in.Spec.UserData
-	}
-
-	if len(ignitionConfig.Ignition.Config.Merge) == 0 {
-		return in.Spec.UserData
-	}
-
-	for _, header := range ignitionConfig.Ignition.Config.Merge[0].HTTPHeaders {
-		if header.Name == TargetConfigVersionHashHeader && header.Value != nil {
-			return header.Value
-		}
-	}
-	return in.Spec.UserData
 }
 
 // EC2NodeClassList contains a list of EC2NodeClass

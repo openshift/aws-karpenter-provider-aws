@@ -26,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/karpenter/pkg/controllers/nodeoverlay"
-	"sigs.k8s.io/karpenter/pkg/scheduling"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	coreapis "sigs.k8s.io/karpenter/pkg/apis"
@@ -49,11 +48,8 @@ import (
 	cloudproviderevents "github.com/aws/karpenter-provider-aws/pkg/cloudprovider/events"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/amifamily"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/capacityreservation"
-	"github.com/aws/karpenter-provider-aws/pkg/providers/efadra"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instance"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instancetype"
-	"github.com/aws/karpenter-provider-aws/pkg/providers/nvidiadra"
-	"github.com/aws/karpenter-provider-aws/pkg/providers/placementgroup"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/securitygroup"
 
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
@@ -70,13 +66,7 @@ type CloudProvider struct {
 	amiProvider                 amifamily.Provider
 	securityGroupProvider       securitygroup.Provider
 	capacityReservationProvider capacityreservation.Provider
-	placementGroupProvider      placementgroup.Provider
 	instanceTypeStore           *nodeoverlay.InstanceTypeStore
-	nvidiaDRAProvider           nvidiadra.Provider
-	efaDRAProvider              efadra.Provider
-	legacyRepairPolicies        bool
-	rebootForRepair             bool
-	caBundle                    *string
 }
 
 func New(
@@ -87,44 +77,18 @@ func New(
 	amiProvider amifamily.Provider,
 	securityGroupProvider securitygroup.Provider,
 	capacityReservationProvider capacityreservation.Provider,
-	placementGroupProvider placementgroup.Provider,
 	store *nodeoverlay.InstanceTypeStore,
-	caBundle *string,
-	opts ...Option,
 ) *CloudProvider {
-	c := &CloudProvider{
+	return &CloudProvider{
 		instanceTypeProvider:        instanceTypeProvider,
 		instanceProvider:            instanceProvider,
 		kubeClient:                  kubeClient,
 		amiProvider:                 amiProvider,
 		securityGroupProvider:       securityGroupProvider,
 		capacityReservationProvider: capacityReservationProvider,
-		placementGroupProvider:      placementGroupProvider,
 		recorder:                    recorder,
 		instanceTypeStore:           store,
-		nvidiaDRAProvider:           nvidiadra.NewDefaultProvider(),
-		efaDRAProvider:              efadra.NewDefaultProvider(),
-		caBundle:                    caBundle,
 	}
-	for _, opt := range opts {
-		opt(c)
-	}
-	return c
-}
-
-// Option configures a CloudProvider.
-type Option func(*CloudProvider)
-
-// WithLegacyRepairPolicies makes RepairPolicies return the policies the legacy node repair controller used before node
-// repair became a disruption method. Set it with --legacy-node-repair so the legacy controller repairs on the same
-// conditions and timing as before.
-func WithLegacyRepairPolicies(enabled bool) Option {
-	return func(c *CloudProvider) { c.legacyRepairPolicies = enabled }
-}
-
-// WithRebootForRepair makes the reboot-clearable repair policies reboot the node in place instead of replacing it.
-func WithRebootForRepair(enabled bool) Option {
-	return func(c *CloudProvider) { c.rebootForRepair = enabled }
 }
 
 // Create a NodeClaim given the constraints.
@@ -176,14 +140,14 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		return nil, fmt.Errorf("creating instance, %w", err)
 	}
 	if instance.CapacityType == karpv1.CapacityTypeReserved {
-		c.capacityReservationProvider.MarkLaunched(instance.CapacityReservationDetails.ID)
+		c.capacityReservationProvider.MarkLaunched(*instance.CapacityReservationID)
 	}
 	instanceType, _ := lo.Find(instanceTypes, func(i *cloudprovider.InstanceType) bool {
 		return i.Name == string(instance.Type)
 	})
-	nc := c.instanceToNodeClaim(ctx, instance, instanceType, nodeClass, nodeClaim)
+	nc := c.instanceToNodeClaim(instance, instanceType, nodeClass)
 	nc.Annotations = lo.Assign(nc.Annotations, map[string]string{
-		v1.AnnotationEC2NodeClassHash:        nodeClass.Hash(c.caBundle),
+		v1.AnnotationEC2NodeClassHash:        nodeClass.Hash(),
 		v1.AnnotationEC2NodeClassHashVersion: v1.EC2NodeClassHashVersion,
 		v1.AnnotationInstanceProfile:         nodeClass.Status.InstanceProfile,
 	})
@@ -205,7 +169,7 @@ func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 		if client.IgnoreNotFound(err) != nil {
 			return nil, fmt.Errorf("resolving nodeclass, %w", err)
 		}
-		nodeClaims = append(nodeClaims, c.instanceToNodeClaim(ctx, it, instanceType, nc, nil))
+		nodeClaims = append(nodeClaims, c.instanceToNodeClaim(it, instanceType, nc))
 	}
 	return nodeClaims, nil
 }
@@ -228,7 +192,7 @@ func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.Nod
 	if client.IgnoreNotFound(err) != nil {
 		return nil, fmt.Errorf("resolving nodeclass, %w", err)
 	}
-	return c.instanceToNodeClaim(ctx, instance, instanceType, nc, nil), nil
+	return c.instanceToNodeClaim(instance, instanceType, nc), nil
 }
 
 // GetInstanceTypes returns all available InstanceTypes
@@ -247,8 +211,6 @@ func (c *CloudProvider) GetInstanceTypes(ctx context.Context, nodePool *karpv1.N
 	if err != nil {
 		return nil, err
 	}
-	// Populate DRA DynamicResources for the instance types, based on the DRA drivers we support.
-	c.populateDynamicResources(ctx, nodeClass, instanceTypes)
 	return instanceTypes, nil
 }
 
@@ -284,19 +246,10 @@ func (c *CloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	}
 	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("id", id))
 	err = c.instanceProvider.Delete(ctx, id)
-	if reservationID := nodeClaim.Labels[cloudprovider.ReservationIDLabel]; reservationID != "" && cloudprovider.IsNodeClaimNotFoundError(err) {
-		c.capacityReservationProvider.MarkTerminated(reservationID, id)
+	if id := nodeClaim.Labels[cloudprovider.ReservationIDLabel]; id != "" && cloudprovider.IsNodeClaimNotFoundError(err) {
+		c.capacityReservationProvider.MarkTerminated(id)
 	}
 	return err
-}
-
-func (c *CloudProvider) Reboot(ctx context.Context, nodeClaim *karpv1.NodeClaim, operationID string) error {
-	id, err := utils.ParseInstanceID(nodeClaim.Status.ProviderID)
-	if err != nil {
-		return fmt.Errorf("getting instance ID, %w", err)
-	}
-	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("id", id))
-	return c.instanceProvider.Reboot(ctx, id, operationID)
 }
 
 func (c *CloudProvider) DisruptionReasons() []karpv1.DisruptionReason {
@@ -342,97 +295,44 @@ func (c *CloudProvider) GetSupportedNodeClasses() []status.Object {
 }
 
 func (c *CloudProvider) RepairPolicies() []cloudprovider.RepairPolicy {
-	if c.legacyRepairPolicies {
-		return legacyRepairPolicies
-	}
 	return []cloudprovider.RepairPolicy{
 		// Supported Kubelet Node Conditions
-		//
-		// The AcceleratedHardwareReady catch-all below is the global fallback (empty ReasonRegex); every other policy sets a ReasonRegex.
 		{
 			ConditionType:      corev1.NodeReady,
 			ConditionStatus:    corev1.ConditionFalse,
-			ReasonRegex:        ".*",
 			TolerationDuration: 30 * time.Minute,
-			// Kubelet is reporting NotReady but is still alive, so a bounded graceful drain can honor PDBs. The bound
-			// exists so repair is never the unbounded (~19-day) drain hang that a nil NodeClaim TerminationGracePeriod
-			// would otherwise permit.
-			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
-			Action:                 cloudprovider.ReplaceNode,
 		},
 		{
-			ConditionType:          corev1.NodeReady,
-			ConditionStatus:        corev1.ConditionUnknown,
-			ReasonRegex:            ".*",
-			TolerationDuration:     30 * time.Minute,
-			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
-			Action:                 cloudprovider.ReplaceNode,
+			ConditionType:      corev1.NodeReady,
+			ConditionStatus:    corev1.ConditionUnknown,
+			TolerationDuration: 30 * time.Minute,
 		},
 		// Support Node Monitoring Agent Conditions
 		//
-		// AcceleratedHardwareReady is split by reason: the Node Monitoring Agent emits the GPU XID code in the
-		// condition reason, and different XID families warrant different handling (mirroring MNG's repairRules).
-		// ReasonRegex is a Go regex over each reason; the wrapping ".*" lets it match an XID code embedded anywhere in
-		// the reason token.
 		{
-			// Reboot-clearable GPU faults (transient XIDs). Rebooting preserves the scarce GPU instance; without the
-			// RebootForRepair feature gate the node is replaced instead, on the same timing.
-			ConditionType:          "AcceleratedHardwareReady",
-			ConditionStatus:        corev1.ConditionFalse,
-			ReasonRegex:            `.*XID(46|48|54|62|63|95|109|110|136|140|143|155|156|158).*`,
-			TolerationDuration:     10 * time.Minute,
-			TerminationGracePeriod: lo.ToPtr(5 * time.Minute),
-			Action:                 lo.Ternary(c.rebootForRepair, cloudprovider.RebootNode, cloudprovider.ReplaceNode),
+			ConditionType:      "AcceleratedHardwareReady",
+			ConditionStatus:    corev1.ConditionFalse,
+			TolerationDuration: 10 * time.Minute,
 		},
 		{
-			// Fatal / uncorrectable GPU errors — replace fast, a reboot would only waste time on dead hardware.
-			ConditionType:          "AcceleratedHardwareReady",
-			ConditionStatus:        corev1.ConditionFalse,
-			ReasonRegex:            `.*XID(64|74|79|119|120).*`,
-			TolerationDuration:     10 * time.Minute,
-			TerminationGracePeriod: lo.ToPtr(5 * time.Minute),
-			Action:                 cloudprovider.ReplaceNode,
+			ConditionType:      "StorageReady",
+			ConditionStatus:    corev1.ConditionFalse,
+			TolerationDuration: 30 * time.Minute,
 		},
 		{
-			// Default fallback (empty ReasonRegex, the only one allowed per policy set): an unrecognized GPU fault gets a
-			// longer 30m confidence delay before we replace, since we can't attribute it to a known reboot/replace family.
-			ConditionType:          "AcceleratedHardwareReady",
-			ConditionStatus:        corev1.ConditionFalse,
-			TolerationDuration:     30 * time.Minute,
-			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
-			Action:                 cloudprovider.ReplaceNode,
+			ConditionType:      "NetworkingReady",
+			ConditionStatus:    corev1.ConditionFalse,
+			TolerationDuration: 30 * time.Minute,
 		},
 		{
-			ConditionType:          "StorageReady",
-			ConditionStatus:        corev1.ConditionFalse,
-			ReasonRegex:            ".*",
-			TolerationDuration:     30 * time.Minute,
-			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
-			Action:                 cloudprovider.ReplaceNode,
+			ConditionType:      "KernelReady",
+			ConditionStatus:    corev1.ConditionFalse,
+			TolerationDuration: 30 * time.Minute,
 		},
 		{
-			ConditionType:          "NetworkingReady",
-			ConditionStatus:        corev1.ConditionFalse,
-			ReasonRegex:            ".*",
-			TolerationDuration:     30 * time.Minute,
-			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
-			Action:                 cloudprovider.ReplaceNode,
-		},
-		{
-			ConditionType:          "KernelReady",
-			ConditionStatus:        corev1.ConditionFalse,
-			ReasonRegex:            ".*",
-			TolerationDuration:     30 * time.Minute,
-			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
-			Action:                 cloudprovider.ReplaceNode,
-		},
-		{
-			ConditionType:          "ContainerRuntimeReady",
-			ConditionStatus:        corev1.ConditionFalse,
-			ReasonRegex:            ".*",
-			TolerationDuration:     30 * time.Minute,
-			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
-			Action:                 cloudprovider.ReplaceNode,
+			ConditionType:      "ContainerRuntimeReady",
+			ConditionStatus:    corev1.ConditionFalse,
+			TolerationDuration: 30 * time.Minute,
 		},
 	}
 }
@@ -507,7 +407,7 @@ func (c *CloudProvider) resolveNodePoolFromInstance(ctx context.Context, instanc
 }
 
 //nolint:gocyclo
-func (c *CloudProvider) instanceToNodeClaim(ctx context.Context, i *instance.Instance, instanceType *cloudprovider.InstanceType, nodeClass *v1.EC2NodeClass, originalNodeClaim *karpv1.NodeClaim) *karpv1.NodeClaim {
+func (c *CloudProvider) instanceToNodeClaim(i *instance.Instance, instanceType *cloudprovider.InstanceType, nodeClass *v1.EC2NodeClass) *karpv1.NodeClaim {
 	nodeClaim := &karpv1.NodeClaim{}
 	labels := map[string]string{}
 	annotations := map[string]string{}
@@ -522,7 +422,6 @@ func (c *CloudProvider) instanceToNodeClaim(ctx context.Context, i *instance.Ins
 			if req.Len() == 1 && !lo.Contains([]string{
 				cloudprovider.ReservationIDLabel,
 				v1.LabelCapacityReservationType,
-				v1.LabelCapacityReservationInterruptible,
 			}, req.Key) {
 				labels[key] = req.Values()[0]
 			}
@@ -531,10 +430,10 @@ func (c *CloudProvider) instanceToNodeClaim(ctx context.Context, i *instance.Ins
 			if resources.IsZero(v) {
 				return false
 			}
-			// The nodeclaim should only advertise an EFA resource if it was requested by the pod or configured on the NodeClass. EFA network interfaces are
-			// added to the launch template if they're requested or NodeClass network interfaces are configured, otherwise the instance is launched with a normal ENI.
+			// The nodeclaim should only advertise an EFA resource if it was requested. EFA network interfaces are only
+			// added to the launch template if they're requested, otherwise the instance is launched with a normal ENI.
 			if n == v1.ResourceEFA {
-				return i.EFACount > 0
+				return i.EFAEnabled
 			}
 			return true
 		}
@@ -556,28 +455,8 @@ func (c *CloudProvider) instanceToNodeClaim(ctx context.Context, i *instance.Ins
 	labels[karpv1.CapacityTypeLabelKey] = i.CapacityType
 	labels[v1.LabelInstanceTenancy] = i.Tenancy
 	if i.CapacityType == karpv1.CapacityTypeReserved {
-		labels[cloudprovider.ReservationIDLabel] = i.CapacityReservationDetails.ID
-		labels[v1.LabelCapacityReservationType] = string(i.CapacityReservationDetails.Type)
-		labels[v1.LabelCapacityReservationInterruptible] = fmt.Sprintf("%t", i.CapacityReservationDetails.Interruptible)
-	}
-	// Placement group labels
-	if nodeClass != nil {
-		if pg, _ := c.placementGroupProvider.Get(ctx, nodeClass); pg != nil {
-			labels[v1.LabelPlacementGroupID] = pg.ID
-			if pg.Strategy == placementgroup.StrategyPartition {
-				// If the scheduler targeted a specific partition (from the offering), use that value.
-				// Otherwise, set the empty sentinel for the registration hook to resolve via DescribeInstances.
-				labels[v1.LabelPlacementGroupPartition] = ""
-				if originalNodeClaim != nil {
-					reqs := scheduling.NewNodeSelectorRequirementsWithMinValues(originalNodeClaim.Spec.Requirements...)
-					if partitionReq := reqs.Get(v1.LabelPlacementGroupPartition); partitionReq != nil {
-						if values := partitionReq.Values(); len(values) > 0 {
-							labels[v1.LabelPlacementGroupPartition] = values[0]
-						}
-					}
-				}
-			}
-		}
+		labels[cloudprovider.ReservationIDLabel] = *i.CapacityReservationID
+		labels[v1.LabelCapacityReservationType] = string(*i.CapacityReservationType)
 	}
 	if v, ok := i.Tags[karpv1.NodePoolLabelKey]; ok {
 		labels[karpv1.NodePoolLabelKey] = v
@@ -600,54 +479,4 @@ func newTerminatingNodeClassError(name string) *errors.StatusError {
 	err := errors.NewNotFound(qualifiedResource, name)
 	err.ErrStatus.Message = fmt.Sprintf("%s %q is terminating, treating as not found", qualifiedResource.String(), name)
 	return err
-}
-
-// legacyRepairPolicies are the repair policies from before node repair became a disruption method (1.14), for the
-// legacy node repair controller. They replace on every reason of each condition, and leave the drain to the legacy
-// controller, which terminates forcefully.
-var legacyRepairPolicies = []cloudprovider.RepairPolicy{
-	// Supported Kubelet Node Conditions
-	{
-		ConditionType:      corev1.NodeReady,
-		ConditionStatus:    corev1.ConditionFalse,
-		TolerationDuration: 30 * time.Minute,
-		Action:             cloudprovider.ReplaceNode,
-	},
-	{
-		ConditionType:      corev1.NodeReady,
-		ConditionStatus:    corev1.ConditionUnknown,
-		TolerationDuration: 30 * time.Minute,
-		Action:             cloudprovider.ReplaceNode,
-	},
-	// Support Node Monitoring Agent Conditions
-	{
-		ConditionType:      "AcceleratedHardwareReady",
-		ConditionStatus:    corev1.ConditionFalse,
-		TolerationDuration: 10 * time.Minute,
-		Action:             cloudprovider.ReplaceNode,
-	},
-	{
-		ConditionType:      "StorageReady",
-		ConditionStatus:    corev1.ConditionFalse,
-		TolerationDuration: 30 * time.Minute,
-		Action:             cloudprovider.ReplaceNode,
-	},
-	{
-		ConditionType:      "NetworkingReady",
-		ConditionStatus:    corev1.ConditionFalse,
-		TolerationDuration: 30 * time.Minute,
-		Action:             cloudprovider.ReplaceNode,
-	},
-	{
-		ConditionType:      "KernelReady",
-		ConditionStatus:    corev1.ConditionFalse,
-		TolerationDuration: 30 * time.Minute,
-		Action:             cloudprovider.ReplaceNode,
-	},
-	{
-		ConditionType:      "ContainerRuntimeReady",
-		ConditionStatus:    corev1.ConditionFalse,
-		TolerationDuration: 30 * time.Minute,
-		Action:             cloudprovider.ReplaceNode,
-	},
 }

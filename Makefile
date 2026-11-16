@@ -1,12 +1,7 @@
 CLUSTER_NAME ?= $(shell kubectl config view --minify -o jsonpath='{.clusters[].name}' | rev | cut -d"/" -f1 | rev | cut -d"." -f1)
 
-# TODO(maxcao13): We don't maintain tags like upstream does, so we need to manually update a canonical version here.
-# Every time we do a rebase, we should update this variable to match upstream. If you have upstream as a remote repo, you can find the latest tag by:
-# git describe --tags --abbrev=0 --match "v*" --candidates=1
-OPENSHIFT_AWS_KARPENTER_VERSION = 1.15.1
-
 ## Inject the app version into operator.Version
-LDFLAGS ?= -ldflags=-X=sigs.k8s.io/karpenter/pkg/operator.Version=${OPENSHIFT_AWS_KARPENTER_VERSION}
+LDFLAGS ?= -ldflags=-X=sigs.k8s.io/karpenter/pkg/operator.Version=$(shell git describe --tags --always | cut -d"v" -f2)
 
 GOFLAGS += $(LDFLAGS)
 WITH_GOFLAGS = GOFLAGS="$(GOFLAGS)"
@@ -18,7 +13,6 @@ KARPENTER_IAM_ROLE_ARN ?= arn:aws:iam::${AWS_ACCOUNT_ID}:role/${CLUSTER_NAME}-ka
 HELM_OPTS ?= --set serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn=${KARPENTER_IAM_ROLE_ARN} \
       		--set settings.clusterName=${CLUSTER_NAME} \
 			--set settings.interruptionQueue=${CLUSTER_NAME} \
-			--set settings.enableZonalShift=${ENABLE_ZONAL_SHIFT}\
 			--set controller.resources.requests.cpu=1 \
 			--set controller.resources.requests.memory=1Gi \
 			--set controller.resources.limits.cpu=1 \
@@ -28,7 +22,6 @@ HELM_OPTS ?= --set serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn=${K
 			--set settings.featureGates.spotToSpotConsolidation=true \
 			--set settings.featureGates.nodeOverlay=true \
 			--set settings.featureGates.staticCapacity=true \
-			--set settings.featureGates.capacityBuffer=true \
 			--set settings.preferencePolicy=Ignore \
 			--set logLevel=debug \
 			--create-namespace
@@ -41,7 +34,7 @@ KOCACHE ?= ~/.ko
 
 # Common Directories
 MOD_DIRS = $(shell find . -path "./website" -prune -o -name go.mod -type f -print | xargs dirname)
-KARPENTER_CORE_DIR = $(shell go list -mod=readonly -m -f '{{ .Dir }}' sigs.k8s.io/karpenter)
+KARPENTER_CORE_DIR = $(shell go list -m -f '{{ .Dir }}' sigs.k8s.io/karpenter)
 
 # TEST_SUITE enables you to select a specific test suite directory to run "make e2etests" against
 TEST_SUITE ?= "..."
@@ -67,9 +60,7 @@ run: ## Run Karpenter controller binary against your local cluster with latest C
 		DISABLE_LEADER_ELECTION=true \
 		CLUSTER_NAME=${CLUSTER_NAME} \
 		INTERRUPTION_QUEUE=${CLUSTER_NAME} \
-		ENABLE_ZONAL_SHIFT=true \
 		FEATURE_GATES="SpotToSpotConsolidation=true,NodeOverlay=true,StaticCapacity=true" \
-		AWS_FEATURE_GATES="NodeClassCEL=true" \
 		LOG_LEVEL="debug" \
 		go run ./cmd/controller/main.go
 
@@ -77,7 +68,6 @@ test: ## Run tests
 	go test ./pkg/... \
 		-cover -coverprofile=coverage.out -outputdir=. -coverpkg=./... \
 		--ginkgo.focus="${FOCUS}" \
-		--ginkgo.skip="${SKIP}" \
 		--ginkgo.randomize-all \
 		--ginkgo.vv
 
@@ -85,7 +75,6 @@ deflake: ## Run randomized, racing tests until the test fails to catch flakes
 	ginkgo \
 		--race \
 		--focus="${FOCUS}" \
-		--skip="${SKIP}" \
 		--randomize-all \
 		--until-it-fails \
 		-v \
@@ -95,42 +84,34 @@ e2etests: ## Run the e2e suite against your local cluster
 	cd test && CLUSTER_ENDPOINT=${CLUSTER_ENDPOINT} \
 		CLUSTER_NAME=${CLUSTER_NAME} \
 		INTERRUPTION_QUEUE=${CLUSTER_NAME} \
-		ENABLE_ZONAL_SHIFT=true \
 		go test \
 		-p 1 \
 		-count 1 \
-		-timeout 12h \
+		-timeout 3.25h \
 		-v \
 		./suites/$(shell echo $(TEST_SUITE) | tr A-Z a-z)/... \
 		--ginkgo.focus="${FOCUS}" \
-		--ginkgo.skip="${SKIP}" \
-		--ginkgo.timeout=3h20m \
+		--ginkgo.timeout=3h \
 		--ginkgo.grace-period=3m \
 		--ginkgo.vv
 
 upstream-e2etests: tidy download
 	CLUSTER_NAME=${CLUSTER_NAME} envsubst < $(shell pwd)/test/pkg/environment/aws/default_ec2nodeclass.yaml > ${TMPFILE}
 	cd $(KARPENTER_CORE_DIR) && go test \
-		-p 1 \
 		-count 1 \
-		-timeout 12h \
+		-timeout 3.25h \
 		-v \
 		./test/suites/regression/... \
-		./test/suites/disruption/... \
 		--ginkgo.focus="${FOCUS}" \
-		--ginkgo.skip="${SKIP}" \
 		--ginkgo.timeout=3h \
 		--ginkgo.grace-period=5m \
 		--ginkgo.vv \
 		--default-nodeclass="$(TMPFILE)"\
-		--default-nodepool="$(shell pwd)/test/pkg/environment/aws/default_nodepool.yaml" \
-		--repair-condition="AcceleratedHardwareReady=False/NvidiaXID79Error" \
-		--reboot-condition="AcceleratedHardwareReady=False/NvidiaXID46Error"
+		--default-nodepool="$(shell pwd)/test/pkg/environment/aws/default_nodepool.yaml"
 
 e2etests-deflake: ## Run the e2e suite against your local cluster
 	cd test && CLUSTER_NAME=${CLUSTER_NAME} ginkgo \
 		--focus="${FOCUS}" \
-		--skip="${SKIP}" \
 		--timeout=3h \
 		--grace-period=3m \
 		--until-it-fails \
@@ -147,9 +128,7 @@ verify: tidy download ## Verify code. Includes dependencies, linting, formatting
 	go generate ./...
 	hack/boilerplate.sh
 	cp  $(KARPENTER_CORE_DIR)/pkg/apis/crds/* pkg/apis/crds
-	# The scripts below rewrite the CRDs they edit in yq's formatting rather than controller-gen's.
-	# ec2nodeclasses.yaml is no longer one of them, so it's passed through yq to keep its formatting stable
-	yq eval --inplace '.' pkg/apis/crds/karpenter.k8s.aws_ec2nodeclasses.yaml
+	hack/validation/kubelet.sh
 	bash -c 'source ./hack/validation/requirements.sh && injectDomainRequirementRestrictions "karpenter.k8s.aws"'
 	bash -c 'source ./hack/validation/labels.sh && injectDomainLabelRestrictions "karpenter.k8s.aws"'
 	cp pkg/apis/crds/* charts/karpenter-crd/templates
@@ -211,9 +190,6 @@ snapshot: ## Builds and publishes snapshot release
 
 release: ## Builds and publishes stable release
 	$(WITH_GOFLAGS) ./hack/release/release.sh
-
-latest-release: ## Mark the highest stable release as GitHub's Latest release
-	./hack/release/latest.sh
 
 prepare-website: ## prepare the website for release
 	./hack/release/prepare-website.sh

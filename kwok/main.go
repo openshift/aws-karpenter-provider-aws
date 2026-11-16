@@ -15,7 +15,6 @@ package main
 import (
 	"sync"
 
-	"github.com/samber/lo"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider/metrics"
 	corecontrollers "sigs.k8s.io/karpenter/pkg/controllers"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
@@ -27,9 +26,7 @@ import (
 	"github.com/aws/karpenter-provider-aws/kwok/cloudprovider"
 	"github.com/aws/karpenter-provider-aws/kwok/operator"
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
-	awscloudprovider "github.com/aws/karpenter-provider-aws/pkg/cloudprovider"
 	"github.com/aws/karpenter-provider-aws/pkg/controllers"
-	"github.com/aws/karpenter-provider-aws/pkg/operator/options"
 )
 
 func main() {
@@ -43,10 +40,7 @@ func main() {
 		op.AMIProvider,
 		op.SecurityGroupProvider,
 		op.CapacityReservationProvider,
-		op.PlacementGroupProvider,
 		op.InstanceTypeStore,
-		awscloudprovider.WithLegacyRepairPolicies(karpoptions.FromContext(ctx).LegacyNodeRepair),
-		awscloudprovider.WithRebootForRepair(options.FromContext(ctx).FeatureGates.RebootForRepair),
 	)
 	overlayUndecoratedCloudProvider := metrics.Decorate(kwokAWSCloudProvider)
 	cloudProvider := overlay.Decorate(overlayUndecoratedCloudProvider, op.GetClient(), op.InstanceTypeStore)
@@ -81,7 +75,6 @@ func main() {
 			overlayUndecoratedCloudProvider,
 			clusterState,
 			op.InstanceTypeStore,
-			op.PredictionStore,
 		)...).
 		WithControllers(ctx, controllers.NewControllers(
 			ctx,
@@ -106,12 +99,7 @@ func main() {
 			op.VersionProvider,
 			op.InstanceTypesProvider,
 			op.CapacityReservationProvider,
-			op.PlacementGroupProvider,
 			op.AMIResolver,
-			op.ZonalShiftProvider,
-			op.InstanceStatusProvider,
-			lo.ToPtr(""),
-			op.CELEnvironment,
 		)...).
 		Start(ctx)
 	wg.Wait()

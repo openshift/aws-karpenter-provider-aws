@@ -38,7 +38,6 @@ const (
 	ConditionTypeInstanceProfileReady      = "InstanceProfileReady"
 	ConditionTypeCapacityReservationsReady = "CapacityReservationsReady"
 	ConditionTypeValidationSucceeded       = "ValidationSucceeded"
-	ConditionTypePlacementGroupReady       = "PlacementGroupReady"
 )
 
 // Subnet contains resolved Subnet selector values utilized for node launch
@@ -108,9 +107,6 @@ type CapacityReservation struct {
 	// +kubebuilder:default=default
 	// +optional
 	ReservationType CapacityReservationType `json:"reservationType"`
-	// Indicates whether this capacity reservation is interruptible
-	// +optional
-	Interruptible bool `json:"interruptible"`
 	// The state of the capacity reservation. A capacity reservation is considered to be expiring if it is within the EC2
 	// reclaimation window. Only capacity-block reservations may be in this state.
 	// +kubebuilder:validation:Enum:={active,expiring}
@@ -166,19 +162,18 @@ type EC2NodeClassStatus struct {
 	Conditions []status.Condition `json:"conditions,omitempty"`
 }
 
-func (in *EC2NodeClass) StatusConditions(opts ...status.ForOption) status.ConditionSet {
+func (in *EC2NodeClass) StatusConditions() status.ConditionSet {
 	conds := []string{
 		ConditionTypeAMIsReady,
 		ConditionTypeSubnetsReady,
 		ConditionTypeSecurityGroupsReady,
 		ConditionTypeInstanceProfileReady,
 		ConditionTypeValidationSucceeded,
-		ConditionTypePlacementGroupReady,
 	}
 	if CapacityReservationsEnabled {
 		conds = append(conds, ConditionTypeCapacityReservationsReady)
 	}
-	return status.NewReadyConditions(conds...).For(in, opts...)
+	return status.NewReadyConditions(conds...).For(in)
 }
 
 func (in *EC2NodeClass) GetConditions() []status.Condition {
@@ -198,22 +193,15 @@ func (in *EC2NodeClass) CapacityReservations() []CapacityReservation {
 }
 
 type ZoneInfo struct {
-	Zone      string
-	ZoneID    string
-	SubnetIDs []string
+	Zone   string
+	ZoneID string
 }
 
 func (in *EC2NodeClass) ZoneInfo() []ZoneInfo {
-	subnetGroups := lo.GroupBy(in.Status.Subnets, func(s Subnet) string {
-		return s.ZoneID
-	})
-	return lo.MapToSlice(subnetGroups, func(zoneID string, subnets []Subnet) ZoneInfo {
+	return lo.Map(in.Status.Subnets, func(_ Subnet, i int) ZoneInfo {
 		return ZoneInfo{
-			Zone:   subnets[0].Zone,
-			ZoneID: zoneID,
-			SubnetIDs: lo.Map(subnets, func(s Subnet, _ int) string {
-				return s.ID
-			}),
+			Zone:   in.Status.Subnets[i].Zone,
+			ZoneID: in.Status.Subnets[i].ZoneID,
 		}
 	})
 }
@@ -270,7 +258,6 @@ func CapacityReservationFromEC2(clk clock.Clock, cr *ec2types.CapacityReservatio
 		InstanceType:          *cr.InstanceType,
 		OwnerID:               *cr.OwnerId,
 		ReservationType:       reservationType,
-		Interruptible:         lo.FromPtrOr(cr.Interruptible, false),
 		State:                 state,
 	}, nil
 }

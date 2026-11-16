@@ -20,10 +20,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/awslabs/operatorpkg/status"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -36,14 +34,12 @@ import (
 
 type AMI struct {
 	amiProvider amifamily.Provider
-	clk         clock.Clock
 	cm          *pretty.ChangeMonitor
 }
 
-func NewAMIReconciler(clk clock.Clock, provider amifamily.Provider) *AMI {
+func NewAMIReconciler(provider amifamily.Provider) *AMI {
 	return &AMI{
 		amiProvider: provider,
-		clk:         clk,
 		cm:          pretty.NewChangeMonitor(),
 	}
 }
@@ -52,14 +48,14 @@ func (a *AMI) Reconcile(ctx context.Context, nodeClass *v1.EC2NodeClass) (reconc
 	amis, err := a.amiProvider.List(ctx, nodeClass)
 	if err != nil {
 		if amifamily.IsAl2DeprecationError(err) || amifamily.IsWS2025UnsupportedVersionError(err) {
-			nodeClass.StatusConditions(status.WithClock(a.clk)).SetFalse(v1.ConditionTypeAMIsReady, "UnsupportedAlias", err.Error())
+			nodeClass.StatusConditions().SetFalse(v1.ConditionTypeAMIsReady, "UnsupportedAlias", err.Error())
 			return reconcile.Result{}, reconcile.TerminalError(fmt.Errorf("getting amis, %w", err))
 		}
 		return reconcile.Result{}, fmt.Errorf("getting amis, %w", err)
 	}
 	if len(amis) == 0 {
 		nodeClass.Status.AMIs = nil
-		nodeClass.StatusConditions(status.WithClock(a.clk)).SetFalse(v1.ConditionTypeAMIsReady, "AMINotFound", "AMISelector did not match any AMIs")
+		nodeClass.StatusConditions().SetFalse(v1.ConditionTypeAMIsReady, "AMINotFound", "AMISelector did not match any AMIs")
 		// If users have omitted the necessary tags from their AMIs and later add them, we need to reprocess the information.
 		// Returning 'ok' in this case means that the nodeclass will remain in an unready state until the component is restarted.
 		return reconcile.Result{RequeueAfter: time.Minute}, nil
@@ -93,6 +89,6 @@ func (a *AMI) Reconcile(ctx context.Context, nodeClass *v1.EC2NodeClass) (reconc
 		}
 	})
 
-	nodeClass.StatusConditions(status.WithClock(a.clk)).SetTrue(v1.ConditionTypeAMIsReady)
+	nodeClass.StatusConditions().SetTrue(v1.ConditionTypeAMIsReady)
 	return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil
 }
