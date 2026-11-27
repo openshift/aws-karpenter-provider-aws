@@ -211,8 +211,8 @@ github.com/onsi/ginkgo/v2 v2.33.0 h1:C8gBA6Uc2ZEubiV+SXiu5tZnMTwEmXHgkJwGozKtZf8
 github.com/onsi/ginkgo/v2 v2.33.0/go.mod h1:+aXOY+vzZ5mu2iI2HpTZUPmM//oQfsNFX6gU9kNcA44=
 github.com/onsi/gomega v1.44.0 h1:eAiGl3Pw5jz5GQdDff0BcxYpAX1JxW8xD7mFUuwNfZQ=
 github.com/onsi/gomega v1.44.0/go.mod h1:e/C2HwaZ1DhvjzXXuFhcR7hY7Sh9pl7MmoWKEjzwcdA=
-github.com/openshift/kubernetes-sigs-karpenter v0.0.0-20261110172752-280f26969b1f h1:Kr6eWCg3pfRpV0lzOw9yyfdpTrOoyY8BqLmfApz37GI=
-github.com/openshift/kubernetes-sigs-karpenter v0.0.0-20261110172752-280f26969b1f/go.mod h1:6Dy4bC8Zx/2r57A1Jnu9i+/jyaEQfIdYU6aG+WpNCK8=
+github.com/openshift/kubernetes-sigs-karpenter v0.0.0-20261126060421-da8f5a72f0e0 h1:l4RKLyQluREgUiLy/wspVIEdkiKbbg5K5TwnyFqDOGs=
+github.com/openshift/kubernetes-sigs-karpenter v0.0.0-20261126060421-da8f5a72f0e0/go.mod h1:6Dy4bC8Zx/2r57A1Jnu9i+/jyaEQfIdYU6aG+WpNCK8=
 github.com/patrickmn/go-cache v2.1.0+incompatible h1:HRMgzkcYKYpi3C8ajMPV8OFXaaRUnok+kx1WdO15EQc=
 github.com/patrickmn/go-cache v2.1.0+incompatible/go.mod h1:3Qf8kWWT7OJRJbdiICTKqZju1ZixQ/KpMGzzAfe6+WQ=
 github.com/pelletier/go-toml/v2 v2.4.3 h1:GTRvJQutkOSftxIFD5xw9aepkYNuPWmVJpffdDPYVpY=
